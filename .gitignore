@@ -9,9 +9,7 @@
 !/mygo.json
 
 !/internal/
-/internal/**
-!/internal/**/
-!/internal/**/*.go
+!/internal/**
 
 !/resources/
 /resources/*
@@ -36,7 +34,16 @@ CLAUDE.md
 GEMINI.md
 SKILL.md
 /docs/
-/screenshots/
+screenshots/
+screenshot/
+*screenshot*.png
+*screenshot*.jpg
+*screenshot*.jpeg
+*screenshot*.webp
+*截图*.png
+*截图*.jpg
+*截图*.jpeg
+*截图*.webp
 /dist/
 /tmp*/
 tmp-*
