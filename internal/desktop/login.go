@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -30,81 +29,89 @@ func byrBaseURL() string {
 
 func (u *UI) loginView(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Fill().Background(t.Background).Center().Children(func() {
-		card := ui.Column(c).Width(460).Padding(30).Gap(13).Radius(14).
-			Background(t.Surface).Border(1, t.Border).Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, 0.12)).
-			Children(func() {
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Box(c).Size(38, 38).Radius(11).Background(t.Accent).Center().Children(func() {
-						ui.Text(c, "B").Bold().FontSize(u.fs(18)).TextColor(t.AccentText)
+	remaining := u.loginCooldownSeconds(c.Now())
+	if remaining > 0 {
+		c.After(min(time.Second, u.loginRetryAt.Sub(c.Now())))
+	}
+	_, height := c.Size()
+	ui.Scroll(c).Fill().Background(t.Background).Children(func() {
+		ui.Column(c).FillWidth().MinHeight(height).Padding(24).Center().Children(func() {
+			card := ui.Column(c).Width(460).Padding(30).Gap(13).Radius(14).
+				Background(t.Surface).Border(1, t.Border).Shadow(0, 10, 30, 0, ui.RGBA(0, 0, 0, 0.12)).
+				Children(func() {
+					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+						u.appLogo(c, 42)
+						ui.Column(c).Gap(1).Children(func() {
+							ui.Text(c, "BYR Client").Bold().FontSize(u.fs(16))
+							ui.Text(c, "北邮人论坛桌面客户端").FontSize(u.fs(11)).TextColor(t.TextMuted)
+						})
 					})
-					ui.Column(c).Gap(1).Children(func() {
-						ui.Text(c, "BYR Client").Bold().FontSize(u.fs(16))
-						ui.Text(c, "北邮人论坛桌面客户端").FontSize(u.fs(11)).TextColor(t.TextMuted)
-					})
-				})
-				ui.Text(c, "登录北邮人论坛").FontSize(u.fs(23)).Bold()
-				ui.Text(c, "使用论坛账号密码登录。登录成功后只初始化 forum / sub forum / board 目录，不批量抓取任何版面文章。").
-					FontSize(u.fs(12)).TextColor(t.TextMuted).LineHeight(1.5)
+					ui.Text(c, "登录北邮人论坛").FontSize(u.fs(23)).Bold()
+					ui.Text(c, "登录后浏览版面、阅读讨论，也可以搜索帖子或向 AI 提问。").
+						FontSize(u.fs(12)).TextColor(t.TextMuted).LineHeight(1.5)
 
-				enter := false
-				ui.Column(c).Gap(4).Children(func() {
-					ui.Text(c, "账号").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
-					if ui.TextInput(c, &u.loginUser).Placeholder("论坛用户 ID").Label("账号").Disabled(u.loginBusy).Submitted() {
-						enter = true
-					}
-				})
-				ui.Column(c).Gap(4).Children(func() {
-					ui.Text(c, "密码").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
-					if ui.TextInput(c, &u.loginPassword).Password().Placeholder("论坛密码").Label("密码").
-						Disabled(u.loginBusy).Submitted() {
-						enter = true
-					}
-				})
-
-				if u.loginError != "" {
-					ui.Text(c, u.loginError).FontSize(u.fs(11)).TextColor(t.Danger)
-				}
-				if ui.Checkbox(c, &u.rememberLogin, "保持登录（保存会话 Cookie，下次免登录）").Changed() {
-					u.saveSettings()
-					if !u.rememberLogin {
-						_ = appdata.ClearSession()
-					}
-				}
-				if ui.Checkbox(c, &u.rememberPassword, "保存账号密码（系统凭证，下次自动登录）").Changed() {
-					u.saveSettings()
-					if u.rememberPassword {
-						if u.hasSavedCredentials() {
-							u.saveSavedCredentials(u.loginUser, u.loginPassword)
+					enter := false
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, "账号").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
+						if ui.TextInput(c, &u.loginUser).Placeholder("论坛用户 ID").Label("账号").Disabled(u.loginBusy).Submitted() {
+							enter = true
 						}
-					} else {
-						u.clearSavedCredentials()
+					})
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, "密码").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
+						if ui.TextInput(c, &u.loginPassword).Password().Placeholder("论坛密码").Label("密码").
+							Disabled(u.loginBusy).Submitted() {
+							enter = true
+						}
+					})
+
+					if u.loginError != "" {
+						ui.Text(c, u.loginError).FontSize(u.fs(11)).TextColor(t.Danger)
 					}
-				}
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.PrimaryButton(c, "登录").Disabled(u.loginBusy).OnClick(u.beginLogin)
+					if ui.Checkbox(c, &u.rememberLogin, "保持登录（保存会话 Cookie，下次免登录）").Changed() {
+						u.saveSettings()
+						if !u.rememberLogin {
+							_ = appdata.ClearSession()
+						}
+					}
+					if ui.Checkbox(c, &u.rememberPassword, "保存账号密码（系统凭证，下次自动登录）").Changed() {
+						u.saveSettings()
+						if u.rememberPassword {
+							if u.hasSavedCredentials() {
+								u.saveSavedCredentials(u.loginUser, u.loginPassword)
+							}
+						} else {
+							u.clearSavedCredentials()
+						}
+					}
+					label := "登录"
+					if remaining > 0 {
+						label = fmt.Sprintf("登录（%ds）", remaining)
+					}
+					ui.PrimaryButton(c, label).Label("登录").FillWidth().MinHeight(38).
+						Disabled(u.loginBusy || remaining > 0).OnClick(u.beginLogin)
 					if u.loginBusy {
-						ui.Spinner(c)
-						ui.Text(c, u.loginStatus).FontSize(u.fs(11)).TextColor(t.TextMuted)
+						ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+							ui.Spinner(c)
+							ui.Text(c, u.loginStatus).FontSize(u.fs(12)).TextColor(t.TextMuted).Grow(1)
+						})
 					}
-					ui.Spacer(c)
-					ui.Text(c, "密码保存在系统凭证存储，不写入源码或安装目录").FontSize(u.fs(10)).TextColor(t.TextMuted)
+					if remaining > 0 {
+						ui.Textf(c, "请等待 %ds 后再登录", remaining).FontSize(u.fs(12)).TextColor(t.TextMuted)
+					}
+					ui.Text(c, "登录信息仅保存在本机。").FontSize(u.fs(12)).TextColor(t.TextMuted)
+					ui.Divider(c)
+					ui.Button(c, "先使用演示数据").FillWidth().Disabled(u.loginBusy).OnClick(u.startDemo)
+					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "离线查看界面与检索流程").FontSize(u.fs(12)).TextColor(t.TextMuted).Grow(1)
+						ui.Text(c, byrBaseURL()).FontSize(u.fs(12)).TextColor(t.TextMuted).SingleLine().Shrink(0)
+					})
+					if enter {
+						u.beginLogin()
+						c.Invalidate()
+					}
 				})
-				ui.Divider(c)
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Button(c, "先使用演示数据").Disabled(u.loginBusy).OnClick(u.startDemo)
-					ui.Text(c, "用于离线查看界面与检索流程").FontSize(u.fs(10)).TextColor(t.TextMuted)
-					ui.Spacer(c)
-					ui.Text(c, byrBaseURL()).FontSize(u.fs(10)).TextColor(t.TextMuted)
-				})
-				if enter {
-					u.beginLogin()
-					c.Invalidate()
-				}
-			})
-		card.Transition(ui.ElementTransition{
-			Animation: &ui.Snappy,
-			Enter:     &ui.Motion{Y: 10, Scale: 0.98},
+			card.Transition(pageTransition())
 		})
 	})
 }
@@ -114,7 +121,8 @@ func (u *UI) beginLogin() {
 }
 
 func (u *UI) beginLoginWith(username, password, status string) {
-	if u.loginBusy || u.closed {
+	now := u.loginTime()
+	if u.loginBusy || u.closed || u.loginCooldownSeconds(now) > 0 {
 		return
 	}
 	user := strings.TrimSpace(username)
@@ -127,7 +135,7 @@ func (u *UI) beginLoginWith(username, password, status string) {
 	u.loginError = ""
 	u.loginStatus = status
 	u.settings.LastUser = user
-	u.saveSettings()
+	u.startLoginCooldown(now)
 	sessionFile := appdata.SessionPath()
 	if !u.rememberLogin {
 		sessionFile = ""
@@ -190,14 +198,8 @@ func (u *UI) loginFailed(win *mygo.Window, err error) {
 	if win == nil {
 		return
 	}
-	message := err.Error()
-	if errors.Is(err, ports.ErrAuthRequired) {
-		message = "登录状态无效，请重新登录"
-	}
 	win.Update(func() {
-		u.loginBusy = false
-		u.loginStatus = ""
-		u.loginError = message
+		u.recordLoginFailure(err, u.loginTime())
 	})
 }
 
@@ -270,16 +272,20 @@ func (u *UI) resetWorkspace() {
 	u.replyOpen = make(map[string]bool)
 	u.lastHighlightFloor = 0
 	u.activeHistory = ""
+	u.keywordHistory = ""
 	u.activeRun = ""
 	u.run = svc.RunSnapshot{}
 	u.sourceKey = nil
 	u.sourceFloor = 0
 	u.collapsed = make(map[string]bool)
 	u.resultScroll = ui.ScrollState{}
-	u.threadScroll = ui.ScrollState{}
-	u.sourceScroll = ui.ScrollState{}
 	u.aiScroll = ui.ScrollState{}
-	u.boardList = ui.ListState{}
+	u.boardViews = nil
+	u.readingViews = nil
+	u.directoryViews = nil
+	u.searchViews = nil
+	u.directoryTree = ui.ScrollState{}
+	u.listOnly = false
 
 	u.searchMode = 0
 	u.keywordTokens = nil
@@ -427,7 +433,7 @@ func (u *UI) tryRestoreSession() {
 }
 
 func (u *UI) autoLoginIfSaved() bool {
-	if u.closed || !u.rememberPassword || !u.hasSavedCredentials() {
+	if u.closed || u.loginBusy || u.loginCooldownSeconds(u.loginTime()) > 0 || !u.rememberPassword || !u.hasSavedCredentials() {
 		return false
 	}
 	u.beginLoginWith(u.loginUser, u.loginPassword, "正在使用保存的账号登录…")

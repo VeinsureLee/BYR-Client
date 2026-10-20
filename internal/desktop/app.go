@@ -21,6 +21,7 @@ import (
 	"BYR-Client/internal/domain"
 	"BYR-Client/internal/forum"
 	"BYR-Client/internal/platform/appdata"
+	"BYR-Client/resources"
 )
 
 type region int
@@ -44,15 +45,16 @@ type UI struct {
 	windowMu sync.RWMutex
 	win      *mygo.Window
 
-	region        region
-	returnRegion  region
-	returnValid   bool
-	themeMode     int
-	accentMode    int
-	fontScaleMode int
-	fontScale     float32
-	baseTheme     *ui.Theme
-	themePicked   bool
+	region         region
+	returnRegion   region
+	returnValid    bool
+	themeMode      int
+	darkBackground int
+	accentMode     int
+	fontScaleMode  int
+	fontScale      float32
+	baseTheme      *ui.Theme
+	themePicked    bool
 
 	browseNode         forum.NodeID
 	browseBoard        domain.BoardID
@@ -79,10 +81,11 @@ type UI struct {
 	searchError     string
 	undoHint        bool
 
-	activeHistory string
-	activeRun     string
-	run           svc.RunSnapshot
-	collapsed     map[string]bool
+	activeHistory  string
+	keywordHistory string
+	activeRun      string
+	run            svc.RunSnapshot
+	collapsed      map[string]bool
 
 	searchMode   int
 	aiQuestion   string
@@ -127,6 +130,9 @@ type UI struct {
 	loginError       string
 	loginStatus      string
 	loginBusy        bool
+	loginRetryAt     time.Time
+	loginClock       func() time.Time
+	logo             *ui.Bitmap
 	rememberLogin    bool
 	rememberPassword bool
 	closed           bool
@@ -138,12 +144,15 @@ type UI struct {
 	previewImage   domain.Image
 	previewZoom    float32
 	previewOpen    bool
+	listOnly       bool
+	boardViews     map[domain.BoardID]*boardViewState
+	readingViews   map[readingKey]*ui.ScrollState
+	directoryViews map[forum.NodeID]*ui.ScrollState
+	searchViews    map[string]searchViewState
+	directoryTree  ui.ScrollState
 
-	boardList    ui.ListState
 	resultList   ui.ListState
 	resultScroll ui.ScrollState
-	threadScroll ui.ScrollState
-	sourceScroll ui.ScrollState
 	aiScroll     ui.ScrollState
 }
 
@@ -167,6 +176,7 @@ func newUI(persist bool) *UI {
 		persist:          persist,
 		settings:         settings,
 		themeMode:        settings.ThemeMode,
+		darkBackground:   settings.DarkBackground,
 		accentMode:       settings.Accent,
 		fontScaleMode:    settings.FontScale,
 		fontScale:        fontScaleFor(settings.FontScale),
@@ -175,6 +185,7 @@ func newUI(persist bool) *UI {
 		rememberLogin:    settings.RememberLogin,
 		rememberPassword: settings.RememberPassword,
 		loginUser:        settings.LastUser,
+		loginRetryAt:     time.UnixMilli(settings.LoginRetryAfter),
 		images:           make(map[string]*imageState),
 		timeKind:         "不限",
 		scopeLabel:       "全站",
@@ -197,6 +208,12 @@ func newUI(persist bool) *UI {
 		aiModel:          settings.AIModel,
 		aiBaseURL:        settings.AIBaseURL,
 		aiReveal:         make(map[string]bool),
+	}
+	logo, err := ui.DecodeBitmap(resources.Icon)
+	if err != nil {
+		log.Printf("加载应用标识失败: %v", err)
+	} else {
+		u.logo = logo
 	}
 	u.md.OnLink = func(url string) {
 		_ = u.openLoggedInBrowserWindow(url)
@@ -269,12 +286,14 @@ func (u *UI) saveSettings() {
 		return
 	}
 	u.settings.ThemeMode = u.themeMode
+	u.settings.DarkBackground = u.darkBackground
 	u.settings.Accent = u.accentMode
 	u.settings.FontScale = u.fontScaleMode
 	u.settings.SplitWidth = u.splitWidth
 	u.settings.SplitHeight = u.splitHeight
 	u.settings.RememberLogin = u.rememberLogin
 	u.settings.RememberPassword = u.rememberPassword
+	u.settings.LoginRetryAfter = max(0, u.loginRetryAt.UnixMilli())
 	_ = appdata.SaveSettings(u.settings)
 }
 
@@ -295,10 +314,9 @@ func (u *UI) view(c *ui.Context) {
 		u.sidebar(c)
 		ui.Column(c).Grow(1).FillHeight().Background(t.Background).Children(func() {
 			u.header(c)
-			ui.Divider(c)
 			key := fmt.Sprintf("region-%d-%t", u.region, u.sourceKey != nil)
 			ui.Column(c).Key(key).Grow(1).FillWidth().
-				Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Y: 8}, Exit: &ui.Motion{Y: -6}}).
+				Transition(pageTransition()).
 				Children(func() {
 					switch u.region {
 					case regionBrowse:
@@ -440,16 +458,32 @@ func (u *UI) applyTheme(c *ui.Context) {
 			theme = *u.baseTheme
 		}
 	}
-	theme = styledTheme(theme, u.accentMode, u.fontScale)
+	theme = styledTheme(theme, u.accentMode, u.fontScale, u.darkBackground)
 	c.SetTheme(&theme)
 }
 
-func styledTheme(theme ui.Theme, accentMode int, fontScale float32) ui.Theme {
+func styledTheme(theme ui.Theme, accentMode int, fontScale float32, darkBackground int) ui.Theme {
 	accent := accentPresets[0]
 	if accentMode >= 0 && accentMode < len(accentPresets) {
 		accent = accentPresets[accentMode]
 	}
 	if theme.Dark {
+		theme.Background = ui.Hex("#111111")
+		theme.Surface = ui.Hex("#1C1C1C")
+		theme.SurfaceHover = ui.Hex("#282828")
+		theme.SurfacePressed = ui.Hex("#343434")
+		theme.Border = ui.Hex("#353535")
+		theme.Text = ui.Hex("#EEEEEE")
+		theme.TextMuted = ui.Hex("#ADADAD")
+		if darkBackground == 1 {
+			theme.Background = ui.Hex("#171C24")
+			theme.Surface = ui.Hex("#202733")
+			theme.SurfaceHover = ui.Hex("#293342")
+			theme.SurfacePressed = ui.Hex("#344155")
+			theme.Border = ui.Hex("#343E4D")
+			theme.Text = ui.Hex("#E8EEF6")
+			theme.TextMuted = ui.Hex("#A5B2C4")
+		}
 		theme.Accent = accent.Dark
 		theme.AccentHover = accent.DarkHover
 		theme.AccentPressed = accent.DarkPressed
@@ -457,6 +491,13 @@ func styledTheme(theme ui.Theme, accentMode int, fontScale float32) ui.Theme {
 		theme.Selection = accent.Dark.Alpha(0.18)
 		theme.Focus = accent.Dark
 	} else {
+		theme.Background = ui.Hex("#F6F7F9")
+		theme.Surface = ui.Hex("#FFFFFF")
+		theme.SurfaceHover = ui.Hex("#EDF1F7")
+		theme.SurfacePressed = ui.Hex("#E1E7F0")
+		theme.Border = ui.Hex("#E1E6EE")
+		theme.Text = ui.Hex("#202633")
+		theme.TextMuted = ui.Hex("#687386")
 		theme.Accent = accent.Light
 		theme.AccentHover = accent.LightHover
 		theme.AccentPressed = accent.LightPressed
@@ -468,8 +509,8 @@ func styledTheme(theme ui.Theme, accentMode int, fontScale float32) ui.Theme {
 		fontScale = 1
 	}
 	theme.Radius = 8
-	theme.Spacing = 5
-	theme.FontSize = 13 * fontScale
+	theme.Spacing = 4
+	theme.FontSize = 14 * fontScale
 	return theme
 }
 
@@ -487,6 +528,7 @@ func fontScaleFor(mode int) float32 {
 }
 
 func (u *UI) fs(size float32) float32 {
+	size = max(size, 12)
 	if u.fontScale <= 0 {
 		return size
 	}
@@ -504,18 +546,16 @@ func (u *UI) poll() {
 
 func (u *UI) sidebar(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Width(268).FillHeight().Background(t.Surface).
+	ui.Column(c).Width(sidebarWidth).Shrink(0).FillHeight().Background(sidebarColor(t, u.darkBackground)).
 		BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
-		ui.Row(c).Gap(10).Padding(16, 16, 12, 16).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Size(30, 30).Radius(9).Background(t.Accent).Center().Children(func() {
-				ui.Text(c, "B").Bold().FontSize(u.fs(15)).TextColor(t.AccentText)
-			})
+		ui.Row(c).Gap(10).Padding(22, 18, 20, 18).AlignItems(ui.Center).Children(func() {
+			u.appLogo(c, 34)
 			ui.Column(c).Gap(1).Children(func() {
 				ui.Text(c, "BYR Client").Bold().FontSize(u.fs(14))
 				ui.Text(c, "北邮人论坛").FontSize(u.fs(11)).TextColor(t.TextMuted)
 			})
 		})
-		ui.Column(c).PaddingX(10).Gap(2).Children(func() {
+		ui.Column(c).PaddingX(12).Gap(4).Children(func() {
 			u.navItem(c, iconBrowse, "浏览论坛", u.region == regionBrowse, func() {
 				u.region = regionBrowse
 			})
@@ -523,14 +563,14 @@ func (u *UI) sidebar(c *ui.Context) {
 				u.region = regionSearch
 			})
 		})
-		ui.Box(c).Padding(10, 12, 6, 12).Children(func() { ui.Divider(c) })
+		ui.Box(c).Height(18)
 		if u.region == regionSearch {
 			u.searchSidebar(c)
 		} else {
 			u.browseSidebar(c)
 		}
 		ui.Box(c).Padding(10, 12, 6, 12).Children(func() { ui.Divider(c) })
-		ui.Column(c).Padding(10, 10).Gap(2).Children(func() {
+		ui.Column(c).Padding(12).Gap(4).Children(func() {
 			u.navItem(c, iconUser, "我的", u.region == regionMe, func() { u.openUtility(regionMe) })
 			u.navItem(c, iconInbox, "私信", u.region == regionInbox, func() { u.openUtility(regionInbox) })
 			u.navItem(c, iconSettings, "设置", u.region == regionSettings, func() { u.openUtility(regionSettings) })
@@ -550,7 +590,7 @@ func (u *UI) browseSidebar(c *ui.Context) {
 			ui.Spacer(c)
 			ui.Textf(c, "%d 个分区", len(roots)).FontSize(u.fs(11)).TextColor(t.TextMuted)
 		})
-		ui.Scroll(c).Grow(1).Gap(4).ScrollbarInsets(2, 0, 2).Children(func() {
+		ui.Scroll(c).Key("directory-tree").TrackScroll(&u.directoryTree).Grow(1).Gap(4).ScrollbarInsets(2, 0, 2).Children(func() {
 			selected := u.browseNode == ""
 			row := ui.Row(c).Gap(8).Padding(6, 8).Radius(6).AlignItems(ui.Center).
 				Cursor(ui.CursorPointer).OnClick(func() { u.selectNode("") })
@@ -671,7 +711,8 @@ func (u *UI) historyRow(c *ui.Context, entry svc.HistorySnapshot) {
 
 func (u *UI) header(c *ui.Context) {
 	t := c.Theme()
-	ui.Row(c).MinHeight(58).Padding(8, 18).Gap(10).AlignItems(ui.Center).Children(func() {
+	ui.Row(c).MinHeight(56).Padding(10, 24).Gap(10).Background(t.Surface).
+		BorderWidth(0, 0, 1, 0).BorderColor(t.Border).AlignItems(ui.Center).Children(func() {
 		if u.region == regionSearch && u.sourceKey != nil {
 			u.iconButton(c, iconArrowLeft, "返回搜索", func() {
 				u.sourceKey = nil
@@ -679,7 +720,6 @@ func (u *UI) header(c *ui.Context) {
 			})
 			ui.Column(c).Gap(1).Children(func() {
 				ui.Text(c, "来源原文").Bold().FontSize(u.fs(16))
-				ui.Text(c, "返回搜索可保留结果、折叠和输入草稿").FontSize(u.fs(11)).TextColor(t.TextMuted)
 			})
 			ui.Spacer(c)
 			return
@@ -750,7 +790,6 @@ func (u *UI) breadcrumb(c *ui.Context, path []forum.Node) {
 }
 
 func (u *UI) searchHeader(c *ui.Context) {
-	t := c.Theme()
 	title := "搜索"
 	if entry, ok := u.app.HistoryEntry(u.activeHistory); ok {
 		title = entry.Title
@@ -766,7 +805,6 @@ func (u *UI) searchHeader(c *ui.Context) {
 	} else {
 		ui.Text(c, title).Bold().FontSize(u.fs(18))
 		ui.Spacer(c)
-		ui.Text(c, "关键词与 AI 问答按各自条件独立保存").FontSize(u.fs(11)).TextColor(t.TextMuted)
 	}
 }
 
@@ -783,11 +821,6 @@ func (u *UI) interactive(c *ui.Context, e ui.Element, selected bool, base ui.Col
 	}
 	e.Background(background)
 	e.Transition(ui.ElementTransition{Colors: true, Duration: 130 * time.Millisecond})
-	pose := ui.Pose{}
-	if e.Pressed() {
-		pose = ui.Pose{Y: 1, Scale: 0.987}
-	}
-	e.AnimatePose(pose, ui.Snappy)
 	return e
 }
 
@@ -813,16 +846,20 @@ func (u *UI) utilityHeader(c *ui.Context, title string) {
 
 func (u *UI) navItem(c *ui.Context, icon *ui.SVG, label string, selected bool, action func()) {
 	t := c.Theme()
-	row := ui.Row(c).Gap(10).Padding(7, 9).Radius(7).AlignItems(ui.Center).
+	row := ui.Row(c).MinHeight(40).Gap(10).Padding(9, 11).Radius(8).AlignItems(ui.Center).
 		Cursor(ui.CursorPointer).OnClick(action)
 	row = u.interactive(c, row, selected, ui.Transparent)
 	row.Children(func() {
+		marker := ui.Box(c).Width(3).Height(18).Radius(2)
+		if selected {
+			marker.Background(t.Accent)
+		}
 		color := t.TextMuted
 		if selected {
 			color = t.Accent
 		}
 		ui.Icon(c, icon).FontSize(u.fs(15)).TextColor(color)
-		text := ui.Text(c, label).FontSize(u.fs(13))
+		text := ui.Text(c, label).FontSize(u.fs(14))
 		if selected {
 			text.TextColor(t.Accent).Bold()
 		}
@@ -862,7 +899,8 @@ func (u *UI) openBoard(board domain.BoardID) {
 		return
 	}
 	u.browseBoard = board
-	u.browseThread = domain.ArticleKey{}
+	u.browseThread = u.boardView(board).thread
+	u.listOnly = false
 	if u.browseNode != "" {
 		u.requestTraffic(u.browseNode)
 	}
@@ -882,6 +920,8 @@ func (u *UI) openThread(key domain.ArticleKey) {
 		return
 	}
 	u.browseThread = key
+	u.boardView(key.BoardID).thread = key
+	u.listOnly = false
 	application.ActivateThread(key)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -900,8 +940,10 @@ func (u *UI) openSource(key domain.ArticleKey, floor int) {
 	copy := key
 	u.sourceKey = &copy
 	u.sourceFloor = floor
-	u.sourceScroll.Y = 0
 	u.lastHighlightFloor = 0
+	if floor > 0 {
+		u.readingView(key, true).Y = 0
+	}
 	application.ActivateThread(key)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -913,15 +955,20 @@ func (u *UI) openSource(key domain.ArticleKey, floor int) {
 }
 
 func (u *UI) restoreHistory(entry svc.HistorySnapshot) {
+	u.saveSearchView()
 	u.activeHistory = entry.ID
+	u.searchMode = 0
+	if entry.Mode == svc.ModeAI {
+		u.searchMode = 1
+	}
+	u.restoreSearchView(entry.ID)
+	u.region = regionSearch
 	u.sourceKey = nil
 	u.sourceFloor = 0
-	u.resultScroll.Y = 0
 	u.scopeExtraNode = ""
 	u.scopeExtraLabel = ""
 	if entry.Mode == svc.ModeAI {
 		u.stopAIContext()
-		u.activeRun = ""
 		u.searchMode = 1
 		u.aiQuestion = ""
 		u.aiAnswer = entry.AIAnswer
@@ -949,6 +996,7 @@ func (u *UI) restoreHistory(entry svc.HistorySnapshot) {
 		return
 	}
 	u.searchMode = 0
+	u.keywordHistory = entry.ID
 	u.activeRun = entry.ID
 	u.keywordTokens = append([]string(nil), entry.Query.Keywords...)
 	u.keywordDraft = ""
@@ -982,8 +1030,29 @@ func (u *UI) restoreHistory(entry svc.HistorySnapshot) {
 }
 
 func (u *UI) newSearch() {
+	u.saveSearchView()
 	u.region = regionSearch
 	u.activeHistory = ""
+	u.sourceKey = nil
+	u.sourceFloor = 0
+	if u.searchMode == 1 {
+		u.stopAIContext()
+		u.aiQuestion = ""
+		u.aiAnswer = ""
+		u.aiError = ""
+		u.aiStatus = ""
+		u.aiTrace = nil
+		u.aiSources = nil
+		u.chat = nil
+		u.chatSeq = 0
+		u.activeChat = 0
+		u.aiHistoryID = ""
+		u.aiRunning = false
+		u.aiRunToken++
+		u.aiScroll = ui.ScrollState{}
+		return
+	}
+	u.keywordHistory = ""
 	u.activeRun = ""
 	u.run = svc.RunSnapshot{}
 	u.keywordTokens = nil
@@ -1002,21 +1071,7 @@ func (u *UI) newSearch() {
 	u.sourceKey = nil
 	u.sourceFloor = 0
 	u.resultScroll.Y = 0
-	if u.searchMode == 1 {
-		u.stopAIContext()
-		u.aiQuestion = ""
-		u.aiAnswer = ""
-		u.aiError = ""
-		u.aiStatus = ""
-		u.aiTrace = nil
-		u.aiSources = nil
-		u.chat = nil
-		u.chatSeq = 0
-		u.activeChat = 0
-		u.aiHistoryID = ""
-		u.aiRunning = false
-		u.aiRunToken++
-	}
+	u.collapsed = make(map[string]bool)
 }
 
 func (u *UI) scopeOptions() []scopeOption {

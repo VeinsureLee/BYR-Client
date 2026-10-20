@@ -10,14 +10,16 @@ import (
 )
 
 type Settings struct {
-	ThemeMode        int     `json:"themeMode"` // 0 follow system, 1 light, 2 dark
-	Accent           int     `json:"accent"`    // 0 blue, 1 purple, 2 green, 3 orange
-	FontScale        int     `json:"fontScale"` // 0 small, 1 standard, 2 large, 3 extra large
+	ThemeMode        int     `json:"themeMode"`      // 0 follow system, 1 light, 2 dark
+	DarkBackground   int     `json:"darkBackground"` // 0 neutral black, 1 blue gray
+	Accent           int     `json:"accent"`         // 0 blue, 1 purple, 2 green, 3 orange
+	FontScale        int     `json:"fontScale"`      // 0 small, 1 standard, 2 large, 3 extra large
 	SplitWidth       float32 `json:"splitWidth"`
 	SplitHeight      float32 `json:"splitHeight"`
 	RememberLogin    bool    `json:"rememberLogin"`
 	RememberPassword bool    `json:"rememberPassword"`
 	LastUser         string  `json:"lastUser,omitempty"`
+	LoginRetryAfter  int64   `json:"loginRetryAfter,omitempty"` // Unix milliseconds
 	AIProvider       string  `json:"aiProvider,omitempty"`
 	AIModel          string  `json:"aiModel,omitempty"`
 	AIBaseURL        string  `json:"aiBaseURL,omitempty"`
@@ -29,7 +31,7 @@ func DefaultSettings() Settings {
 		ThemeMode:        0,
 		Accent:           0,
 		FontScale:        1,
-		SplitWidth:       380,
+		SplitWidth:       340,
 		SplitHeight:      340,
 		RememberLogin:    true,
 		RememberPassword: true,
@@ -144,6 +146,9 @@ func LoadSettings() Settings {
 	}
 	if settings.ThemeMode < 0 || settings.ThemeMode > 2 {
 		settings.ThemeMode = 0
+	}
+	if settings.DarkBackground < 0 || settings.DarkBackground > 1 {
+		settings.DarkBackground = 0
 	}
 	if settings.Accent < 0 || settings.Accent > 3 {
 		settings.Accent = 0

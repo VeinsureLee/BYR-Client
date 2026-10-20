@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -50,7 +51,7 @@ func (u *UI) plannedCard(c *ui.Context, title, description string) {
 func (u *UI) settingsContent(c *ui.Context) {
 	t := c.Theme()
 	ui.Scroll(c).Grow(1).Children(func() {
-		ui.Column(c).MaxWidth(900).Margin(0, ui.Auto).Padding(32).Gap(20).Children(func() {
+		ui.Column(c).FillWidth().MaxWidth(900).Margin(0, ui.Auto).Padding(32).Gap(24).Children(func() {
 			ui.Text(c, "设置").FontSize(u.fs(26)).Bold()
 
 			ui.Column(c).Padding(18).Gap(10).Radius(10).Background(t.Surface).Border(1, t.Border).Children(func() {
@@ -92,7 +93,7 @@ func (u *UI) settingsContent(c *ui.Context) {
 				ui.Text(c, "论坛目录").Bold().FontSize(u.fs(15))
 				stats := u.app.CatalogStats()
 				if stats.Ready {
-					ui.Text(c, fmt.Sprintf("%d 个 forum · %d 个 sub forum · %d 个 board · 初始化于 %s",
+					ui.Text(c, fmt.Sprintf("%d 个讨论区 · %d 个子讨论区 · %d 个版面 · 更新于 %s",
 						stats.Forums, stats.SubForums, stats.Boards, stats.FetchedAt.Format("2006-01-02 15:04"))).
 						FontSize(u.fs(11)).TextColor(t.TextMuted)
 				} else {
@@ -110,7 +111,7 @@ func (u *UI) settingsContent(c *ui.Context) {
 					if u.loginBusy {
 						ui.Spinner(c)
 					}
-					ui.Text(c, "只重新读取 forum / sub forum / board，不抓取版面文章").FontSize(u.fs(10)).TextColor(t.TextMuted)
+					ui.Text(c, "更新讨论区与版面目录").FontSize(u.fs(12)).TextColor(t.TextMuted)
 				})
 			})
 
@@ -125,6 +126,15 @@ func (u *UI) settingsContent(c *ui.Context) {
 						u.saveSettings()
 					}
 					ui.Text(c, u.themeModeLabel()).FontSize(u.fs(11)).TextColor(t.TextMuted)
+				})
+				ui.Text(c, "深色背景").FontSize(u.fs(12)).Bold().TextColor(t.TextMuted)
+				ui.Row(c).Gap(12).Wrap().AlignItems(ui.Center).Children(func() {
+					before := u.darkBackground
+					ui.Segmented(c, &u.darkBackground, "中性黑", "蓝灰")
+					if u.darkBackground != before {
+						u.saveSettings()
+					}
+					ui.Text(c, "深色模式下生效").FontSize(u.fs(12)).TextColor(t.TextMuted)
 				})
 				ui.Text(c, "字体大小").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
@@ -158,7 +168,7 @@ func (u *UI) settingsContent(c *ui.Context) {
 						if swatch.Pressed() {
 							pose = ui.Pose{Scale: 0.9}
 						}
-						swatch.AnimatePose(pose, ui.Snappy)
+						swatch.AnimatePose(pose, ui.Animation{Duration: 100 * time.Millisecond, Ease: ui.EaseOut})
 					}
 					accentName := accentPresets[0].Name
 					if u.accentMode >= 0 && u.accentMode < len(accentPresets) {

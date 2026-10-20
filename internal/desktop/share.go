@@ -41,20 +41,24 @@ func itoa(value int) string {
 
 func (u *UI) shareArticleButtons(c *ui.Context, key domain.ArticleKey) {
 	link := articleLink(key)
-	ui.Button(c, "复制链接").FontSize(u.fs(11)).OnClick(func() {
+	ui.Button(c, "复制链接").FontSize(u.fs(12)).OnClick(func() {
 		c.WriteClipboard(link)
 		c.Toast("帖子链接已复制")
 	})
-	ui.Button(c, "应用内打开").FontSize(u.fs(11)).Tooltip("使用当前登录 Cookie 在应用内打开").
-		OnClick(func() {
+	ui.Button(c, "更多").FontSize(u.fs(12)).Menu(func(m *ui.Menu) {
+		if m.Item("应用内打开").Chosen() {
 			if err := u.openLoggedInBrowserWindow(link); err != nil {
 				c.Toast(err.Error())
 			}
-		})
-	ui.Button(c, "系统浏览器").FontSize(u.fs(11)).Tooltip("系统浏览器无法共享应用内登录状态").
-		OnClick(func() { c.OpenURL(link) })
-	ui.Button(c, "导出 PNG").FontSize(u.fs(11)).Tooltip("将当前主题和已加载回复导出为图片").
-		OnClick(func() { u.exportThreadPNG(key) })
+		}
+		if m.Item("系统浏览器").Chosen() {
+			c.OpenURL(link)
+		}
+		m.Separator()
+		if m.Item("导出 PNG").Chosen() {
+			u.exportThreadPNG(key)
+		}
+	})
 }
 
 func (u *UI) openLoggedInBrowser(c *ui.Context, link string) {

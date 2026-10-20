@@ -54,23 +54,32 @@ func (u *UI) searchContent(c *ui.Context) {
 		return
 	}
 	t := c.Theme()
-	ui.Column(c).Key("search-mode-" + strconv.Itoa(u.searchMode)).Grow(1).FillWidth().
-		Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Y: 6}}).Children(func() {
-		ui.Row(c).Padding(12, 22, 8, 22).Gap(12).Wrap().AlignItems(ui.Center).Children(func() {
+	ui.Column(c).Grow(1).FillWidth().Children(func() {
+		ui.Row(c).Padding(12, 24).Gap(12).Wrap().Background(t.Surface).AlignItems(ui.Center).Children(func() {
+			previous := u.searchMode
 			ui.Segmented(c, &u.searchMode, "关键词检索", "AI 问答")
+			if previous != u.searchMode {
+				u.switchSearchMode(previous)
+			}
 			ui.Spacer(c)
-			ui.Text(c, "两种方式分别保存草稿、条件与当前记录").FontSize(u.fs(11)).TextColor(t.TextMuted)
+			if u.searchMode == 1 {
+				ui.Icon(c, iconSparkles).FontSize(u.fs(14)).TextColor(t.Accent)
+				if u.aiKeySaved {
+					ui.Textf(c, "%s · %s", u.aiProvider, u.aiModel).FontSize(u.fs(12)).TextColor(t.TextMuted)
+				} else {
+					ui.Button(c, "配置 AI").FontSize(u.fs(12)).OnClick(func() { u.openUtility(regionSettings) })
+				}
+			}
 		})
-		ui.Divider(c)
-		if u.searchMode == 0 {
-			ui.Column(c).FillWidth().Padding(6, 22, 8, 22).Gap(10).Children(func() {
-				u.keywordForm(c)
-			})
-			ui.Divider(c)
-			u.keywordResults(c)
-		} else {
-			u.aiChat(c)
-		}
+		ui.Column(c).Key("search-mode-" + strconv.Itoa(u.searchMode)).Grow(1).FillWidth().
+			Transition(ui.ElementTransition{Colors: true, Duration: 160 * time.Millisecond, Enter: &ui.Motion{}}).Children(func() {
+			if u.searchMode == 0 {
+				ui.Column(c).FillWidth().Padding(16, 24).Gap(10).Background(t.Surface).Children(func() { u.keywordForm(c) })
+				u.keywordResults(c)
+			} else {
+				u.aiChat(c)
+			}
+		})
 	})
 }
 
@@ -257,8 +266,12 @@ func (u *UI) startKeywordSearch() {
 		return
 	}
 	u.searchError = ""
+	u.saveSearchView()
+	u.resultScroll = ui.ScrollState{}
+	u.collapsed = make(map[string]bool)
 	u.activeRun = id
 	u.activeHistory = id
+	u.keywordHistory = id
 	u.sourceKey = nil
 	u.run, _ = u.app.Run(id)
 }
@@ -300,13 +313,13 @@ func (u *UI) keywordResults(c *ui.Context) {
 		ui.Column(c).Grow(1).Fill().Center().Gap(10).Children(func() {
 			ui.Icon(c, iconSearch).FontSize(u.fs(30)).TextColor(t.TextMuted)
 			ui.Text(c, "发起一次关键词检索").FontSize(u.fs(17)).Bold()
-			ui.Text(c, "关键词与作者至少填写一项；每轮都会按本轮条件联网获取，不用旧库预填结果。").FontSize(u.fs(12)).TextColor(t.TextMuted)
+			ui.Text(c, "输入关键词或作者 ID，查找你关心的讨论。").FontSize(u.fs(14)).TextColor(t.TextMuted)
 		})
 		return
 	}
 	run := u.run
 	ui.Scroll(c).TrackScroll(&u.resultScroll).Grow(1).Children(func() {
-		ui.Column(c).MaxWidth(920).Margin(0, ui.Auto).Padding(14, 22, 24, 22).Gap(10).Children(func() {
+		ui.Column(c).FillWidth().MaxWidth(920).Margin(0, ui.Auto).Padding(20, 24).Gap(12).Children(func() {
 			ui.Row(c).Gap(10).Wrap().AlignItems(ui.Center).Children(func() {
 				if runActive(run) {
 					ui.Spinner(c)
@@ -317,9 +330,6 @@ func (u *UI) keywordResults(c *ui.Context) {
 					ui.Badge(c, fmt.Sprintf("%d 回复", run.ReplyCount))
 				}
 				ui.Spacer(c)
-				ui.Text(c, fmt.Sprintf("本轮联网抓取 %d；本地新增 %d / 更新 %d / 新回复 %d",
-					run.ArticleCount, run.NewArticles, run.UpdatedArticles, run.NewReplies)).
-					FontSize(u.fs(10)).TextColor(t.TextMuted)
 			})
 			if run.Error != "" {
 				ui.Text(c, run.Error).FontSize(u.fs(11)).TextColor(t.Danger)
@@ -327,7 +337,7 @@ func (u *UI) keywordResults(c *ui.Context) {
 			if run.Status == svc.StatusCompleted && run.ArticleCount == 0 {
 				ui.Column(c).Padding(28).Center().Gap(6).Children(func() {
 					ui.Text(c, "本轮没有符合条件的主题").Bold()
-					ui.Text(c, "仅在本轮实际结束且没有合格结果时显示空态。").FontSize(u.fs(11)).TextColor(t.TextMuted)
+					ui.Text(c, "试试减少关键词，或扩大时间与版面范围。").FontSize(u.fs(12)).TextColor(t.TextMuted)
 				})
 				return
 			}
@@ -457,7 +467,7 @@ func (u *UI) articleResult(c *ui.Context, item svc.ArticleSnapshot) {
 	row := ui.Row(c).Gap(8).Padding(7, 10).Radius(6).Cursor(ui.CursorPointer).
 		OnClick(func() { u.openSource(article.Key, 0) })
 	row = u.interactive(c, row, false, ui.Transparent)
-	row.Transition(ui.ElementTransition{Colors: true, Enter: &ui.Motion{Y: 6}, Animation: &ui.Snappy})
+	row.Key(item.Article.Key).Transition(ui.ElementTransition{Colors: true, Duration: 140 * time.Millisecond, Enter: &ui.Motion{}})
 	row.Children(func() {
 		ui.Column(c).Grow(1).Gap(3).Children(func() {
 			ui.Text(c, article.Title).FontSize(u.fs(13)).Bold().SingleLine()
@@ -477,7 +487,7 @@ func (u *UI) articleResult(c *ui.Context, item svc.ArticleSnapshot) {
 			row := ui.Row(c).Gap(8).Padding(5, 12).AlignItems(ui.Start).Cursor(ui.CursorPointer).
 				OnClick(func() { u.openSource(article.Key, reply.Floor) })
 			row = u.interactive(c, row, false, ui.Transparent)
-			row.Transition(ui.ElementTransition{Colors: true, Enter: &ui.Motion{Y: 4}, Animation: &ui.Snappy})
+			row.Key(reply.Key).Transition(ui.ElementTransition{Colors: true, Duration: 140 * time.Millisecond, Enter: &ui.Motion{}})
 			row.Children(func() {
 				ui.Badge(c, fmt.Sprintf("#%d", reply.Floor))
 				ui.Column(c).Grow(1).Gap(2).Children(func() {
@@ -496,27 +506,14 @@ func (u *UI) articleResult(c *ui.Context, item svc.ArticleSnapshot) {
 
 func (u *UI) aiChat(c *ui.Context) {
 	t := c.Theme()
-	ui.Row(c).Padding(8, 22, 6, 22).Gap(10).Wrap().AlignItems(ui.Center).Children(func() {
-		ui.Icon(c, iconSparkles).FontSize(u.fs(15)).TextColor(t.Accent)
-		if u.aiKeySaved {
-			ui.Textf(c, "%s · %s", u.aiProvider, u.aiModel).FontSize(u.fs(12)).Bold()
-			ui.Badge(c, "API 已配置")
-		} else {
-			ui.Text(c, "尚未配置 AI API").FontSize(u.fs(12)).Bold().TextColor(t.Warning)
-			ui.Button(c, "去设置 AI 配置").FontSize(u.fs(11)).OnClick(func() { u.openUtility(regionSettings) })
-		}
-		ui.Spacer(c)
-		ui.Text(c, "模型可调用论坛工具检索全站多个版面").FontSize(u.fs(10)).TextColor(t.TextMuted)
-	})
-	ui.Divider(c)
-	ui.Scroll(c).TrackScroll(&u.aiScroll).Grow(1).Children(func() {
-		ui.Column(c).FillWidth().Padding(18, 28).Gap(18).Children(func() {
+	ui.Scroll(c).Key("ai-conversation").TrackScroll(&u.aiScroll).Grow(1).Children(func() {
+		ui.Column(c).FillWidth().MaxWidth(848).Margin(0, ui.Auto).Padding(24).Gap(28).Children(func() {
 			if len(u.chat) == 0 {
 				ui.Column(c).Padding(12, 2).Gap(8).Children(func() {
 					ui.Icon(c, iconSparkles).FontSize(u.fs(28)).TextColor(t.Accent)
-					ui.Text(c, "向 AI 提问").FontSize(u.fs(18)).Bold()
-					ui.Text(c, "AI 可以搜索全站或多个版面、读取主题、查询流量和最新帖，再综合回答。").
-						FontSize(u.fs(12)).TextColor(t.TextMuted)
+					ui.Text(c, "你想了解什么？").FontSize(u.fs(24)).Bold()
+					ui.Text(c, "查找论坛里的经验、观点与最新讨论，让回答附上来源。").
+						FontSize(u.fs(14)).TextColor(t.TextMuted)
 					ui.Text(c, "示例：计算机相关版面最近一周有哪些 Go 实习帖？请对比并给出链接。").
 						FontSize(u.fs(11)).TextColor(t.TextMuted)
 					if !u.aiKeySaved {
@@ -538,9 +535,9 @@ func (u *UI) aiTurn(c *ui.Context, turn *chatTurn) {
 	t := c.Theme()
 	if turn.Role == "user" {
 		ui.Row(c).FillWidth().Justify(ui.End).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).MaxWidth(660).Padding(10, 14).Radius(12).Background(t.Accent).
+			ui.Column(c).Key(turn.ID).MaxWidth(600).Padding(12, 16).Radius(12).Background(t.Selection).
 				Children(func() {
-					ui.Text(c, turn.Text).FontSize(u.fs(14)).TextColor(t.AccentText).Selectable().LineHeight(1.5)
+					ui.Text(c, turn.Text).FontSize(u.fs(16)).Selectable().LineHeight(1.65)
 				})
 		})
 		return
@@ -549,7 +546,7 @@ func (u *UI) aiTurn(c *ui.Context, turn *chatTurn) {
 		turn.Groups = make(map[string]bool)
 	}
 	ui.Row(c).FillWidth().Justify(ui.Start).AlignItems(ui.Start).Children(func() {
-		ui.Column(c).MaxWidth(800).Gap(8).Children(func() {
+		ui.Column(c).Key(turn.ID).Grow(1).FillWidth().Gap(12).Children(func() {
 			provider := turn.Provider
 			if provider == "" {
 				provider = u.aiProvider
@@ -582,6 +579,12 @@ func (u *UI) aiTurn(c *ui.Context, turn *chatTurn) {
 						u.toolTraceView(c, tool)
 					}
 				})
+				if !turn.ToolsOpen {
+					last := turn.Tools[len(turn.Tools)-1]
+					if last.Summary != "" {
+						ui.Text(c, last.Summary).FontSize(u.fs(12)).TextColor(t.TextMuted).MaxLines(2)
+					}
+				}
 			} else if len(turn.Trace) > 0 {
 				ui.Column(c).Padding(10, 12).Gap(4).Radius(8).Background(t.Surface).Border(1, t.Border).Children(func() {
 					ui.Text(c, "工具调用").Bold().FontSize(u.fs(12))
@@ -591,11 +594,16 @@ func (u *UI) aiTurn(c *ui.Context, turn *chatTurn) {
 				})
 			}
 			if turn.Text != "" {
+				previousTheme := c.Theme()
+				bodyTheme := *previousTheme
+				bodyTheme.FontSize = u.fs(16)
+				c.SetTheme(&bodyTheme)
 				if turn.Running {
 					markdown.Stream(c, turn.Text, &u.md)
 				} else {
 					markdown.View(c, turn.Text, &u.md)
 				}
+				c.SetTheme(previousTheme)
 			} else if turn.Running {
 				ui.Text(c, "正在思考…").FontSize(u.fs(12)).TextColor(t.TextMuted)
 			}
@@ -703,42 +711,36 @@ func prettyToolArguments(arguments string) string {
 
 func (u *UI) aiComposer(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Padding(10, 22, 14, 22).Gap(8).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).
-		Background(t.Background).Children(func() {
-		ui.Row(c).Gap(10).AlignItems(ui.End).Children(func() {
-			ui.Column(c).Grow(1).Gap(4).Children(func() {
-				ui.Text(c, "问题").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
-				ui.TextArea(c, &u.aiQuestion).Placeholder("输入问题，Enter 发送，Shift+Enter 换行").Lines(1, 5).Label("AI 问题").
-					OnTextKey(func(k ui.TextKey) bool {
-						if k.Key == ui.KeyEnter && k.Mods == 0 {
-							if !u.aiRunning {
-								u.aiQuestion = k.Text()
-								u.startAI()
-								k.SetText("")
-							}
-							return true
-						}
-						return false
-					})
+	ui.Column(c).FillWidth().MaxWidth(848).Margin(0, ui.Auto).Padding(12, 24, 20, 24).Children(func() {
+		ui.Column(c).FillWidth().Padding(16).Gap(12).Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
+			ui.TextArea(c, &u.aiQuestion).Placeholder("输入问题，Enter 发送，Shift+Enter 换行").Lines(1, 5).Label("AI 问题").
+				FontSize(u.fs(16)).Border(0, ui.Transparent).OnTextKey(func(k ui.TextKey) bool {
+				if k.Key == ui.KeyEnter && k.Mods == 0 {
+					if !u.aiRunning {
+						u.aiQuestion = k.Text()
+						u.startAI()
+						k.SetText("")
+					}
+					return true
+				}
+				return false
 			})
-			ui.Column(c).Width(160).Gap(4).Children(func() {
-				ui.Text(c, "时间范围").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
-				ui.Select(c, &u.aiTimeKind, []string{"近一周", "近一个月", "不限", "自定义"})
+			ui.Row(c).Gap(10).Wrap().AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "时间范围").FontSize(u.fs(12)).TextColor(t.TextMuted)
+				ui.Select(c, &u.aiTimeKind, []string{"近一周", "近一个月", "不限", "自定义"}).Width(148).Label("时间范围")
+				ui.Spacer(c)
+				if u.aiRunning {
+					ui.Button(c, "停止").OnClick(u.stopAI)
+				} else {
+					ui.PrimaryButton(c, "发送").OnClick(u.startAI)
+				}
 			})
-		})
-		if u.aiTimeKind == "自定义" {
-			ui.Row(c).Gap(10).Children(func() {
-				ui.Column(c).Width(150).Gap(4).Children(func() {
-					ui.Text(c, "从").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
-					ui.DateInput(c, &u.aiFrom)
+			if u.aiTimeKind == "自定义" {
+				ui.Row(c).Gap(12).Wrap().Children(func() {
+					u.field(c, "从", 150, func() { ui.DateInput(c, &u.aiFrom) })
+					u.field(c, "至", 150, func() { ui.DateInput(c, &u.aiTo) })
 				})
-				ui.Column(c).Width(150).Gap(4).Children(func() {
-					ui.Text(c, "至").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
-					ui.DateInput(c, &u.aiTo)
-				})
-			})
-		}
-		ui.Row(c).Gap(10).Wrap().AlignItems(ui.Center).Children(func() {
+			}
 			ui.Collapsible(c, "检索详情", &u.aiDetails, func() {
 				ui.Row(c).Gap(12).Wrap().Children(func() {
 					u.field(c, "范围", 200, func() {
@@ -751,22 +753,14 @@ func (u *UI) aiComposer(c *ui.Context) {
 						ui.NumberInput(c, &u.aiPerBoard, 1, 100, 1)
 					})
 				})
-				ui.Text(c, "全站问题请保持范围为“全站”，模型会跨版面调用搜索工具；单一版面结果不能代表全站。").
-					FontSize(u.fs(10)).TextColor(t.TextMuted)
 			})
-			ui.Spacer(c)
-			if u.aiRunning {
-				ui.Button(c, "停止").OnClick(u.stopAI)
-			} else {
-				ui.PrimaryButton(c, "发送").OnClick(u.startAI)
+			if u.aiRunning && u.aiStatus != "" {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Spinner(c)
+					ui.Text(c, u.aiStatus).FontSize(u.fs(12)).TextColor(t.TextMuted)
+				})
 			}
 		})
-		if u.aiRunning && u.aiStatus != "" {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Spinner(c)
-				ui.Text(c, u.aiStatus).FontSize(u.fs(10)).TextColor(t.TextMuted)
-			})
-		}
 	})
 }
 
@@ -812,6 +806,7 @@ func (u *UI) startAI() {
 		Concurrency: domain.DefaultConcurrency,
 	}
 	if u.aiHistoryID == "" {
+		u.saveSearchView()
 		u.aiHistoryID = application.AddAIHistory(question, query)
 	}
 	u.activeHistory = u.aiHistoryID

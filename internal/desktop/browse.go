@@ -16,7 +16,7 @@ import (
 func (u *UI) browseContent(c *ui.Context) {
 	key := "browse:" + string(u.browseBoard) + ":" + string(u.browseNode)
 	ui.Column(c).Key(key).Grow(1).FillWidth().
-		Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Y: 8}, Exit: &ui.Motion{Y: -6}}).
+		Transition(pageTransition()).
 		Children(func() {
 			if u.browseBoard != "" {
 				u.boardContent(c)
@@ -42,11 +42,11 @@ func (u *UI) forumOverview(c *ui.Context) {
 		ui.Text(c, err.Error()).Padding(24)
 		return
 	}
-	ui.Scroll(c).Grow(1).Children(func() {
+	ui.Scroll(c).TrackScroll(u.directoryView("")).Grow(1).Children(func() {
 		u.requestTraffic("")
-		ui.Column(c).MaxWidth(1010).Margin(0, ui.Auto).Padding(30).Gap(18).Children(func() {
+		ui.Column(c).FillWidth().MaxWidth(1010).Margin(0, ui.Auto).Padding(30).Gap(18).Children(func() {
 			ui.Row(c).Gap(12).Wrap().AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "浏览论坛").FontSize(u.fs(26)).Bold()
+				ui.Text(c, "发现讨论").FontSize(u.fs(24)).Bold()
 				ui.Spacer(c)
 				ui.Button(c, "刷新论坛概览").FontSize(u.fs(11)).OnClick(func() {
 					u.loadTraffic("", true)
@@ -55,7 +55,7 @@ func (u *UI) forumOverview(c *ui.Context) {
 					}
 				})
 			})
-			ui.Text(c, "从左侧目录进入分区，点击版面才读取该版主题列表，打开主题才读取正文与回复。首次进入会统计各版今日发帖与流量。").
+			ui.Text(c, "从感兴趣的分区开始，看看大家正在聊什么。").
 				TextColor(t.TextMuted)
 			if stats := u.app.CatalogStats(); len(stats.Warnings) > 0 {
 				ui.Text(c, fmt.Sprintf("目录部分加载：%d 条警告。可在设置中查看详情。", len(stats.Warnings))).
@@ -71,7 +71,7 @@ func (u *UI) forumOverview(c *ui.Context) {
 			if traffic, ok := u.app.TrafficForNode(""); ok {
 				summary = fmt.Sprintf("今日全站发帖 %d · 在线 %d", traffic.TodayPosts, traffic.OnlineUsers)
 			}
-			ui.Textf(c, "当前目录共 %d 个顶层 forum · %s", len(roots), summary).
+			ui.Textf(c, "共 %d 个讨论区 · %s", len(roots), summary).
 				FontSize(u.fs(11)).TextColor(t.TextMuted)
 		})
 	})
@@ -89,11 +89,10 @@ func (u *UI) forumCard(c *ui.Context, node forum.Node) {
 	} else if u.fontScale > 1.05 {
 		cardWidth = 360
 	}
-	card := ui.Column(c).Width(cardWidth).Padding(18).Gap(9).Radius(10).
+	card := ui.Column(c).Key("forum-"+string(node.ID)).Width(cardWidth).MinHeight(184).Padding(20).Gap(12).Radius(12).
 		Background(t.Surface).Border(1, t.Border).Cursor(ui.CursorPointer).
 		OnClick(func() { u.selectNode(node.ID) })
 	card = u.interactive(c, card, false, t.Surface)
-	card.Transition(ui.ElementTransition{Colors: true, Enter: &ui.Motion{Y: 6}, Animation: &ui.Snappy})
 	card.Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Icon(c, iconFolder).FontSize(u.fs(17)).TextColor(t.Accent)
@@ -152,8 +151,8 @@ func (u *UI) nodeContent(c *ui.Context) {
 		ui.Text(c, err.Error()).Padding(24)
 		return
 	}
-	ui.Scroll(c).Grow(1).Children(func() {
-		ui.Column(c).MaxWidth(1010).Margin(0, ui.Auto).Padding(30).Gap(16).Children(func() {
+	ui.Scroll(c).TrackScroll(u.directoryView(node.ID)).Grow(1).Children(func() {
+		ui.Column(c).FillWidth().MaxWidth(1010).Margin(0, ui.Auto).Padding(30).Gap(20).Children(func() {
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, node.Name).FontSize(u.fs(24)).Bold()
 				ui.Badge(c, kindLabel(node.Kind))
@@ -169,9 +168,13 @@ func (u *UI) nodeContent(c *ui.Context) {
 			ui.Row(c).Gap(12).Wrap().AlignItems(ui.Center).Children(func() {
 				u.trafficStrip(c, node.ID, false)
 				ui.Spacer(c)
-				ui.Button(c, "刷新流量").FontSize(u.fs(11)).OnClick(func() { u.loadTraffic(node.ID, true) })
+				ui.Button(c, "刷新概览").FontSize(u.fs(12)).OnClick(func() {
+					u.loadTraffic(node.ID, true)
+					for _, child := range children {
+						u.loadLatestTopic(child.ID, true)
+					}
+				})
 			})
-			ui.Divider(c)
 			if len(children) == 0 {
 				ui.Text(c, "该节点没有下级目录。").TextColor(t.TextMuted).Padding(16)
 				return
@@ -187,8 +190,9 @@ func (u *UI) nodeContent(c *ui.Context) {
 
 func (u *UI) childRow(c *ui.Context, node forum.Node) {
 	t := c.Theme()
-	row := ui.Row(c).Gap(12).Padding(14, 16).Radius(8).AlignItems(ui.Center).
-		Background(t.Surface).Border(1, t.Border).Cursor(ui.CursorPointer).
+	u.requestLatestTopic(node.ID)
+	row := ui.Row(c).Key("child-"+string(node.ID)).Gap(14).Padding(18, 20).Radius(12).AlignItems(ui.Center).
+		Background(t.Surface).Cursor(ui.CursorPointer).
 		OnClick(func() { u.selectNode(node.ID) })
 	row = u.interactive(c, row, false, t.Surface)
 	row.Children(func() {
@@ -197,11 +201,24 @@ func (u *UI) childRow(c *ui.Context, node forum.Node) {
 			icon = iconBrowse
 		}
 		ui.Icon(c, icon).FontSize(u.fs(16)).TextColor(t.TextMuted)
-		ui.Column(c).Grow(1).Gap(2).Children(func() {
+		ui.Column(c).Grow(1).Gap(6).Children(func() {
 			ui.Text(c, node.Name).FontSize(u.fs(16)).Bold()
-			if node.Kind == forum.KindBoard {
-				ui.Text(c, "版面 · 主题列表按需读取").FontSize(u.fs(12)).TextColor(t.TextMuted)
+			if latest, board, ok := u.app.LatestTopic(node.ID); ok {
+				ui.Text(c, latest.Title).FontSize(u.fs(14)).MaxLines(1)
+				at := latest.LastReplyAt
+				if at.IsZero() {
+					at = latest.CreatedAt
+				}
+				ui.Textf(c, "%s · %s · %s", latest.Author, relativeTime(at), u.app.BoardName(board)).
+					FontSize(u.fs(12)).TextColor(t.TextMuted).SingleLine()
+			} else if u.app.LatestLoading(node.ID) {
+				ui.Text(c, "正在读取最新主题…").FontSize(u.fs(12)).TextColor(t.TextMuted)
+			} else if u.app.LatestError(node.ID) != "" {
+				ui.Text(c, "最新主题暂不可用").FontSize(u.fs(12)).TextColor(t.TextMuted)
 			} else {
+				ui.Text(c, "暂无最新主题").FontSize(u.fs(12)).TextColor(t.TextMuted)
+			}
+			if node.Kind != forum.KindBoard {
 				boards, subForums := u.app.DirectoryCounts(node.ID)
 				ui.Text(c, directoryCountText(boards, subForums)).FontSize(u.fs(12)).TextColor(t.TextMuted)
 			}
@@ -217,6 +234,9 @@ func (u *UI) boardContent(c *ui.Context) {
 	snapshot, ok := u.app.Board(u.browseBoard)
 	ui.Column(c).Grow(1).FillWidth().Children(func() {
 		ui.Row(c).Padding(12, 20).Gap(12).AlignItems(ui.Center).Children(func() {
+			if width, _ := c.Size(); width < u.readingBreakpoint() && u.browseThread.ArticleID != "" && !u.listOnly {
+				ui.Button(c, "主题列表").OnClick(func() { u.listOnly = true })
+			}
 			ui.Text(c, u.app.BoardName(u.browseBoard)).Bold().FontSize(u.fs(18))
 			if ok {
 				ui.Text(c, fmt.Sprintf("%d 个主题已加载", len(snapshot.Articles))).FontSize(u.fs(12)).TextColor(t.TextMuted)
@@ -246,12 +266,15 @@ func (u *UI) boardContent(c *ui.Context) {
 			}
 			u.threadPane(c, u.browseThread, false, 0)
 		}
-		var split ui.Element
-		if width, _ := c.Size(); width < 1180 {
-			split = ui.SplitVertical(c, &u.splitHeight, list, detail)
-		} else {
-			split = ui.Split(c, &u.splitWidth, list, detail)
+		if width, _ := c.Size(); width < u.readingBreakpoint() {
+			if u.browseThread.ArticleID == "" || u.listOnly {
+				list()
+			} else {
+				detail()
+			}
+			return
 		}
+		split := ui.Split(c, &u.splitWidth, list, detail)
 		split.Grow(1)
 		if split.Changed() {
 			u.saveSettings()
@@ -261,7 +284,7 @@ func (u *UI) boardContent(c *ui.Context) {
 
 func (u *UI) boardListPane(c *ui.Context, snapshot svc.BoardSnapshot, ok bool) {
 	t := c.Theme()
-	ui.Column(c).FillHeight().BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
+	ui.Column(c).Key("board-list-" + string(u.browseBoard)).Grow(1).FillHeight().Background(t.Surface).Children(func() {
 		if !ok || (snapshot.Loading && len(snapshot.Articles) == 0) {
 			ui.Column(c).Grow(1).Center().Gap(8).Children(func() {
 				ui.Spinner(c)
@@ -270,9 +293,10 @@ func (u *UI) boardListPane(c *ui.Context, snapshot svc.BoardSnapshot, ok bool) {
 			return
 		}
 		articles := snapshot.Articles
-		u.boardList.Key = func(i int) any { return articles[i].Key.ArticleID }
-		u.boardList.Label = func(i int) string { return articles[i].Title }
-		ui.List(c, &u.boardList, len(articles), func(i int) {
+		state := &u.boardView(u.browseBoard).list
+		state.Key = func(i int) any { return articles[i].Key }
+		state.Label = func(i int) string { return articles[i].Title }
+		ui.List(c, state, len(articles), func(i int) {
 			u.boardRow(c, articles[i])
 		}).Grow(1).Children(func() {
 			if len(articles) == 0 {
@@ -307,7 +331,7 @@ func (u *UI) boardListPane(c *ui.Context, snapshot svc.BoardSnapshot, ok bool) {
 func (u *UI) boardRow(c *ui.Context, article domain.Article) {
 	t := c.Theme()
 	selected := article.Key == u.browseThread
-	row := ui.Row(c).Gap(10).Padding(11, 14).AlignItems(ui.Start).Cursor(ui.CursorPointer).
+	row := ui.Row(c).Key(article.Key).Gap(10).Padding(15, 16).AlignItems(ui.Start).Cursor(ui.CursorPointer).
 		OnClick(func() { u.openThread(article.Key) })
 	row = u.interactive(c, row, selected, ui.Transparent)
 	row.Children(func() {
@@ -339,10 +363,7 @@ func (u *UI) threadPane(c *ui.Context, key domain.ArticleKey, fromSearch bool, h
 	t := c.Theme()
 	snapshot, ok := u.app.Thread(key)
 	if !ok || (snapshot.Loading && snapshot.Article.Title == "") {
-		ui.Column(c).Grow(1).Fill().Center().Gap(8).Children(func() {
-			ui.Spinner(c)
-			ui.Text(c, "正在读取主题正文…").FontSize(u.fs(12)).TextColor(t.TextMuted)
-		})
+		u.readingPlaceholder(c)
 		return
 	}
 	if snapshot.Error != "" && snapshot.Article.Title == "" {
@@ -352,20 +373,17 @@ func (u *UI) threadPane(c *ui.Context, key domain.ArticleKey, fromSearch bool, h
 		})
 		return
 	}
-	scroll := &u.threadScroll
-	if fromSearch {
-		scroll = &u.sourceScroll
-	}
-	ui.Scroll(c).TrackScroll(scroll).Grow(1).Children(func() {
-		ui.Column(c).Key("thread:"+string(key.ArticleID)).MaxWidth(860).Margin(0, ui.Auto).Padding(26).Gap(12).
-			Transition(ui.ElementTransition{Animation: &ui.Snappy, Enter: &ui.Motion{Y: 8}}).Children(func() {
+	scroll := u.readingView(key, fromSearch)
+	ui.Scroll(c).Key(readingKey{key, fromSearch}).TrackScroll(scroll).Background(t.Surface).Grow(1).Children(func() {
+		ui.Column(c).Key(key).FillWidth().MaxWidth(820).Margin(0, ui.Auto).Padding(28, 32).Gap(18).
+			Transition(ui.ElementTransition{Colors: true, Duration: 140 * time.Millisecond, Enter: &ui.Motion{}}).Children(func() {
 			if fromSearch {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					ui.Badge(c, "来源原文")
 					ui.Text(c, joinPath(u.app.BoardPath(key.BoardID))).FontSize(u.fs(11)).TextColor(t.TextMuted)
 				})
 			}
-			ui.Text(c, snapshot.Article.Title).FontSize(u.fs(24)).Bold().LineHeight(1.3)
+			ui.Text(c, snapshot.Article.Title).FontSize(u.fs(24)).Bold().LineHeight(1.4)
 			ui.Row(c).Gap(12).Wrap().AlignItems(ui.Center).Children(func() {
 				ui.Text(c, snapshot.Article.Author).FontSize(u.fs(13)).Bold()
 				ui.Text(c, relativeTime(snapshot.Article.CreatedAt)).FontSize(u.fs(12)).TextColor(t.TextMuted)
@@ -374,11 +392,10 @@ func (u *UI) threadPane(c *ui.Context, key domain.ArticleKey, fromSearch bool, h
 					ui.Spinner(c)
 				}
 			})
-			ui.Row(c).Gap(8).Wrap().Justify(ui.End).AlignItems(ui.Center).Children(func() {
-				u.shareArticleButtons(c, key)
-			})
-			ui.Divider(c)
-			ui.Text(c, snapshot.Article.Content).FontSize(u.fs(14)).Selectable().LineHeight(1.7)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() { u.shareArticleButtons(c, key) })
+			if snapshot.Article.Content != "" {
+				ui.Text(c, snapshot.Article.Content).FontSize(u.fs(16)).Selectable().LineHeight(1.75)
+			}
 			u.imageCollection(c, snapshot.Article.Images, 560, 420)
 			ui.Row(c).Padding(6, 0).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, iconReply).FontSize(u.fs(15)).TextColor(t.TextMuted)
@@ -423,37 +440,43 @@ func (u *UI) threadPane(c *ui.Context, key domain.ArticleKey, fromSearch bool, h
 }
 
 func (u *UI) replyTree(c *ui.Context, node *replyNode, depth int, highlightFloor int) {
-	u.replyCard(c, node.Reply, node.Reply.Floor == highlightFloor, depth, node.ParentFloor)
-	if len(node.Children) == 0 {
-		return
-	}
 	key := string(node.Reply.Key.ReplyID)
 	open, exists := u.replyOpen[key]
 	if !exists {
 		open = true
 	}
-	ui.Column(c).MarginStart(float32(min(depth, 6)) * 20).Children(func() {
-		ui.Collapsible(c, fmt.Sprintf("楼中楼 · %d 条回复", len(node.Children)), &open, func() {
-			for _, child := range node.Children {
-				u.replyTree(c, child, depth+1, highlightFloor)
+	ui.Column(c).Key(node.Reply.Key).FillWidth().Gap(8).Children(func() {
+		var disclosure ui.CollapsibleParts
+		ui.Row(c).FillWidth().Gap(4).AlignItems(ui.Start).Children(func() {
+			if len(node.Children) > 0 {
+				disclosure = ui.CollapsibleBase(c, &open)
+				disclosure.Trigger.Size(24, 32).Radius(6).
+					Label(fmt.Sprintf("折叠或展开 #%d 的回复", node.Reply.Floor)).Tooltip("折叠或展开回复").
+					Children(func() {
+						ui.Icon(c, iconChevron).FontSize(14).Rotate(90 * disclosure.Progress()).TextColor(c.Theme().TextMuted)
+					})
+			} else {
+				ui.Box(c).Width(24).Shrink(0)
 			}
+			u.replyCard(c, node.Reply, node.Reply.Floor == highlightFloor, depth, node.ParentFloor)
 		})
+		if len(node.Children) > 0 {
+			panel := disclosure.Panel(func() {
+				for _, child := range node.Children {
+					u.replyTree(c, child, depth+1, highlightFloor)
+				}
+			}).BorderWidth(0, 0, 0, 1).BorderColor(c.Theme().Border).Gap(8)
+			if depth < 5 {
+				panel.MarginStart(12).PaddingStart(12)
+			}
+		}
 	})
 	u.replyOpen[key] = open
 }
 
 func (u *UI) replyCard(c *ui.Context, reply domain.Reply, highlighted bool, depth int, parentFloor int) {
 	t := c.Theme()
-	indent := float32(depth)
-	if indent > 6 {
-		indent = 6
-	}
-	card := ui.Column(c).MarginStart(indent*20).Gap(7).Padding(14, 16).Radius(8).
-		Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border)
-	if depth > 0 {
-		card.BorderWidth(1, 1, 1, 3)
-		card.PaddingStart(12)
-	}
+	card := ui.Column(c).Grow(1).Gap(10).Padding(16, 18).Radius(10).Background(t.Background)
 	if highlighted {
 		card.Border(1, t.Accent)
 	}
@@ -482,7 +505,7 @@ func (u *UI) replyCard(c *ui.Context, reply domain.Reply, highlighted bool, dept
 				}
 			})
 		}
-		ui.Text(c, reply.Content).FontSize(u.fs(14)).Selectable().LineHeight(1.6)
+		ui.Text(c, reply.Content).FontSize(u.fs(16)).Selectable().LineHeight(1.75)
 		u.imageCollection(c, reply.Images, 480, 320)
 	})
 }
@@ -657,16 +680,16 @@ func directoryCountText(boards, subForums int) string {
 func kindLabel(kind forum.NodeKind) string {
 	switch kind {
 	case forum.KindForum:
-		return "forum"
+		return "讨论区"
 	case forum.KindSubForum:
-		return "sub forum"
+		return "子讨论区"
 	case forum.KindBoard:
-		return "board"
+		return "版面"
 	default:
 		return string(kind)
 	}
 }
 
 func nodeDescription(name string) string {
-	return "「" + name + "」下的内容按需读取；展开目录不会批量抓取所有版面。"
+	return "浏览「" + name + "」下的版面与最新讨论。"
 }
