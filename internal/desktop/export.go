@@ -211,7 +211,6 @@ func (d *threadExportData) writeReply(c *ui.Context, node *replyNode, depth int)
 	})
 	if len(node.Children) > 0 {
 		ui.Column(c).MarginStart(indent * 18).Gap(4).Children(func() {
-			ui.Textf(c, "楼中楼 · %d 条回复", len(node.Children)).FontSize(d.fs(10)).Bold().TextColor(t.Accent)
 			for _, child := range node.Children {
 				d.writeReply(c, child, depth+1)
 			}

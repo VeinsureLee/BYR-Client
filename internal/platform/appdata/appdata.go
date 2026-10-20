@@ -29,7 +29,7 @@ func DefaultSettings() Settings {
 		ThemeMode:        0,
 		Accent:           0,
 		FontScale:        1,
-		SplitWidth:       380,
+		SplitWidth:       340,
 		SplitHeight:      340,
 		RememberLogin:    true,
 		RememberPassword: true,

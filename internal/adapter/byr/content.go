@@ -240,7 +240,19 @@ func parseThread(doc *xhtml.Node, key domain.ArticleKey, baseURL string) (domain
 	}
 	title = strings.TrimSpace(strings.TrimPrefix(title, "文章主题:"))
 
-	wraps := findAllClass(doc, "a-wrap")
+	// A featured reply can itself contain an a-wrap. Only actual top-level
+	// posts belong in the thread; featured copies must not become extra floors.
+	var wraps []*xhtml.Node
+	walkHTML(doc, func(node *xhtml.Node) bool {
+		if postDecoration(node) {
+			return false
+		}
+		if hasClass(node, "a-wrap") {
+			wraps = append(wraps, node)
+			return false
+		}
+		return true
+	})
 	if len(wraps) == 0 {
 		if title == "" {
 			return domain.Article{}, nil, fmt.Errorf("主题 %s 页面结构无法识别", key.ArticleID)
@@ -252,22 +264,25 @@ func parseThread(doc *xhtml.Node, key domain.ArticleKey, baseURL string) (domain
 	replies := make([]domain.Reply, 0, len(wraps))
 	seenFloors := make(map[int]bool)
 	for index, wrap := range wraps {
-		contentNode := findClass(wrap, "a-content-wrap")
+		contentNode := findPostClass(wrap, "a-content")
 		if contentNode == nil {
-			contentNode = findClass(wrap, "a-content")
+			contentNode = findPostClass(wrap, "a-content-wrap")
 		}
 		if contentNode == nil {
 			continue
 		}
+		// Read text and images from the same sanitized subtree. The surrounding
+		// content wrapper may also hold featured replies, voting and controls.
+		contentNode = copyPostContent(contentNode, true)
 		raw := textContent(contentNode)
 		content, postTime := cleanPostContent(raw)
-		if content == "" {
-			content = strings.TrimSpace(raw)
-		}
 		content, quoteAuthor, quoteContent := splitQuote(content)
 		floor := floorNumber(wrap, index+1)
-		if floor <= 0 || seenFloors[floor] {
+		if floor <= 0 {
 			floor = index + 1
+		}
+		if seenFloors[floor] {
+			continue
 		}
 		seenFloors[floor] = true
 		author := "匿名"
@@ -306,6 +321,55 @@ func parseThread(doc *xhtml.Node, key domain.ArticleKey, baseURL string) (domain
 	}
 	article.ReplyCount = len(replies)
 	return article, replies, nil
+}
+
+// findPostClass never descends into a nested post or a featured-reply widget.
+func findPostClass(root *xhtml.Node, class string) *xhtml.Node {
+	var found *xhtml.Node
+	walkHTML(root, func(node *xhtml.Node) bool {
+		if found != nil || (node != root && (hasClass(node, "a-wrap") || postDecoration(node))) {
+			return false
+		}
+		if hasClass(node, class) {
+			found = node
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func postDecoration(node *xhtml.Node) bool {
+	if node.Type != xhtml.ElementNode {
+		return false
+	}
+	switch node.Data {
+	case "script", "style", "button", "input", "select":
+		return true
+	}
+	for _, marker := range []string{
+		"a-content-reply", "a-content-reply-wrap", "a-reply", "a-reply-wrap",
+		"a-func", "a-controls", "a-hot", "a-best", "a-content-best",
+		"hot-reply", "hot-replies", "hot-reply-list", "best-reply", "best-replies",
+	} {
+		if hasClass(node, marker) || attr(node, "id") == marker {
+			return true
+		}
+	}
+	return false
+}
+
+func copyPostContent(node *xhtml.Node, root bool) *xhtml.Node {
+	if node == nil || postDecoration(node) || (!root && hasClass(node, "a-wrap")) {
+		return nil
+	}
+	copy := &xhtml.Node{Type: node.Type, Data: node.Data, DataAtom: node.DataAtom, Attr: append([]xhtml.Attribute(nil), node.Attr...)}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if clean := copyPostContent(child, false); clean != nil {
+			copy.AppendChild(clean)
+		}
+	}
+	return copy
 }
 
 func floorNumber(wrap *xhtml.Node, fallback int) int {
@@ -476,6 +540,7 @@ func cleanPostContent(raw string) (string, time.Time) {
 				headerEnd = i
 				break
 			}
+			headerEnd = i + 1
 		}
 	}
 	footerStart := len(lines)

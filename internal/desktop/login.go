@@ -44,7 +44,7 @@ func (u *UI) loginView(c *ui.Context) {
 					})
 				})
 				ui.Text(c, "登录北邮人论坛").FontSize(u.fs(23)).Bold()
-				ui.Text(c, "使用论坛账号密码登录。登录成功后只初始化 forum / sub forum / board 目录，不批量抓取任何版面文章。").
+				ui.Text(c, "登录后浏览版面、阅读讨论，也可以搜索帖子或向 AI 提问。").
 					FontSize(u.fs(12)).TextColor(t.TextMuted).LineHeight(1.5)
 
 				enter := false
@@ -102,10 +102,7 @@ func (u *UI) loginView(c *ui.Context) {
 					c.Invalidate()
 				}
 			})
-		card.Transition(ui.ElementTransition{
-			Animation: &ui.Snappy,
-			Enter:     &ui.Motion{Y: 10, Scale: 0.98},
-		})
+		card.Transition(pageTransition())
 	})
 }
 
@@ -270,16 +267,20 @@ func (u *UI) resetWorkspace() {
 	u.replyOpen = make(map[string]bool)
 	u.lastHighlightFloor = 0
 	u.activeHistory = ""
+	u.keywordHistory = ""
 	u.activeRun = ""
 	u.run = svc.RunSnapshot{}
 	u.sourceKey = nil
 	u.sourceFloor = 0
 	u.collapsed = make(map[string]bool)
 	u.resultScroll = ui.ScrollState{}
-	u.threadScroll = ui.ScrollState{}
-	u.sourceScroll = ui.ScrollState{}
 	u.aiScroll = ui.ScrollState{}
-	u.boardList = ui.ListState{}
+	u.boardViews = nil
+	u.readingViews = nil
+	u.directoryViews = nil
+	u.searchViews = nil
+	u.directoryTree = ui.ScrollState{}
+	u.listOnly = false
 
 	u.searchMode = 0
 	u.keywordTokens = nil

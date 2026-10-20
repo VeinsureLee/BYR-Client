@@ -37,8 +37,8 @@ func (u *UI) imageView(c *ui.Context, image domain.Image, maxWidth, maxHeight fl
 	case state.bitmap != nil:
 		imgElement := ui.Image(c, state.bitmap).MaxWidth(maxWidth).MaxHeight(maxHeight).Radius(8).
 			Transition(ui.ElementTransition{
-				Animation: &ui.Snappy,
-				Enter:     &ui.Motion{Scale: 0.97},
+				Colors: true, Duration: 160 * time.Millisecond,
+				Enter: &ui.Motion{},
 			})
 		if clickable {
 			imgElement.Cursor(ui.CursorPointer).OnClick(func() {
@@ -53,7 +53,8 @@ func (u *UI) imageView(c *ui.Context, image domain.Image, maxWidth, maxHeight fl
 				Border(1, t.Border).Center().Children(func() { ui.Spinner(c) })
 			return
 		}
-		ui.Column(c).MaxWidth(maxWidth).Height(132).Gap(8).Center().Radius(8).
+		width, height := imagePlaceholderSize(image, maxWidth, maxHeight)
+		ui.Column(c).Width(width).Height(height).Gap(8).Center().Radius(8).
 			Background(t.Surface).Border(1, t.Border).Children(func() {
 			ui.Spinner(c)
 			ui.Text(c, "正在加载图片…").FontSize(u.fs(11)).TextColor(t.TextMuted)
@@ -80,6 +81,14 @@ func (u *UI) imageView(c *ui.Context, image domain.Image, maxWidth, maxHeight fl
 			})
 		})
 	}
+}
+
+func imagePlaceholderSize(image domain.Image, maxWidth, maxHeight float32) (float32, float32) {
+	if image.Width > 0 && image.Height > 0 {
+		scale := min(maxWidth/float32(image.Width), maxHeight/float32(image.Height), 1)
+		return float32(image.Width) * scale, float32(image.Height) * scale
+	}
+	return maxWidth, min(132, maxHeight)
 }
 
 func (u *UI) startImageLoad(rawURL string, state *imageState) {
