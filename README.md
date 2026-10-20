@@ -40,7 +40,7 @@ Windows 输出在 `dist/windows-amd64/`：
 
 ```text
 BYR Client.exe
-BYR Client Setup 0.1.0 amd64.exe
+BYR Client Setup 0.1.1 amd64.exe
 icon.png
 ```
 
@@ -57,14 +57,14 @@ go install github.com/egoist/mygo/cmd/mygo@v0.5.5
 将仓库推送到 GitHub 后，推送 tag 会触发 `.github/workflows/release.yml`。流程使用 `go.mod` 指定的 Go 版本，先运行测试与 `go vet`，再仅构建 `windows/amd64`，并创建对应的 GitHub Release。
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Release 的应用附件只有两个 exe：
 
 - `BYR Client.exe`：直接运行的 Windows x64 客户端。
-- `BYR Client Setup 0.1.0 amd64.exe`：Windows x64 安装程序，文件名中的版本随 tag 更新。
+- `BYR Client Setup 0.1.1 amd64.exe`：Windows x64 安装程序，文件名中的版本随 tag 更新。
 
 推荐使用 `v1.2.3` 或 `v1.2.3-rc.1` 格式的 tag；版本会在构建时同步到应用，带预发布后缀的版本会标记为 GitHub 预发布。其他 tag 使用 `mygo.json` 中的版本。工作流使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需配置个人访问令牌。
 
