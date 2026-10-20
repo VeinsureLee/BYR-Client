@@ -234,7 +234,7 @@ func TestUIPreviewSnapshots(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"overview", "directory", "reading", "ai", "settings"} {
+	for _, mode := range []string{"login", "overview", "directory", "reading", "ai", "settings"} {
 		for _, dark := range []bool{false, true} {
 			for _, width := range []int{1320, 980} {
 				name := fmt.Sprintf("%s-%d-dark-%t", mode, width, dark)
@@ -250,6 +250,9 @@ func TestUIPreviewSnapshots(t *testing.T) {
 					}
 					_ = application.LoadTraffic(context.Background(), "")
 					switch mode {
+					case "login":
+						u.app = nil
+						u.recordLoginFailure(fmt.Errorf("请勿频繁登录"), time.Now())
 					case "directory":
 						u.browseNode = "s-prog"
 						children, _ := application.Children(u.browseNode)

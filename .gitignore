@@ -14,6 +14,7 @@
 !/resources/
 /resources/*
 !/resources/icon.png
+!/resources/icon.go
 
 !/.github/
 /.github/*

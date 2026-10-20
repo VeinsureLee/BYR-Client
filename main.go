@@ -1,17 +1,14 @@
 package main
 
 import (
-	_ "embed"
 	"log"
 
 	"BYR-Client/internal/desktop"
+	"BYR-Client/resources"
 )
 
-//go:embed resources/icon.png
-var appIcon []byte
-
 func main() {
-	if err := desktop.Run(appIcon); err != nil {
+	if err := desktop.Run(resources.Icon); err != nil {
 		log.Fatal(err)
 	}
 }

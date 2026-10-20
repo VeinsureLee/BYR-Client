@@ -14,6 +14,7 @@ func TestSettingsRoundTripAndDefaults(t *testing.T) {
 		t.Fatalf("defaults = %+v", settings)
 	}
 	settings.ThemeMode = 2
+	settings.DarkBackground = 1
 	settings.Accent = 3
 	settings.FontScale = 3
 	settings.AIProvider = "kimi"
@@ -28,6 +29,9 @@ func TestSettingsRoundTripAndDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded := LoadSettings()
+	if loaded.DarkBackground != 1 {
+		t.Fatalf("dark background not restored: %+v", loaded)
+	}
 	if loaded.ThemeMode != 2 || loaded.Accent != 3 || loaded.FontScale != 3 || loaded.AIProvider != "kimi" || loaded.AIModel != "moonshot-v1-8k" || loaded.AIKeyID != "key-123" || loaded.SplitWidth != 410 || loaded.RememberLogin || loaded.RememberPassword || loaded.LastUser != "alice" {
 		t.Fatalf("loaded = %+v", loaded)
 	}

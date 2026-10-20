@@ -21,6 +21,7 @@ import (
 	"BYR-Client/internal/domain"
 	"BYR-Client/internal/forum"
 	"BYR-Client/internal/platform/appdata"
+	"BYR-Client/resources"
 )
 
 type region int
@@ -44,15 +45,16 @@ type UI struct {
 	windowMu sync.RWMutex
 	win      *mygo.Window
 
-	region        region
-	returnRegion  region
-	returnValid   bool
-	themeMode     int
-	accentMode    int
-	fontScaleMode int
-	fontScale     float32
-	baseTheme     *ui.Theme
-	themePicked   bool
+	region         region
+	returnRegion   region
+	returnValid    bool
+	themeMode      int
+	darkBackground int
+	accentMode     int
+	fontScaleMode  int
+	fontScale      float32
+	baseTheme      *ui.Theme
+	themePicked    bool
 
 	browseNode         forum.NodeID
 	browseBoard        domain.BoardID
@@ -128,6 +130,9 @@ type UI struct {
 	loginError       string
 	loginStatus      string
 	loginBusy        bool
+	loginRetryAt     time.Time
+	loginClock       func() time.Time
+	logo             *ui.Bitmap
 	rememberLogin    bool
 	rememberPassword bool
 	closed           bool
@@ -171,6 +176,7 @@ func newUI(persist bool) *UI {
 		persist:          persist,
 		settings:         settings,
 		themeMode:        settings.ThemeMode,
+		darkBackground:   settings.DarkBackground,
 		accentMode:       settings.Accent,
 		fontScaleMode:    settings.FontScale,
 		fontScale:        fontScaleFor(settings.FontScale),
@@ -179,6 +185,7 @@ func newUI(persist bool) *UI {
 		rememberLogin:    settings.RememberLogin,
 		rememberPassword: settings.RememberPassword,
 		loginUser:        settings.LastUser,
+		loginRetryAt:     time.UnixMilli(settings.LoginRetryAfter),
 		images:           make(map[string]*imageState),
 		timeKind:         "不限",
 		scopeLabel:       "全站",
@@ -201,6 +208,12 @@ func newUI(persist bool) *UI {
 		aiModel:          settings.AIModel,
 		aiBaseURL:        settings.AIBaseURL,
 		aiReveal:         make(map[string]bool),
+	}
+	logo, err := ui.DecodeBitmap(resources.Icon)
+	if err != nil {
+		log.Printf("加载应用标识失败: %v", err)
+	} else {
+		u.logo = logo
 	}
 	u.md.OnLink = func(url string) {
 		_ = u.openLoggedInBrowserWindow(url)
@@ -273,12 +286,14 @@ func (u *UI) saveSettings() {
 		return
 	}
 	u.settings.ThemeMode = u.themeMode
+	u.settings.DarkBackground = u.darkBackground
 	u.settings.Accent = u.accentMode
 	u.settings.FontScale = u.fontScaleMode
 	u.settings.SplitWidth = u.splitWidth
 	u.settings.SplitHeight = u.splitHeight
 	u.settings.RememberLogin = u.rememberLogin
 	u.settings.RememberPassword = u.rememberPassword
+	u.settings.LoginRetryAfter = max(0, u.loginRetryAt.UnixMilli())
 	_ = appdata.SaveSettings(u.settings)
 }
 
@@ -443,23 +458,32 @@ func (u *UI) applyTheme(c *ui.Context) {
 			theme = *u.baseTheme
 		}
 	}
-	theme = styledTheme(theme, u.accentMode, u.fontScale)
+	theme = styledTheme(theme, u.accentMode, u.fontScale, u.darkBackground)
 	c.SetTheme(&theme)
 }
 
-func styledTheme(theme ui.Theme, accentMode int, fontScale float32) ui.Theme {
+func styledTheme(theme ui.Theme, accentMode int, fontScale float32, darkBackground int) ui.Theme {
 	accent := accentPresets[0]
 	if accentMode >= 0 && accentMode < len(accentPresets) {
 		accent = accentPresets[accentMode]
 	}
 	if theme.Dark {
-		theme.Background = ui.Hex("#171C24")
-		theme.Surface = ui.Hex("#202733")
-		theme.SurfaceHover = ui.Hex("#293342")
-		theme.SurfacePressed = ui.Hex("#344155")
-		theme.Border = ui.Hex("#343E4D")
-		theme.Text = ui.Hex("#E8EEF6")
-		theme.TextMuted = ui.Hex("#A5B2C4")
+		theme.Background = ui.Hex("#111111")
+		theme.Surface = ui.Hex("#1C1C1C")
+		theme.SurfaceHover = ui.Hex("#282828")
+		theme.SurfacePressed = ui.Hex("#343434")
+		theme.Border = ui.Hex("#353535")
+		theme.Text = ui.Hex("#EEEEEE")
+		theme.TextMuted = ui.Hex("#ADADAD")
+		if darkBackground == 1 {
+			theme.Background = ui.Hex("#171C24")
+			theme.Surface = ui.Hex("#202733")
+			theme.SurfaceHover = ui.Hex("#293342")
+			theme.SurfacePressed = ui.Hex("#344155")
+			theme.Border = ui.Hex("#343E4D")
+			theme.Text = ui.Hex("#E8EEF6")
+			theme.TextMuted = ui.Hex("#A5B2C4")
+		}
 		theme.Accent = accent.Dark
 		theme.AccentHover = accent.DarkHover
 		theme.AccentPressed = accent.DarkPressed
@@ -522,12 +546,10 @@ func (u *UI) poll() {
 
 func (u *UI) sidebar(c *ui.Context) {
 	t := c.Theme()
-	ui.Column(c).Width(sidebarWidth).Shrink(0).FillHeight().Background(sidebarColor(t)).
+	ui.Column(c).Width(sidebarWidth).Shrink(0).FillHeight().Background(sidebarColor(t, u.darkBackground)).
 		BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
 		ui.Row(c).Gap(10).Padding(22, 18, 20, 18).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Size(30, 30).Radius(9).Background(t.Accent).Center().Children(func() {
-				ui.Text(c, "B").Bold().FontSize(u.fs(15)).TextColor(t.AccentText)
-			})
+			u.appLogo(c, 34)
 			ui.Column(c).Gap(1).Children(func() {
 				ui.Text(c, "BYR Client").Bold().FontSize(u.fs(14))
 				ui.Text(c, "北邮人论坛").FontSize(u.fs(11)).TextColor(t.TextMuted)

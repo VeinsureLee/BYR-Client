@@ -129,7 +129,7 @@ func (u *UI) exportTheme() ui.Theme {
 			theme = *ui.LightTheme()
 		}
 	}
-	return styledTheme(theme, u.accentMode, u.fontScale)
+	return styledTheme(theme, u.accentMode, u.fontScale, u.darkBackground)
 }
 
 func (d *threadExportData) fs(size float32) float32 {

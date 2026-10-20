@@ -15,11 +15,22 @@ func (u *UI) readingBreakpoint() float32 {
 	return sidebarWidth + 320 + 560*max(u.fontScale, 1)
 }
 
-func sidebarColor(t *ui.Theme) ui.Color {
+func sidebarColor(t *ui.Theme, darkBackground int) ui.Color {
 	if t.Dark {
-		return ui.Hex("#1C222C")
+		if darkBackground == 1 {
+			return ui.Hex("#1C222C")
+		}
+		return ui.Hex("#171717")
 	}
 	return ui.Hex("#EEF1F5")
+}
+
+func (u *UI) appLogo(c *ui.Context, size float32) {
+	if u.logo != nil {
+		ui.Image(c, u.logo).Size(size, size).Shrink(0).Label("BYR Client 标志")
+		return
+	}
+	ui.Icon(c, iconBrowse).Size(size, size).TextColor(c.Theme().Accent)
 }
 
 // Only the changing pane enters; stable chrome and streaming content stay put.

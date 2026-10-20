@@ -127,6 +127,15 @@ func (u *UI) settingsContent(c *ui.Context) {
 					}
 					ui.Text(c, u.themeModeLabel()).FontSize(u.fs(11)).TextColor(t.TextMuted)
 				})
+				ui.Text(c, "深色背景").FontSize(u.fs(12)).Bold().TextColor(t.TextMuted)
+				ui.Row(c).Gap(12).Wrap().AlignItems(ui.Center).Children(func() {
+					before := u.darkBackground
+					ui.Segmented(c, &u.darkBackground, "中性黑", "蓝灰")
+					if u.darkBackground != before {
+						u.saveSettings()
+					}
+					ui.Text(c, "深色模式下生效").FontSize(u.fs(12)).TextColor(t.TextMuted)
+				})
 				ui.Text(c, "字体大小").FontSize(u.fs(11)).Bold().TextColor(t.TextMuted)
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 					before := u.fontScaleMode
