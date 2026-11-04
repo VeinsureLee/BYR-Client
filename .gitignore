@@ -7,6 +7,11 @@
 !/go.sum
 !/main.go
 !/mygo.json
+!/cmd/
+!/cmd/**
+!/tools/
+!/tools/fynebuild/
+!/tools/fynebuild/**
 
 !/internal/
 !/internal/**
