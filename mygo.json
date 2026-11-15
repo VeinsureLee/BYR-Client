@@ -1,8 +1,0 @@
-{
-  "name": "BYR Client",
-  "identifier": "com.byrclient.app",
-  "version": "0.1.1",
-  "copyright": "BYR Client",
-  "icon": "resources/icon.png",
-  "main": "."
-}

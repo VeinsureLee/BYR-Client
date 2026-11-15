@@ -2,8 +2,7 @@ name: Release Windows
 
 on:
   push:
-    tags:
-      - '**'
+    tags: ['**']
 
 permissions:
   contents: read
@@ -23,9 +22,6 @@ jobs:
       run:
         shell: pwsh
     env:
-      CGO_ENABLED: '0'
-      GOFLAGS: -trimpath -buildvcs=false
-      MYGO_INSPECTOR: '0'
       RELEASE_TAG: ${{ github.ref_name }}
 
     steps:
@@ -34,32 +30,34 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Test
-        run: go test ./...
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Set application version from tag
+      - name: Set up Flutter
         run: |
           $ErrorActionPreference = 'Stop'
-          $config = Get-Content -LiteralPath mygo.json -Raw | ConvertFrom-Json
-          $version = $env:RELEASE_TAG -creplace '^v', ''
-          if ($version -match '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
-            $config.version = $version
-            $configPath = Join-Path (Get-Location).Path 'mygo.json'
-            [System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 20), [System.Text.UTF8Encoding]::new($false))
-          }
-          Write-Host "Building application version $($config.version) for tag $env:RELEASE_TAG"
+          $flutterVersion = (Get-Content -LiteralPath .flutter-version -Raw).Trim()
+          $flutterPath = Join-Path $env:RUNNER_TEMP 'flutter'
+          git clone --depth 1 --branch $flutterVersion https://github.com/flutter/flutter.git $flutterPath
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter SDK checkout failed' }
+          (Join-Path $flutterPath 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Build Windows executables
-        run: go tool mygo build -platform windows/amd64
+      - name: Install locked dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: flutter test
+
+      - name: Build and package Windows release
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:RELEASE_TAG -creplace '^v', ''
+          $buildArguments = @('run', 'tool/build_release.dart', '--platform', 'windows')
+          if ($version -match '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+            $buildArguments += @('--build-name', $version)
+          }
+          & dart @buildArguments
+          if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
 
       - name: Publish GitHub release
         env:
@@ -67,24 +65,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $config = Get-Content -LiteralPath mygo.json -Raw | ConvertFrom-Json
-          $assets = @(
-            (Get-Item -LiteralPath 'dist/windows-amd64/BYR Client.exe').FullName
-            (Get-Item -LiteralPath "dist/windows-amd64/BYR Client Setup $($config.version) amd64.exe").FullName
-          )
-          foreach ($asset in $assets) {
-            if ((Get-Item -LiteralPath $asset).Length -eq 0) {
-              throw "Empty release executable: $asset"
-            }
-          }
           $releaseArguments = @(
             'release', 'create', $env:RELEASE_TAG,
             '--verify-tag', '--title', $env:RELEASE_TAG, '--generate-notes'
           )
-          if ($config.version -match '^[0-9]+\.[0-9]+\.[0-9]+-') {
+          if ($env:RELEASE_TAG -match '^v?[0-9]+\.[0-9]+\.[0-9]+-') {
             $releaseArguments += '--prerelease'
           }
-          & gh @releaseArguments @assets
-          if ($LASTEXITCODE -ne 0) {
-            throw "GitHub release failed with exit code $LASTEXITCODE"
-          }
+          & gh @releaseArguments 'dist/windows/BYR-Client-windows-x64.zip'
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release failed' }

@@ -1,74 +1,73 @@
-# Only reviewed source files and required build inputs belong in this repository.
-/*
-!/.gitignore
-!/.gitattributes
-!/README.md
-!/go.mod
-!/go.sum
-!/main.go
-!/mygo.json
-!/cmd/
-!/cmd/**
-!/tools/
-!/tools/fynebuild/
-!/tools/fynebuild/**
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
 
-!/internal/
-!/internal/**
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
 
-!/resources/
-/resources/*
-!/resources/icon.png
-!/resources/icon.go
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
 
-!/.github/
-/.github/*
-!/.github/workflows/
-/.github/workflows/*
-!/.github/workflows/release.yml
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
 
-# Local AI tooling, editor state, plans, screenshots, and build output.
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Widget Preview related
+.widget_preview/
+
+# Local agent/editor state and build packages.
 .claude/
 .codex/
 .agents/
 .cursor/
-.gstack/
-.idea/
 .vscode/
 AGENTS.md
 CLAUDE.md
 GEMINI.md
-SKILL.md
-/docs/
-screenshots/
-screenshot/
-*screenshot*.png
-*screenshot*.jpg
-*screenshot*.jpeg
-*screenshot*.webp
-*截图*.png
-*截图*.jpg
-*截图*.jpeg
-*截图*.webp
 /dist/
 /tmp*/
 tmp-*
 *.local.*
+*.apk
+*.aab
 *.exe
 *.dll
-*.syso
-*.test
-*.log
 
-# Private runtime settings, accounts, cookies, keys, and local databases.
+# Local accounts, tokens, signing material and databases.
 .env
 .env.*
-.byr-client/
-settings.json
-session.json
-credentials.json
-ai-key.txt
-ai-keys.json
 *.pem
 *.key
 *.p12

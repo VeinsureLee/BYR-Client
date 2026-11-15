@@ -1,177 +1,92 @@
 # BYR Client
 
-面向北邮人论坛的本地桌面客户端。业务逻辑使用 Go，界面使用 [egoist/mygo](https://github.com/egoist/mygo) 的原生 UI；Windows 优先，同时面向 macOS、Linux。
+北邮人论坛跨端客户端，使用 Flutter / Dart，面向 Android、Windows、macOS 和 Linux。
+桌面端采用侧边导航与分栏工作区，移动端采用底部导航，两者共用论坛协议、功能和数据。
 
-当前仓库是**可运行的初始版本**：启动后可以输入论坛账号密码登录，登录成功只初始化论坛目录结构；之后可以浏览版面、读取主题、执行关键词检索、查看搜索历史，并验证 10 分钟闲置刷新。也可以跳过登录直接进入内存演示数据。
+## 启动
 
-真实 BYR HTTP 适配器已经实现登录、目录、版面列表、主题楼层与逐版搜索的读取与解析，但尚未在真实论坛账号上完成联调；界面默认仍提供演示数据入口，便于离线验证交互。
-
-另有独立的 [Fyne Windows / Android 原型](cmd/byr-fyne/README.md)，用于验证共享 Go 界面的跨端可行性：`go run ./cmd/byr-fyne`。它默认使用离线数据和模拟 AI 流，包含千楼回复压力帖；构建与设备验收范围单独记录。
-
-## 快速开始
-
-要求 Go 1.27.1 或更高版本。
+使用 Flutter **3.50.0** / Dart **3.14.0**，SDK 版本记录在 `.flutter-version`。
 
 ```sh
-go run .
+flutter pub get --enforce-lockfile
+flutter run -d windows
 ```
 
-启动后：
+Android 通过 `flutter devices` 查看设备 ID，再执行 `flutter run -d <设备ID>`。
+macOS 和 Linux 分别使用 `-d macos`、`-d linux`，需在对应系统运行。
 
-1. 输入 BYR 账号与密码，点击“登录”。
-   登录成功后会显示“正在初始化论坛结构…”，只读取 forum / sub forum / board 目录，不批量抓取版面文章。
-2. 或者点击“先使用演示数据”，直接进入内存演示论坛。
+## 目录分类
 
-其他验证命令：
+| 位置 | 职责 |
+| --- | --- |
+| `lib/app/` | 启动、依赖组装、主题和应用入口 |
+| `lib/shared/core/` | 共用常量、结果和时间格式 |
+| `lib/shared/data/` | 四端共用的论坛协议、API、数据模型 |
+| `lib/shared/storage/` | 会话、历史、草稿及存储契约 |
+| `lib/shared/services/` | 剪贴板、外部打开、文件选择契约 |
+| `lib/shared/widgets/` | 共用正文、图片、头像和交互组件 |
+| `lib/features/` | 跨平台功能页面 |
+| `lib/platforms/desktop/` | Windows / macOS / Linux 的导航与分栏布局 |
+| `lib/platforms/mobile/` | 移动导航与宽屏布局适配 |
+| `lib/platforms/android/` | Android 系统栏和边到边显示 |
+| `lib/platforms/adapters/` | 系统能力与本地存储的插件适配 |
+| `android/`、`windows/`、`macos/`、`linux/` | Flutter 标准原生宿主、权限、图标与构建配置 |
+| `assets/em/` | 201 个 GIF 表情 |
+| `test/` | 共享逻辑、平台策略、功能、打包和架构约束测试 |
+| `tool/release/` | 按平台组织的构建归档策略 |
+| `tool/build/`、`tool/diagnostics/` | 构建快捷入口与手动诊断 |
+| `build/`、`.dart_tool/` | 工具链生成的中间文件，不提交 |
+| `dist/<平台>/` | 完整可运行软件、分发包和发布清单，不提交 |
+
+详细说明：[代码分类与设计模式](docs/architecture.md) · [平台细节与软件形式](docs/platforms.md) · [构建与发布](docs/releases.md)。
+
+## 设计模式
+
+- **Strategy**：注入界面构建函数，启动和登录共用同一个桌面/移动策略；各端发布使用独立的归档策略。
+- **Adapter**：存储和系统能力通过应用契约调用，具体 Flutter 插件集中到适配层。
+- **Facade**：`ByrApi` 统一组装论坛各业务 API。
+- **Observer**：主题和字体使用 `ValueNotifier` / `ValueListenableBuilder` 通知界面。
+
+依赖集中在 `app/bootstrap.dart` 组装，业务页面不直接检测操作系统或导入原生插件。
+
+## 功能
+
+- 账号登录、会话恢复、IPv6 镜像切换。
+- 分区、全部版面、十大、帖子、翻页与刷新。
+- 发帖、回复、编辑、删除、草稿、匿名选项、表情和附件。
+- 图片预览、点赞/踩、收藏、复制链接、搜索和浏览历史。
+- 用户主页、黑名单、信箱、私信、回复与 @ 提醒。
+- 投票、竞猜、浅色/深色/跟随系统主题与字体缩放。
+
+真实账号操作和各平台的完整业务行为仍需实际联调。
+
+## 验证与软件构建
 
 ```sh
-go test ./...        # 登录、目录、检索、入库、历史与刷新调度测试
-go test -race ./...
-go vet ./...
+flutter analyze --no-fatal-infos
+flutter test
+
+dart run tool/build_release.dart --platform windows
+dart run tool/build_release.dart --platform android
 ```
 
-### 打包
+在对应系统可使用 `--platform macos` / `--platform linux`。已有 Release 构建时，
+追加 `--package-only` 只验证、整理发布软件。Android Bash 快捷入口为
+`bash tool/build/android.sh`。
 
-MyGo CLI 已作为 Go tool 固定在 `go.mod`，不需要单独安装 `mygo` 到 PATH：
-
-```sh
-go tool mygo build
-```
-
-Windows 输出在 `dist/windows-amd64/`：
-
-```text
-BYR Client.exe
-BYR Client Setup 0.1.1 amd64.exe
-icon.png
-```
-
-如果希望直接运行 `mygo build`，需要单独安装并加入 PATH：
-
-```sh
-go install github.com/egoist/mygo/cmd/mygo@v0.5.5
-```
-
-然后把 `%USERPROFILE%\go\bin` 加入 PATH，重新打开终端。
-
-### GitHub Release（Windows x64）
-
-将仓库推送到 GitHub 后，推送 tag 会触发 `.github/workflows/release.yml`。流程使用 `go.mod` 指定的 Go 版本，先运行测试与 `go vet`，再仅构建 `windows/amd64`，并创建对应的 GitHub Release。
-
-```sh
-git tag v0.1.1
-git push origin v0.1.1
-```
-
-Release 的应用附件只有两个 exe：
-
-- `BYR Client.exe`：直接运行的 Windows x64 客户端。
-- `BYR Client Setup 0.1.1 amd64.exe`：Windows x64 安装程序，文件名中的版本随 tag 更新。
-
-推荐使用 `v1.2.3` 或 `v1.2.3-rc.1` 格式的 tag；版本会在构建时同步到应用，带预发布后缀的版本会标记为 GitHub 预发布。其他 tag 使用 `mygo.json` 中的版本。工作流使用 GitHub 自动提供的 `GITHUB_TOKEN`，无需配置个人访问令牌。
-
-仓库按 `.gitignore` 白名单收录源码、测试、图标、构建配置和本说明。AI 工具配置、内部设计文档、截图、IDE 配置、构建产物及本地账号、Cookie、密钥文件仅保留在本地；新增源码目录或构建资源时需相应更新白名单。
-
-### 可选环境变量
-
-| 变量 | 默认 | 作用 |
+| 平台 | 可分发软件 | 当前验证范围 |
 | --- | --- | --- |
-| `BYR_BASE_URL` | `https://bbs.byr.cn` | 论坛地址，便于测试或镜像 |
-| `BYR_MODE` | 空 | 设为 `demo` 时启动即进入演示数据，跳过登录页 |
-| `BYR_CLIENT_HOME` | 系统配置目录/BYR-Client | 设置、会话 Cookie 的本地目录，便于测试或便携运行 |
+| Windows x64 | `dist/windows/app/`、`dist/windows/BYR-Client-windows-x64.zip` | 本机 Release 构建；完整运行依赖归档检查 |
+| Android | `dist/android/BYR-Client-android.apk` | 本机 Release 构建；APK 归档检查 |
+| macOS | `dist/macos/app/byr_client.app/`、ZIP | 已提供原生工程和发布策略，需 macOS 构建验证 |
+| Linux | `dist/linux/app/`、tar.gz | 已提供原生工程和发布策略，需 Linux 构建验证 |
 
-```sh
-# 直接进入演示模式
-BYR_MODE=demo go run .
-```
+Windows 运行目录必须整体分发，包含 exe、DLL 和 `data/`。Android APK 当前为
+**debug 签名**，适合本地安装测试；正式发布前需配置自己的签名。当前没有 iOS、Web 工程。
+静态分析会报告弃用提示（info），错误和警告使检查失败。
 
-## 登录与初始化
+CI 在 push / pull request 时分析并运行测试；tag 发布调用统一工具生成 Windows ZIP，
+上传 GitHub Release。软件版本来自 `pubspec.yaml`，可用 `--build-name` 覆盖本次构建版本。
 
-- **账号密码登录**：先 `GET /index` 获取 guest Cookie，再 `POST /user/ajax_login.json` 提交 `id/passwd/mode/CookieDate`，识别 `ajax_st`、`is_login` 与失败文案。
-- **Cookie 会话**：手动解析 `Set-Cookie`，支持 BYR 使用的 `nforum[PASSWORD]` 等带方括号的 Cookie 名；登录后普通响应不能覆盖登录会话键。
-- **保持登录**：登录页可勾选“保持登录”，把会话 Cookie 写入用户配置目录（`session.json`，0600）；启动时自动恢复并校验，失效则回到登录页。
-- **保存账号密码**：登录页可勾选“保存账号密码”，密码写入系统凭证存储（MyGo `Secrets`：Windows Credential Manager / macOS Keychain / Linux Secret Service）；凭证存储不可用时退回 0600 本地文件。下次启动会优先恢复 Cookie，失败则用保存的账号密码自动登录。
-- **会话代次**：客户端维护会话 epoch；退出登录会清理 Cookie、目录、任务与本地内存实体。
-- **目录初始化**：递归读取 `/section/ajax_list.json?root=...`，按 `/board/` 与 `/section/` 区分版块和分区，构建 `Site → Forum → SubForum* → Board`；设置页可“重新初始化目录”。
-- **编码**：支持 UTF-8 与 GBK/GB18030 响应；目录、版面、主题和搜索页共用解码器。
-- **部分失败**：单个子分区读取失败会进入目录警告，不阻断其余目录；设置页和浏览概览会显示警告数量。
-- **不做的事**：登录后不抓取所有版面首页，不下载全部主题正文，不读取私信。
-
-## AI 配置
-
-设置 → AI 配置支持：
-
-| 服务商 | 默认地址 | 默认模型 |
-| --- | --- | --- |
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
-| Kimi | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
-
-- 模型与 API 地址可编辑
-- 支持多个 API Key：新增、备注、显示/隐藏、切换当前 Key、删除旧 Key
-- 支持“测试连接”
-- API Key 优先写入系统凭证存储（固定 service `BYRClient`，开发运行与打包版本共用）
-- 系统凭证不可用时退回 0600 本地文件
-- AI 问答使用流式 `chat/completions`，可停止并保留已收到内容
-- 支持 OpenAI 兼容的工具调用，模型可调用论坛搜索、读帖、目录、流量与最新帖工具
-- Kimi 请求不发送 `temperature`，避免部分模型只接受固定温度而返回 400
-- 工具返回的帖子链接会作为参考来源显示
-
-## 当前已实现
-
-- **原生桌面壳**：mygo 原生 UI，登录页 + 侧栏 + 独立内容区，浅色/深色/跟随系统外观；主界面、登录页、窗口、任务栏与打包图标共用 `resources/icon.png`。深色背景默认使用中性黑，可在“设置 → 外观 → 深色背景”切换为蓝灰，并保存选择。
-- **视觉与动效**：冷灰浅色与深色主题、统一间距与圆角、16px 阅读正文；导航与列表使用短促颜色反馈，页面使用 140–180ms 的局部淡入过渡，并遵循系统减少动态效果偏好。搜索模式栏保持稳定，AI 对话与输入区对齐。
-- **图片缩放与分享**：图片预览支持 − / + / 适应 / 100% 缩放和滚动查看；帖子提供“复制链接”“应用内打开（带当前登录 Cookie）”“系统浏览器”“导出 PNG”，回复提供“复制本楼链接”。
-- **设置持久化**：外观模式、主题色（蓝/紫/绿/橙）、字体大小（小/标准/大/特大）、浏览分栏尺寸、保持登录与上次账号写入 `settings.json`，重启恢复；窗口大小/位置/最大化由 MyGo 的 `StateKey` 记忆。
-- **图片加载**：从主题/回复正文提取图片地址，带 Cookie 与 Referer 请求，内存缓存并异步解码；支持 PNG/JPEG/GIF/WebP/BMP。按 URL/class/尺寸识别表情与照片：表情放在独立的“表情”小栏中、内联 20px，预览 120px；照片最大 560×420，与表情用空白分隔，点击弹出可缩放预览，失败可重试。
-- **流量与最新主题**：讨论区、子讨论区及版面的概览均显示最新非置顶主题、作者与时间，支持手动刷新；讨论区概览沿用最多抽取三个下属版面的轻量采样规则，不代表全量扫描。在线人数、今日发帖、主题数和文章数按节点展示与聚合。
-- **登录页**：账号密码、回车提交、错误提示、登录/初始化状态、演示模式入口。两次密码登录间隔至少 10 秒；遇到“请勿频繁登录”或 HTTP 429 后重新等待 10 秒，倒计时结束允许手动重试。冷却期间点击、回车与自动登录均受限，剩余等待时间在重启后保留。
-- **浏览论坛**：forum / 递归 sub forum / board；左侧目录默认折叠、有层级缩进、占满可用高度并独立滚动，点击节点才展开路径，底部入口固定；点击 board 才读取主题列表，打开主题才读取正文和回复。节点详情统计显示“共 N 个版面 · M 个二级目录”，为 0 的层级不显示。
-- **阅读位置与窗口适配**：按版面保留列表与选中主题，按主题保留正文位置，按搜索记录保留结果位置与折叠状态；关键词与 AI 分别保留记录和草稿。宽窗口分栏阅读，窄窗口在主题列表与正文间切换。进入设置或查看搜索来源后可返回继续阅读。
-- **按需读取**：每个 board 独立保存列表窗口、游标、加载状态和观测时间；主题回复可分页续读。
-- **引用回复树**：识别 BYR 的“【 在 X 的大作中提到: 】”引用块，按引用作者和被引内容匹配父楼层；使用折叠箭头、缩进与树线展示子回复，默认展开，并保留引用摘要与父楼层。
-- **正文解析**：正文与图片从文章内容区域提取，排除精选回复副本和操作控件；空正文与纯图片帖不会重新显示发信头尾或混入重复回复。
-- **帖子 PNG 导出**：可将当前主题、主帖、已加载回复、引用树和已缓存图片导出为长图 PNG，保存时使用系统文件对话框。
-- **关键词检索**：
-  - 空格分块关键词、作者 ID、时间范围；检索详情默认折叠。
-  - 默认每版 20、总共 200、每帖楼层 5 页、并发 5。
-  - 按条数自动续页；重复主题、置顶主题不占名额；范围在提交时冻结。
-  - 结果按 forum / sub forum / board / article / reply 分层折叠，流式追加。
-- **抓取后增量入库**：每轮重新联网；抓到后按稳定 ID 新增或更新内存存储，未在本轮读到的旧内容不会预填结果。
-- **搜索历史**：关键词与 AI 两种图标区分；置顶、取消置顶、删除、撤销删除；删除运行中的记录会停止对应任务。
-- **AI 问答**：设置页新增 AI 配置，支持 DeepSeek 与 Kimi（Moonshot）的 OpenAI 兼容接口；API Key 保存在系统凭证存储，可测试连接。AI 已接入工具调用：模型可以搜索论坛、读取主题、列出版面、查询流量和最新帖，并基于工具结果流式回答。
-- **10 分钟闲置刷新**：只刷新当前 board/主题资源；交互重新计时；应用进入后台暂停；使用可注入时钟测试，不实际等待 10 分钟。
-- **我的 / 私信 / 设置**：个人功能为占位；设置页显示登录账号、目录统计与警告，并支持退出登录。
-
-## 工程结构
-
-```text
-main.go                         应用入口，使用共享的内嵌图标
-mygo.json                       应用名称、identifier、版本与图标配置
-resources/icon.png              应用图标（同时用于窗口/任务栏与 mygo build）
-resources/icon.go               内嵌图标资源，供应用外壳与界面共用
-internal/forum/                 目录校验、Children、Breadcrumb、DFS/BFS
-internal/domain/                主题、回复、目录、游标、检索条件
-internal/ports/                 数据源、存储、时钟、会话端口
-internal/adapter/byr/           BYR 登录、Cookie、GBK、目录/版面/主题/搜索解析
-internal/source/demo/           内存演示数据源（10 forum、递归 sub forum、board）
-internal/store/memory/          内存增量入库
-internal/ai/                    DeepSeek / Kimi 流式 chat/completions 客户端
-internal/platform/appdata/      设置、主题色、分栏尺寸、会话 Cookie 与 AI Key 持久化
-internal/app/                   登录会话、初始化、浏览、检索、历史、刷新编排
-internal/refresh/               当前资源闲置刷新调度
-internal/desktop/               mygo 登录页、侧栏、浏览页、搜索页、设置页
-```
-
-## 当前边界
-
-以下能力仍按设计文档保留为后续工作，或尚未完成真实现场验收：
-
-- **真实论坛联调**：目录结构已通过 BYR 公开分区接口现场验证（10 个顶层 forum、约 270 个节点、GBK 解码正常）；登录后的版面、主题、搜索与图片加载需要真实账号，尚未逐项现场验证。
-- **登录验证**：登录流程按 thread-scope 的端点实现，并用 httptest 覆盖成功、失败、Cookie 保护、GBK、版面/主题/搜索解析；没有可用真实账号，因此未完成线上登录验收。
-- **搜索算法**：当前服务层按“标题包含全部关键词”过滤，跨版调度固定使用 BFS 范围展开；算法仍待讨论。
-- **会话安全**：密码优先保存在系统凭证存储，不用时可在设置中清除；系统凭证存储不可用的平台会退回仅当前用户可读的本地文件。会话 Cookie 与密码都不写入源码或安装目录。
-- **图片缓存**：当前只在内存缓存；尚未落盘，也没有缩略图/懒加载队列；AVIF 等 mygo 不支持的格式会显示失败占位。
-- **SQLite 持久化**：当前为内存存储，退出登录会清空实体；跨重启历史未实现。
-- **AI 检索策略**：模型通过工具查询论坛，工具结果和来源链接会回填；尚未实现向量知识库、复杂多轮规划和全文引用定位。
-- **个人功能**：发帖、回帖、私信、我的发帖/我的回帖数据未实现。
-- **平台验收**：Android/iOS、跨设备同步、独立后台服务，以及 Windows 高 DPI/中文输入/macOS/Linux 实机验收尚未完成。
+手动诊断：`dart run tool/diagnostics/login_probe.dart`，使用 `test/test` 假凭据访问真实论坛，
+不会在自动测试中执行。账号、会话、本机 SDK 路径和签名密钥均不属于源码。
