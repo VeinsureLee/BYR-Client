@@ -2,6 +2,5 @@
 *.png binary
 *.ico binary
 *.gif binary
-*.jar binary
-gradlew text eol=lf
+*.otf binary
 *.bat text eol=crlf

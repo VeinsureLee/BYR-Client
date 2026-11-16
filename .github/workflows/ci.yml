@@ -1,4 +1,4 @@
-name: Flutter checks
+name: Go workspace checks
 
 on:
   push:
@@ -9,28 +9,52 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  independent-modules:
+    name: Independent ${{ matrix.module }} module
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        module: [core, tools]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    env:
+      GOWORK: 'off'
+      CGO_ENABLED: '1'
     steps:
-      - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache: false
+      - run: go test -race ./...
+      - run: go vet ./...
+      - name: Cross-compile shared libraries, without an Android UI
+        if: matrix.module == 'core'
+        env:
+          GOOS: android
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: go build ./...
 
-      - name: Set up Flutter
-        shell: bash
-        run: |
-          set -euo pipefail
-          flutter_version="$(tr -d '\r\n' < .flutter-version)"
-          git clone --depth 1 --branch "$flutter_version" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
-          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
-
-      - name: Install locked dependencies
-        run: flutter pub get --enforce-lockfile
-
-      - name: Analyze
-        run: flutter analyze --no-fatal-infos
-
-      - name: Test
-        run: flutter test
+  ui-shells:
+    name: MyGo shell and Android modules
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            apps/desktop/go.sum
+            apps/android/app/go.sum
+            apps/android/probes/gio/go.sum
+      - run: go run ./tools/dev check --scope desktop
+      - run: go run ./tools/dev check --scope android
+      - run: go run ./tools/dev check --scope gio-probe

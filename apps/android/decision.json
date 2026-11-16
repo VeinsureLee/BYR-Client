@@ -1,0 +1,9 @@
+{
+  "status": "selected",
+  "selectedFramework": "gio",
+  "candidates": ["fyne", "gio"],
+  "evaluationPriority": ["gio", "fyne"],
+  "productionModule": "apps/android/app",
+  "applicationId": "cn.byr.bbs.byrclient",
+  "signing": "debug"
+}

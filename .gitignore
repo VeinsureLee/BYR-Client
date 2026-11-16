@@ -1,73 +1,39 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
-
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
-.idea/
-
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
-
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
+# Generated builds and downloadable software.
 /build/
-/coverage/
+/dist/
+**/mygo.ts
+*.exe
+*.dll
+*.so
+*.dylib
+*.syso
+*.apk
+*.aab
+*.aar
+*.test
+*.out
+*.log
 
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
-
-# Widget Preview related
-.widget_preview/
-
-# Local agent/editor state and build packages.
+# Editor and local agent state.
+.idea/
+.vscode/
 .claude/
 .codex/
 .agents/
 .cursor/
-.vscode/
+.DS_Store
 AGENTS.md
 CLAUDE.md
 GEMINI.md
-/dist/
-/tmp*/
-tmp-*
-*.local.*
-*.apk
-*.aab
-*.exe
-*.dll
 
-# Local accounts, tokens, signing material and databases.
+# Local credentials and machine-specific SDK/signing configuration.
 .env
 .env.*
+*.local.*
+local.properties
+key.properties
+*.keystore
+*.jks
 *.pem
 *.key
 *.p12
