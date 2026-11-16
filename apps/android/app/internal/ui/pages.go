@@ -348,10 +348,6 @@ func (a *App) selectComposeBoard(board string) {
 		if a.stack[i].Page == PageCompose {
 			a.stack = a.stack[:i+1]
 			a.compose.board = board
-			// The unsent global draft moves to the chosen board's draft key on
-			// the next autosave; clear the boardless copy so it cannot reappear.
-			_ = a.core.Local.SaveDraft(context.Background(), a.core.Session().Username,
-				local.DraftKey("", "", ""), local.Draft{})
 			a.window.Invalidate()
 			return
 		}

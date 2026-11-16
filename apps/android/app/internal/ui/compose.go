@@ -113,10 +113,18 @@ func (a *App) saveComposeDraft() error {
 		return nil
 	}
 	board := a.composeBoard()
+	draft := local.Draft{Title: title, Content: content}
 	key := local.DraftKey(board, c.replyID, c.editID)
-	if err := a.core.Local.SaveDraft(context.Background(), a.core.Session().Username, key,
-		local.Draft{Title: title, Content: content}); err != nil {
+	if err := a.core.Local.SaveDraft(context.Background(), a.core.Session().Username, key, draft); err != nil {
 		return err
+	}
+	// The global composer reopens without a board, so keep a boardless copy of
+	// a new post until it is published.
+	if c.replyID == "" && c.editID == "" && board != "" {
+		if err := a.core.Local.SaveDraft(context.Background(), a.core.Session().Username,
+			local.DraftKey("", "", ""), draft); err != nil {
+			return err
+		}
 	}
 	c.board = board
 	return nil
@@ -328,6 +336,10 @@ func (a *App) publish() {
 			a.compose.submitted = true
 			a.compose.publishing = false
 			a.compose.publishedID = string(result.Article.ID)
+			if editID == "" && post.ReplyID == "" {
+				_ = a.core.Local.SaveDraft(ctx, a.core.Session().Username,
+					local.DraftKey("", "", ""), local.Draft{})
+			}
 			id := threadRoute
 			if post.ReplyID == "" && editID == "" {
 				id = threadID(result.Article)

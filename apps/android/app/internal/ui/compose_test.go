@@ -34,6 +34,23 @@ func TestComposeOpensReadyAndRendersWithoutNetwork(t *testing.T) {
 	assertComposeRenders(t, a)
 }
 
+func TestGlobalComposeRestoresBoardlessDraft(t *testing.T) {
+	a := composeTestApp(t, "")
+	defer a.Close()
+	a.stack = []Route{{Page: PageHome}}
+	a.openCompose("", "", "new")
+	a.compose.titleEditor.SetText("未选版面的草稿")
+	a.compose.contentEditor.SetText("正文")
+	a.back()
+	a.openCompose("", "", "new")
+	if got := a.compose.titleEditor.Text(); got != "未选版面的草稿" {
+		t.Fatalf("restored title = %q", got)
+	}
+	if got := a.compose.contentEditor.Text(); got != "正文" {
+		t.Fatalf("restored content = %q", got)
+	}
+}
+
 func TestGlobalComposeSelectsBoardFromPicker(t *testing.T) {
 	a := composeTestApp(t, "")
 	defer a.Close()
