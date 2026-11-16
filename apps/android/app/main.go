@@ -11,7 +11,7 @@ import (
 	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/ui"
 )
 
-var version = "0.4.3"
+var version = "0.5.0"
 
 func main() {
 	go func() {
