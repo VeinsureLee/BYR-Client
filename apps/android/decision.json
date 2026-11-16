@@ -1,0 +1,7 @@
+{
+  "status": "pending",
+  "selectedFramework": null,
+  "candidates": ["fyne", "gio"],
+  "evaluationPriority": ["gio", "fyne"],
+  "productionModule": null
+}

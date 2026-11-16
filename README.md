@@ -1,92 +1,92 @@
 # BYR Client
 
-北邮人论坛跨端客户端，使用 Flutter / Dart，面向 Android、Windows、macOS 和 Linux。
-桌面端采用侧边导航与分栏工作区，移动端采用底部导航，两者共用论坛协议、功能和数据。
+北邮人论坛客户端：**共享 Go 业务核心 + MyGo PC + 独立 Android UI**。
 
-## 启动
+原 Flutter 客户端的业务能力已迁入 Go，并接入 MyGo 桌面界面。沿用原有功能流程作为迁移基线，后续页面设计与交互调整由项目所有者决定。
 
-使用 Flutter **3.50.0** / Dart **3.14.0**，SDK 版本记录在 `.flutter-version`。
-
-```sh
-flutter pub get --enforce-lockfile
-flutter run -d windows
-```
-
-Android 通过 `flutter devices` 查看设备 ID，再执行 `flutter run -d <设备ID>`。
-macOS 和 Linux 分别使用 `-d macos`、`-d linux`，需在对应系统运行。
-
-## 目录分类
-
-| 位置 | 职责 |
+| 部分 | 当前状态 |
 | --- | --- |
-| `lib/app/` | 启动、依赖组装、主题和应用入口 |
-| `lib/shared/core/` | 共用常量、结果和时间格式 |
-| `lib/shared/data/` | 四端共用的论坛协议、API、数据模型 |
-| `lib/shared/storage/` | 会话、历史、草稿及存储契约 |
-| `lib/shared/services/` | 剪贴板、外部打开、文件选择契约 |
-| `lib/shared/widgets/` | 共用正文、图片、头像和交互组件 |
-| `lib/features/` | 跨平台功能页面 |
-| `lib/platforms/desktop/` | Windows / macOS / Linux 的导航与分栏布局 |
-| `lib/platforms/mobile/` | 移动导航与宽屏布局适配 |
-| `lib/platforms/android/` | Android 系统栏和边到边显示 |
-| `lib/platforms/adapters/` | 系统能力与本地存储的插件适配 |
-| `android/`、`windows/`、`macos/`、`linux/` | Flutter 标准原生宿主、权限、图标与构建配置 |
-| `assets/em/` | 201 个 GIF 表情 |
-| `test/` | 共享逻辑、平台策略、功能、打包和架构约束测试 |
-| `tool/release/` | 按平台组织的构建归档策略 |
-| `tool/build/`、`tool/diagnostics/` | 构建快捷入口与手动诊断 |
-| `build/`、`.dart_tool/` | 工具链生成的中间文件，不提交 |
-| `dist/<平台>/` | 完整可运行软件、分发包和发布清单，不提交 |
+| PC | MyGo v0.9.1；登录、论坛阅读、发帖编辑、附件、收藏、搜索、消息和个人设置 |
+| 共享核心 | 纯 Go 标准库；完整迁移的论坛接口、会话、发帖规则、草稿、历史、私信聚合、UBB 与共享资源 |
+| Android | Gio v0.10.3 优先验证，正式框架待定；共享核心可交叉编译，验证 APK 仍是技术探针 |
+| 验证范围 | 本地合约与交互、Windows 原生菜单点击、真实只读接口、各模块 test/vet；线上写入与 Android 实机尚待验收 |
 
-详细说明：[代码分类与设计模式](docs/architecture.md) · [平台细节与软件形式](docs/platforms.md) · [构建与发布](docs/releases.md)。
+## 目录
 
-## 设计模式
-
-- **Strategy**：注入界面构建函数，启动和登录共用同一个桌面/移动策略；各端发布使用独立的归档策略。
-- **Adapter**：存储和系统能力通过应用契约调用，具体 Flutter 插件集中到适配层。
-- **Facade**：`ByrApi` 统一组装论坛各业务 API。
-- **Observer**：主题和字体使用 `ValueNotifier` / `ValueListenableBuilder` 通知界面。
-
-依赖集中在 `app/bootstrap.dart` 组装，业务页面不直接检测操作系统或导入原生插件。
-
-## 功能
-
-- 账号登录、会话恢复、IPv6 镜像切换。
-- 分区、全部版面、十大、帖子、翻页与刷新。
-- 发帖、回复、编辑、删除、草稿、匿名选项、表情和附件。
-- 图片预览、点赞/踩、收藏、复制链接、搜索和浏览历史。
-- 用户主页、黑名单、信箱、私信、回复与 @ 提醒。
-- 投票、竞猜、浅色/深色/跟随系统主题与字体缩放。
-
-真实账号操作和各平台的完整业务行为仍需实际联调。
-
-## 验证与软件构建
-
-```sh
-flutter analyze --no-fatal-infos
-flutter test
-
-dart run tool/build_release.dart --platform windows
-dart run tool/build_release.dart --platform android
+```text
+core/
+  forum/                      # HTTP 协议、JSON 模型、认证、附件与实验加密接口
+  application/                # 会话、发布、评价与私信业务用例
+  local/                      # 按账号隔离的草稿、历史、偏好与序列化
+  content/                    # UBB 正文解析、图片/文件标记、Unicode 编辑操作
+  resources/                  # 201 个原有 GIF；fonts/ 共享中文字体与许可证
+apps/
+  desktop/
+    internal/bootstrap/       # 显式组装核心与平台适配器
+    internal/desktop/         # MyGo 页面、导航、异步任务和 UI 状态
+    internal/platform/        # 系统凭据库、文件、对话框、剪贴板与浏览器
+  android/
+    decision.json             # 正式选型待定
+    probes/gio/               # 独立技术验证模块
+tools/                        # 模块检查、构建、完整归档与校验
+docs/                         # 架构、功能对照、选型及构建说明
+build/                        # 中间输出与本地渲染截图，不提交
+dist/                         # 按平台分类的可执行软件与评估 APK，不提交
 ```
 
-在对应系统可使用 `--platform macos` / `--platform linux`。已有 Release 构建时，
-追加 `--package-only` 只验证、整理发布软件。Android Bash 快捷入口为
-`bash tool/build/android.sh`。
+各模块独立维护依赖。根工作区聚合核心、桌面和工具；Gio 使用 `GOWORK=off`，
+通过相对 `replace` 引用同一份核心源码，不合并两种 UI 框架的依赖。
 
-| 平台 | 可分发软件 | 当前验证范围 |
-| --- | --- | --- |
-| Windows x64 | `dist/windows/app/`、`dist/windows/BYR-Client-windows-x64.zip` | 本机 Release 构建；完整运行依赖归档检查 |
-| Android | `dist/android/BYR-Client-android.apk` | 本机 Release 构建；APK 归档检查 |
-| macOS | `dist/macos/app/byr_client.app/`、ZIP | 已提供原生工程和发布策略，需 macOS 构建验证 |
-| Linux | `dist/linux/app/`、tar.gz | 已提供原生工程和发布策略，需 Linux 构建验证 |
+## 开发
 
-Windows 运行目录必须整体分发，包含 exe、DLL 和 `data/`。Android APK 当前为
-**debug 签名**，适合本地安装测试；正式发布前需配置自己的签名。当前没有 iOS、Web 工程。
-静态分析会报告弃用提示（info），错误和警告使检查失败。
+推荐 Go **1.27.4**，最低模块版本及固定依赖见 [构建说明](docs/build.md)。
 
-CI 在 push / pull request 时分析并运行测试；tag 发布调用统一工具生成 Windows ZIP，
-上传 GitHub Release。软件版本来自 `pubspec.yaml`，可用 `--build-name` 覆盖本次构建版本。
+```sh
+go run ./tools/dev check
+go run ./tools/dev check --scope gio-probe
+go run ./tools/dev check android-core
+go run ./tools/dev run desktop
+```
 
-手动诊断：`dart run tool/diagnostics/login_probe.dart`，使用 `test/test` 假凭据访问真实论坛，
-不会在自动测试中执行。账号、会话、本机 SDK 路径和签名密钥均不属于源码。
+启动时恢复已保存的 OAuth 登录；首次运行显示登录页。用户名使用论坛 ID。
+令牌保存在 MyGo 适配的 Windows Credential Manager、macOS Keychain 或 Linux Secret Service；
+关闭“记住登录”可仅在本次进程使用令牌。普通配置文件不保存令牌或密码。
+
+草稿与最近 100 条阅读历史按账号保存。偏好及本地内容位于系统用户配置目录下的
+`BYR-Client/state.json`；可通过 `BYR_DATA_DIR` 指定测试目录。
+`BYR_BASE_URL` 仅用于开发或本地接口测试，默认连接北邮人论坛。
+
+## 构建与产物
+
+```sh
+go run ./tools/dev build desktop --target windows/amd64
+go run ./tools/dev build desktop --target linux/amd64
+go run ./tools/dev build desktop --target darwin/arm64
+go run ./tools/dev build android-probe --framework gio
+```
+
+```text
+dist/desktop/windows-amd64/
+  app/BYR Client.exe
+  app/FONT-LICENSE.txt
+  BYR-Client-windows-amd64.zip
+  manifest.json
+dist/evaluation/android/gio/
+  BYR-Gio-Probe.apk
+  FONT-LICENSE.txt
+  manifest.json
+```
+
+桌面 ZIP 包含完整运行目录和字体许可证。跨平台编译不代替目标系统运行验收。
+Gio APK 使用独立包名与 debug 签名，仍不包含论坛页面；`build android` 会保持待选型保护，
+不会将技术探针作为正式 Android 客户端发布。
+
+- [迁移功能对照与验收边界](docs/features.md)
+- [架构与设计模式](docs/architecture.md)
+- [Android：Fyne / Gio 的选择](docs/android-options.md)
+- [Gio 验证范围](docs/android-evaluation.md)
+- [构建流程](docs/build.md)
+
+测试使用本地模拟服务，不需要真实论坛账号，不会向线上发布帖子或发送站内信。
+本机默认 Go 代理不可用时，可在当前 PowerShell 临时设置
+`$env:GOPROXY = 'https://goproxy.cn,direct'`，项目不修改全局 Go 环境。

@@ -1,57 +1,72 @@
-# 代码分类与设计模式
+# 架构与设计模式
 
-## 按职责放置代码
+PC 使用 MyGo，Android 保持独立 UI 模块并优先验证 Gio。两端直接编译共享 Go 代码，
+无需桌面常驻服务、HTTP 桥接或 Dart/Go FFI。共享代码不意味着设备间自动同步本地数据。
 
-| 目录 | 内容 | 放置规则 |
+## 依赖方向
+
+```text
+MyGo 页面 ---> application.App ---> forum.Client ---> HTTP
+                     |
+                     +------------> local.Store ---> Backend 接口
+                     |
+                     +------------> CredentialStore 接口
+正文呈现 ---> content / resources
+Android UI ---> 同一套核心包（当前正式 UI 待选型）
+```
+
+核心只依赖标准库，架构测试拒绝导入 UI 框架或 apps/。UI 状态、控件、路由和后台任务的
+生命周期由各端拥有，协议和业务规则不放进页面事件处理器。
+
+JSON 适配器保留文字等级，并将完整分区对象、字符串/数字分区引用统一成 Section；
+集合字段使用 List 同时接收单对象与数组。解析失败产生可识别的 DecodeError，界面明确
+显示加载失败并提供原请求重试，不能把失败当成“暂无内容”。
+
+| 目录 | 责任 | 不承担 |
 | --- | --- | --- |
-| `lib/app/` | 启动、依赖组装、应用主题、应用级入口 | `bootstrap.dart` 是具体实现的组装位置 |
-| `lib/shared/core/` | 常量、结果类型、时间格式 | 四端共用，不判断操作系统 |
-| `lib/shared/data/` | 论坛模型、HTTP 协议、各业务 API | 四端使用同一套协议；不复制到平台目录 |
-| `lib/shared/storage/` | 会话、浏览历史、草稿、存储契约 | 负责数据规则和序列化，通过 `PreferenceStore` 持久化 |
-| `lib/shared/services/` | 剪贴板、外部链接、附件选择的契约 | 使用应用自己的类型，不暴露插件类型 |
-| `lib/shared/widgets/` | 正文、图片、头像、互动与状态视图 | 多个功能/平台复用的 Flutter 组件 |
-| `lib/features/` | 登录、版面、帖子、搜索、信箱、设置等功能页面 | 描述业务交互，通过 `AppScope` 读取依赖 |
-| `lib/platforms/desktop/` | 桌面导航与多栏论坛工作区 | Windows、macOS、Linux 共用桌面布局 |
-| `lib/platforms/mobile/` | 移动导航与宽屏布局适配 | Android 共用功能页面；宽屏使用导航栏，不切换桌面业务实现 |
-| `lib/platforms/android/` | Android 系统栏、边到边显示 | Android/HarmonyOS 深浅色系统栏细节 |
-| `lib/platforms/adapters/` | 本地存储与系统能力插件适配器 | 唯一直接依赖 `shared_preferences`、`file_picker`、`url_launcher` 的应用层位置 |
-| `android/`、`windows/`、`macos/`、`linux/` | Flutter 原生宿主与平台构建配置 | 保持 Flutter 标准位置，由工具链识别 |
+| core/forum | 端点、DTO、分页、OAuth 签名、统一错误、附件与加密协议 | 登录持久化、页面导航 |
+| core/application | 会话生命周期、发布与权限规则、单向点赞/踩、私信聚合 | 控件、OS 调用 |
+| core/local | 草稿、历史、偏好、按账号隔离与事务式序列化 | 文件位置、系统凭据库 |
+| core/content | UBB、附件标记、表情标记、Unicode 选区操作 | 框架绘制和图片缓存 |
+| core/resources | 原有 GIF、共享字体及许可证 | UI 实例、网络状态 |
+| desktop/internal/desktop | MyGo 页面、异步回调、导航、图片显示与选区 | HTTP 路径、登录签名 |
+| desktop/internal/platform | 文件、系统凭据、文件选择/保存、剪贴板与浏览器 | 论坛业务规则 |
+| desktop/internal/bootstrap | 一处显式依赖组装 | 全局服务定位器 |
+| tools/internal/buildflow | 隔离检查、打包、校验、发布目录替换 | 论坛账号和功能流程 |
 
-`dart:io` 中的 HTTP Cookie 类型属于共用网络协议，不能仅凭 `dart:io` 导入把整个
-模块归为某个平台。实际的操作系统检测集中在 `platform_detector.dart`。
+## 实际使用的 GoF 模式
 
-## 采用的模式
-
-| 模式 | 实现 | 解决的问题 |
+| 模式 | 实现 | 取舍 |
 | --- | --- | --- |
-| Strategy（策略） | `AppServices.homeBuilder` + `AppHome` | 启动、恢复会话、登录成功使用同一个可注入界面策略，页面不再自行判断操作系统 |
-| Adapter（适配器） | `SharedPreferencesStore`、`FlutterDeviceServices` | 把插件的各类返回值和调用方式转换为应用契约，测试可以替换为内存存储和假系统能力 |
-| Facade（外观） | `ByrApi` | 统一组装认证、版面、文章、信箱等 API，共享 HTTP 客户端与会话 |
-| Observer（观察者） | `Session` 的 `ValueNotifier`，应用中的 `ValueListenableBuilder` | 主题和字体修改后通知订阅的界面，不建立额外事件总线 |
-| Strategy（发布策略） | `ReleaseTarget` 的配置与 `assemble` 函数 | Android 复制 APK，Windows 打包完整运行目录，macOS 保留应用包结构，Linux 保留权限和链接 |
+| Facade | forum.Client、application.App | 协议客户端统一传输；应用层只协调跨子系统的业务用例。按领域拆文件，不给每个端点再加转发服务 |
+| Adapter | JSON 的 Scalar/Number/Flag/List；platform.Credentials、FileState、Device | 将服务器类型差异和平台 API 收敛在边界；核心声明实际消费的小接口 |
+| Strategy（函数） | TokenSource、IPv6 读取函数、构建 RunCommand | 允许平台会话、HTTP 测试和真实构建替换行为；使用函数和标准库接口，不建立策略继承树 |
+| Command（闭包） | 删除等操作的 confirmation.run | 保存待确认的操作，用户确认后执行一次；不虚构撤销服务器写入的能力 |
 
-策略使用 Dart 函数表达；跨系统差异已由 Flutter 插件实现的部分共用一个适配器，
-不再为每个操作系统创建空壳类。依赖由应用实例持有，不使用全局服务定位器。
+没有账户 Singleton、抽象页面基类、空 Repository、全局事件总线或为了模式名称创建的工厂。
+页面之间通过导航传递标识，核心通过显式参数及构造函数获得依赖。
 
-## 依赖组装
+## 状态与并发
 
-`main.dart` 调用 `bootstrapApplication()`，集中检测平台、创建存储和系统适配器、
-恢复会话，再将 `AppServices` 传入 `ByrApp`。`AppScope` 向各功能暴露这些依赖。
+网络工作接受 context.Context，在后台执行；MyGo Window.Update 在主线程应用结果。
+窗口关闭会取消任务；序号检查丢弃过期回调。网络写入不自动重试，以免重复发帖或重复发送。
 
-功能页面使用 `AppScope.of(context).api` 调用论坛接口，使用 `.device` 调用系统能力，
-使用 `.history` / `.drafts` 处理本地数据。共享数据和存储模块不导入具体平台适配器。
-移动端、桌面端都使用同一个分区页、十大页、模型、编辑器与正文渲染组件。
+草稿在编辑时保存，切换页面和关闭窗口时再保存快照；提交前已有本地草稿。
+服务器确认发布后才删除草稿，提交期间与成功之后都不会由界面销毁重新保存。
+如果服务器成功但磁盘清理失败，返回独立的 LocalError，页面明确报告发布成功并阻止再次提交。
 
-## 测试归类
+local.Store 在锁内复制文档、持久化，再替换内存状态。文件适配器在同目录写临时文件、
+同步并重命名；失败不会让内存假装保存成功。账号键统一大小写，历史按版面与主题去重、保留最近 100 条。
+JSON 文档有版本号；不能识别或损坏的数据不会被静默覆盖。
 
-| 位置 | 验证内容 |
-| --- | --- |
-| `test/architecture_test.dart` | 共享模块和功能页面不重新引入具体插件或操作系统判断 |
-| `test/shared/` | 存储适配、会话恢复、观察者通知、历史限制、草稿序列化 |
-| `test/platforms/` | 四个平台的布局选择、登录策略、系统能力替换、Android 系统栏 |
-| `test/tool/` | 构建宿主约束、产物分类、失败保留已有软件、完整 Windows 打包 |
-| `test/feature_navigation_test.dart` | 版面、十大、发帖入口和邮件等功能流程 |
-| `test/widget_test.dart` | 协议模型、正文、主题及共用组件 |
-| `test/support/` | 测试专用内存存储、假系统能力、假 HTTP 服务，不进入应用产物 |
+令牌单独通过 CredentialStore 保存，普通状态文件只含偏好、草稿、历史。
+服务端身份与权限始终具有最终决定权。图片与附件只向配置源站或两个官方 BBS 主机注入令牌，
+HTTP 重定向限制在原请求源站，错误不包含带 token 的请求 URL。
 
-修改布局策略、适配器或发布流程时运行相关测试，再执行完整的静态分析和测试。
+## 页面归属
+
+本轮恢复的是原客户端的功能流程基线。页面清单、导航结构、阅读交互和后续功能组合仍由
+项目所有者决定；核心不通过枚举或路由表规定产品必须有哪些页面。
+
+Android 的正式框架、页面以及系统权限适配尚未决定。Gio 探针保持离线技术验证，
+通过与桌面相同的核心模块及字体资源检查跨端依赖边界。
