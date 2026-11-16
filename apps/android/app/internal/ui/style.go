@@ -231,7 +231,7 @@ func (a *App) articleTile(gtx layout.Context, key string, v forum.Article, fallb
 			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return a.avatarCircle(gtx, v.Author.DisplayName(), 34, colorAccentSoft, colorAccent)
+						return a.avatar(gtx, v.Author, 34)
 					}),
 					layout.Rigid(layout.Spacer{Width: unit.Dp(11)}.Layout),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {

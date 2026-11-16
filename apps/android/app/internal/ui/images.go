@@ -9,6 +9,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
@@ -69,6 +70,26 @@ func (a *App) imageEntry(raw string) *mobileImage {
 type contentError string
 
 func (e contentError) Error() string { return string(e) }
+
+func (a *App) avatar(gtx layout.Context, user forum.User, size unit.Dp) layout.Dimensions {
+	px := gtx.Dp(size)
+	gtx.Constraints = layout.Exact(image.Pt(px, px))
+	if user.FaceURL == "" {
+		return a.avatarCircle(gtx, user.DisplayName(), size, colorAccentSoft, colorAccent)
+	}
+	entry := a.imageEntry(user.FaceURL)
+	if entry.loading || entry.err != nil || entry.img == nil {
+		return a.avatarCircle(gtx, user.DisplayName(), size, colorAccentSoft, colorAccent)
+	}
+	stack := clip.Ellipse(image.Rectangle{Max: image.Pt(px, px)}).Push(gtx.Ops)
+	defer stack.Pop()
+	img := widget.Image{
+		Src:      paint.NewImageOp(entry.img),
+		Fit:      widget.Cover,
+		Position: layout.Center,
+	}
+	return img.Layout(gtx)
+}
 
 func (a *App) postBody(gtx layout.Context, body string, attachments []forum.Attachment) layout.Dimensions {
 	parts := content.Parse(body, attachments)

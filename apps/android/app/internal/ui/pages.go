@@ -775,7 +775,7 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.avatarCircle(gtx, author, 34, colorAccentSoft, colorAccent)
+							return a.avatar(gtx, v.Author, 34)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -1049,7 +1049,7 @@ func (a *App) collectionBody(gtx layout.Context) layout.Dimensions {
 			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return a.avatarCircle(gtx, e.Author.DisplayName(), 34, colorAccentSoft, colorAccent)
+						return a.avatar(gtx, e.Author, 34)
 					}),
 					layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -1194,7 +1194,7 @@ func (a *App) selfPage(gtx layout.Context) layout.Dimensions {
 				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.avatarCircle(gtx, u.DisplayName(), 56, colorAccentSoft, colorAccent)
+							return a.avatar(gtx, u, 56)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
