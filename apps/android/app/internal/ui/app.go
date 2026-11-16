@@ -237,17 +237,55 @@ func (a *App) start() {
 	a.post(func() {
 		a.dir = dir
 		a.core = core
+		a.initErr = ""
 		a.ready = true
 		if core.Session().Token != "" {
 			a.stack = []Route{{Page: PageHome}}
 			a.loadHome()
 		} else {
-			a.stack = []Route{{Page: PageLogin}}
+			a.resetSessionUI()
 		}
 	})
 }
 
-func (a *App) current() Route { return a.stack[len(a.stack)-1] }
+func (a *App) current() Route {
+	if len(a.stack) == 0 {
+		a.stack = []Route{{Page: PageLogin}}
+	}
+	return a.stack[len(a.stack)-1]
+}
+
+func (a *App) resetSessionUI() {
+	a.ready = true
+	a.busy = false
+	a.message = ""
+	a.failed = false
+	a.stack = []Route{{Page: PageLogin}}
+	a.sections = nil
+	a.section = forum.Section{}
+	a.boards = nil
+	a.board = forum.Board{}
+	a.thread = forum.Thread{}
+	a.articles = nil
+	a.favorite = forum.Favorite{}
+	a.collect = forum.Collection{}
+	a.pagination = forum.Pagination{}
+	a.user = forum.User{}
+	a.history = nil
+	a.favoriteTab = "boards"
+	a.compose = composeState{}
+	a.lastClip = ""
+	a.images = map[string]*mobileImage{}
+	a.clicks = map[string]*widget.Clickable{}
+	a.homeList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.boardList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.threadList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.timelineList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.favoriteList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.selfList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.username.SetText("")
+	a.password.SetText("")
+}
 
 func (a *App) canBack() bool { return len(a.stack) > 1 }
 

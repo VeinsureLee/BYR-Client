@@ -1288,26 +1288,7 @@ func (a *App) selfPage(gtx layout.Context) layout.Dimensions {
 func (a *App) logout() {
 	a.run("退出登录", func(ctx context.Context) (func(), error) {
 		err := a.core.Logout(ctx)
-		return func() {
-			a.stack = []Route{{Page: PageLogin}}
-			a.sections = nil
-			a.section = forum.Section{}
-			a.boards = nil
-			a.board = forum.Board{}
-			a.thread = forum.Thread{}
-			a.articles = nil
-			a.user = forum.User{}
-			a.history = nil
-			a.compose = composeState{}
-			a.favorite = forum.Favorite{}
-			a.collect = forum.Collection{}
-			a.pagination = forum.Pagination{}
-			a.username.SetText("")
-			a.password.SetText("")
-			a.images = map[string]*mobileImage{}
-			a.message = ""
-			a.failed = false
-		}, err
+		return func() { a.resetSessionUI() }, err
 	})
 }
 
