@@ -888,8 +888,9 @@ func (a *App) likeThread() {
 		a.fail(errors.New("已赞过，服务器不支持取消赞"))
 		return
 	}
+	board := a.current().Name
 	a.run("提交评价", func(ctx context.Context) (func(), error) {
-		updated, err := a.core.React(ctx, a.current().Name, root, application.Like)
+		updated, err := a.core.React(ctx, board, root, application.Like)
 		return func() {
 			a.thread.LikeSum = updated.LikeSum
 			a.thread.IsLiked = updated.IsLiked
@@ -919,8 +920,9 @@ func (a *App) react(index int, v forum.Article, kind application.ReactionKind) {
 		a.fail(errors.New("已踩过，服务器不支持取消踩"))
 		return
 	}
+	board := a.current().Name
 	a.run("提交评价", func(ctx context.Context) (func(), error) {
-		updated, err := a.core.React(ctx, a.current().Name, v, kind)
+		updated, err := a.core.React(ctx, board, v, kind)
 		return func() {
 			if index < len(a.thread.Articles) {
 				a.thread.Articles[index] = updated
@@ -937,8 +939,9 @@ func (a *App) react(index int, v forum.Article, kind application.ReactionKind) {
 
 func (a *App) collectThread() {
 	was := bool(a.thread.Collect)
+	board, id := a.current().Name, a.current().ID
 	a.run("更新文章收藏", func(ctx context.Context) (func(), error) {
-		_, err := a.core.SetCollected(ctx, a.current().Name, a.current().ID, !was)
+		_, err := a.core.SetCollected(ctx, board, id, !was)
 		return func() { a.thread.Collect = forum.Flag(!was) }, err
 	})
 }
@@ -1001,14 +1004,33 @@ func (a *App) timelinePage(gtx layout.Context) layout.Dimensions {
 
 func (a *App) loadFavorites() {
 	tab := a.favoriteTab
+	page := max(1, a.current().Number)
 	a.run("加载收藏", func(ctx context.Context) (func(), error) {
 		if tab == "collection" {
-			v, err := a.core.Forum.Collection(ctx, "", forum.Page{Number: 1, Size: 30})
-			return func() { a.collect = v }, err
+			v, err := a.core.Forum.Collection(ctx, "", forum.Page{Number: page, Size: 30})
+			return func() { a.collect = v; a.pagination = v.Pagination }, err
 		}
 		v, err := a.core.Forum.Favorites(ctx, "0")
-		return func() { a.favorite = v }, err
+		return func() { a.favorite = v; a.pagination = forum.Pagination{} }, err
 	})
+}
+
+func (a *App) selectFavoriteTab(tab string) {
+	if a.busy || a.favoriteTab == tab {
+		return
+	}
+	a.favoriteTab = tab
+	a.stack[len(a.stack)-1].Number = 1
+	a.favoriteList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.loadFavorites()
+}
+
+func (a *App) openCollectionEntry(e forum.CollectionEntry) {
+	if e.Board == "" || e.ID == "" {
+		return
+	}
+	a.core.RememberCollection(e.Board, string(e.ID))
+	a.openThread(e.Board, string(e.ID))
 }
 
 func (a *App) favoritesPage(gtx layout.Context) layout.Dimensions {
@@ -1018,8 +1040,7 @@ func (a *App) favoritesPage(gtx layout.Context) layout.Dimensions {
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					dims, clicked := a.pill(gtx, "fav-tab:boards", "版面", "board", a.favoriteTab == "boards", false)
 					if clicked {
-						a.favoriteTab = "boards"
-						a.loadFavorites()
+						a.selectFavoriteTab("boards")
 					}
 					return dims
 				}),
@@ -1027,8 +1048,7 @@ func (a *App) favoritesPage(gtx layout.Context) layout.Dimensions {
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					dims, clicked := a.pill(gtx, "fav-tab:collection", "文章收藏", "star", a.favoriteTab == "collection", false)
 					if clicked {
-						a.favoriteTab = "collection"
-						a.loadFavorites()
+						a.selectFavoriteTab("collection")
 					}
 					return dims
 				}),
@@ -1044,6 +1064,7 @@ func (a *App) favoritesPage(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(tabs),
 		layout.Flexed(1, body),
+		layout.Rigid(a.pager),
 	)
 }
 
@@ -1056,40 +1077,49 @@ func (a *App) collectionBody(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return a.avatar(gtx, e.Author, 34)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								btn := a.click("collection:" + string(e.ID))
-								clicked := btn.Clicked(gtx)
-								dims := material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(14), e.Title)
-									l.Font.Weight = 600
-									l.MaxLines = 2
-									return l.Layout(gtx)
-								})
-								if clicked {
-									a.core.RememberCollection(e.Board, string(e.ID))
-									a.openThread(e.Board, string(e.ID))
-								}
-								return dims
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								l := material.Label(a.theme, unit.Sp(11),
-									fmt.Sprintf("%s · 回复 %d · %s", e.Board, e.ReplyCount, formatTime(e.PostTime)))
-								l.Color = colorMuted
-								return l.Layout(gtx)
-							}),
-						)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						dims, clicked := a.pill(gtx, "remove:"+string(e.ID), "取消收藏", "trash", true, true)
+						btn := a.click("collection:" + e.Board + ":" + string(e.ID))
+						clicked := btn.Clicked(gtx)
+						dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return a.avatar(gtx, e.Author, 34)
+								}),
+								layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											title := e.Title
+											if title == "" {
+												title = "无标题"
+											}
+											l := material.Label(a.theme, unit.Sp(14), title)
+											l.Font.Weight = 600
+											l.MaxLines = 2
+											return l.Layout(gtx)
+										}),
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											l := material.Label(a.theme, unit.Sp(11),
+												fmt.Sprintf("%s · 回复 %d · %s", e.Board, e.ReplyCount, formatTime(e.PostTime)))
+											l.Color = colorMuted
+											return l.Layout(gtx)
+										}),
+									)
+								}),
+							)
+						})
 						if clicked {
+							a.openCollectionEntry(e)
+						}
+						return dims
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						dims, clicked := a.pill(gtx, "remove:"+e.Board+":"+string(e.ID), "取消收藏", "trash", true, true)
+						if clicked && !a.busy {
+							board, id := e.Board, string(e.ID)
 							a.run("取消收藏", func(ctx context.Context) (func(), error) {
-								_, err := a.core.SetCollected(ctx, e.Board, string(e.ID), false)
+								_, err := a.core.SetCollected(ctx, board, id, false)
 								return func() { a.loadFavorites() }, err
 							})
 						}
@@ -1302,6 +1332,9 @@ func (a *App) logout() {
 
 func (a *App) pager(gtx layout.Context) layout.Dimensions {
 	r := a.current()
+	if r.Page == PageFavorites && a.favoriteTab != "collection" {
+		return layout.Dimensions{}
+	}
 	current := max(1, r.Number)
 	total := 1
 	switch r.Page {
@@ -1309,7 +1342,7 @@ func (a *App) pager(gtx layout.Context) layout.Dimensions {
 		total = max(1, int(a.board.Pagination.TotalPages))
 	case PageThread:
 		total = max(1, int(a.thread.Pagination.TotalPages))
-	case PageTimeline:
+	case PageTimeline, PageFavorites:
 		total = max(1, int(a.pagination.TotalPages))
 	}
 	return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1352,6 +1385,8 @@ func (a *App) changePage(n int) {
 		a.loadThread()
 	case PageTimeline:
 		a.loadTimeline()
+	case PageFavorites:
+		a.loadFavorites()
 	}
 }
 
