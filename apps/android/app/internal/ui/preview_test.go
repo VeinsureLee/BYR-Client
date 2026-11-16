@@ -131,6 +131,28 @@ func TestPreviewScreens(t *testing.T) {
 	search.stack = []Route{{Page: PageHome}, {Page: PageSearch}}
 	capture("search", search)
 
+	user := previewApp(t)
+	user.user = forum.User{ID: "bob", UserName: "Bob", PostCount: 8, Score: 42, HomePage: "https://example.com"}
+	user.stack = []Route{{Page: PageSelf}, {Page: PageUser, Name: "bob"}}
+	capture("user", user)
+
+	messages := previewApp(t)
+	messages.mailbox = forum.Mailbox{NewNum: 1, Mails: []forum.Mail{
+		{Index: "1", Title: "你好", Author: forum.User{ID: "bob", UserName: "Bob"}, PostTime: forum.Scalar("1700000000")},
+		{Index: "2", Title: "已读信件", IsRead: true, Author: forum.User{ID: "carol", UserName: "Carol"}, PostTime: forum.Scalar("1700000100")},
+	}}
+	messages.stack = []Route{{Page: PageSelf}, {Page: PageMessages, Sub: "inbox"}}
+	capture("messages", messages)
+
+	vote := previewApp(t)
+	vote.vote = forum.Vote{ID: "42", Title: "周末去哪里", UserCount: 12, Options: []forum.VoteOption{
+		{ID: "1", Label: "爬山", Num: 7},
+		{ID: "2", Label: "看电影", Num: 5},
+	}}
+	vote.choice = "1"
+	vote.stack = []Route{{Page: PageSelf}, {Page: PageVote, ID: "42"}}
+	capture("vote", vote)
+
 	top := previewApp(t)
 	top.topTab = "top"
 	top.articles = board.board.Articles

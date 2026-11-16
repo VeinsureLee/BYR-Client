@@ -782,6 +782,22 @@ func (a *App) threadToolbar(gtx layout.Context) layout.Dimensions {
 							}
 							return dims
 						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							dims, clicked := a.pill(gtx, "thread-vote", "投票", "check", false, false)
+							if clicked {
+								a.openVote(a.current().ID)
+							}
+							return dims
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							dims, clicked := a.pill(gtx, "thread-bet", "竞猜", "hot", false, false)
+							if clicked {
+								a.openBet(a.current().ID)
+							}
+							return dims
+						}),
 					)
 				}),
 			)
@@ -801,7 +817,18 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.avatar(gtx, v.Author, 34)
+							if v.Author.Anonymous() || v.Author.ID == "" {
+								return a.avatar(gtx, v.Author, 34)
+							}
+							btn := a.click("post-user:" + strconv.Itoa(index))
+							clicked := btn.Clicked(gtx)
+							dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return a.avatar(gtx, v.Author, 34)
+							})
+							if clicked {
+								a.openUser(string(v.Author.ID))
+							}
+							return dims
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -1282,43 +1309,106 @@ func (a *App) selfPage(gtx layout.Context) layout.Dimensions {
 				})
 			})
 		case 1:
-			return a.sectionTitle(gtx, "最近阅读", fmt.Sprintf("%d 条", len(a.history)))
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							l := material.Label(a.theme, unit.Sp(14), "我的社区")
+							l.Font.Weight = 700
+							return l.Layout(gtx)
+						}),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									dims, clicked := a.pill(gtx, "self-history", "阅读历史", "clock", false, false)
+									if clicked {
+										a.openHistory()
+									}
+									return dims
+								}),
+								layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									dims, clicked := a.pill(gtx, "self-blacklist", "黑名单", "alert", false, false)
+									if clicked {
+										a.openBlacklist()
+									}
+									return dims
+								}),
+								layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									dims, clicked := a.pill(gtx, "self-settings", "设置", "edit", false, false)
+									if clicked {
+										a.openSettings()
+									}
+									return dims
+								}),
+							)
+						}),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									dims, clicked := a.pill(gtx, "self-messages", "私信与站内信", "mail", false, false)
+									if clicked {
+										a.openMessages("contacts")
+									}
+									return dims
+								}),
+								layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									dims, clicked := a.pill(gtx, "self-favorites", "我的收藏", "star", false, false)
+									if clicked {
+										a.setTab(PageFavorites)
+									}
+									return dims
+								}),
+							)
+						}),
+					)
+				})
+			})
 		case 2:
 			if len(a.history) == 0 {
 				return a.empty(gtx, "还没有阅读历史")
 			}
 			e := a.history[0]
-			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				btn := a.click("history:" + e.Board + ":" + e.ID)
-				clicked := btn.Clicked(gtx)
-				dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										l := material.Label(a.theme, unit.Sp(14), e.Title)
-										l.Font.Weight = 600
-										return l.Layout(gtx)
-									}),
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										l := material.Label(a.theme, unit.Sp(11), e.Board)
-										l.Color = colorMuted
-										return l.Layout(gtx)
-									}),
-								)
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return a.drawIcon(gtx, "next", 16, colorMuted)
-							}),
-						)
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return a.sectionTitle(gtx, "最近阅读", fmt.Sprintf("%d 条", len(a.history)))
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					btn := a.click("history:" + e.Board + ":" + e.ID)
+					clicked := btn.Clicked(gtx)
+					dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											l := material.Label(a.theme, unit.Sp(14), e.Title)
+											l.Font.Weight = 600
+											return l.Layout(gtx)
+										}),
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											l := material.Label(a.theme, unit.Sp(11), e.Board)
+											l.Color = colorMuted
+											return l.Layout(gtx)
+										}),
+									)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return a.drawIcon(gtx, "next", 16, colorMuted)
+								}),
+							)
+						})
 					})
-				})
-				if clicked {
-					a.openThread(e.Board, e.ID)
-				}
-				return dims
-			})
+					if clicked {
+						a.openThread(e.Board, e.ID)
+					}
+					return dims
+				}),
+			)
 		default:
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1360,7 +1450,12 @@ func (a *App) pager(gtx layout.Context) layout.Dimensions {
 		total = max(1, int(a.board.Pagination.TotalPages))
 	case PageThread:
 		total = max(1, int(a.thread.Pagination.TotalPages))
-	case PageTimeline, PageFavorites:
+	case PageTimeline, PageFavorites, PageBlacklist:
+		total = max(1, int(a.pagination.TotalPages))
+	case PageMessages:
+		if a.current().Sub == "contacts" {
+			return layout.Dimensions{}
+		}
 		total = max(1, int(a.pagination.TotalPages))
 	}
 	return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1405,6 +1500,10 @@ func (a *App) changePage(n int) {
 		a.loadTimeline()
 	case PageFavorites:
 		a.loadFavorites()
+	case PageBlacklist:
+		a.loadBlacklist()
+	case PageMessages:
+		a.loadMessages()
 	}
 }
 

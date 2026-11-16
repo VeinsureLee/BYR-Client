@@ -42,7 +42,19 @@ const (
 	PageTimeline
 	PageFavorites
 	PageSearch
+	PageMessages
+	PageChat
+	PageMailbox
+	PageMail
+	PageMailCompose
+	PageRefers
 	PageSelf
+	PageUser
+	PageHistory
+	PageBlacklist
+	PageSettings
+	PageVote
+	PageBet
 	PageCompose
 )
 
@@ -89,12 +101,27 @@ type App struct {
 	pagination forum.Pagination
 	user       forum.User
 	history    []local.History
+	blacklist  forum.Blacklist
+	vote       forum.Vote
+	bet        forum.Bet
+
+	contacts    []application.Contact
+	chat        []application.ChatMessage
+	mailbox     forum.Mailbox
+	mail        forum.Mail
+	refers      forum.Refers
+	mailEditor  mailEditor
+	blacklistIn widget.Editor
+	scoreIn     widget.Editor
+	forwardIn   widget.Editor
+	ipv6        widget.Bool
+	choice      string
 
 	username widget.Editor
 	password widget.Editor
 	remember widget.Bool
 
-	homeList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList widget.List
+	homeList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList, auxList widget.List
 
 	clicks map[string]*widget.Clickable
 
@@ -141,6 +168,7 @@ func New(window invalidator) (*App, error) {
 		selfList:     widget.List{List: layout.List{Axis: layout.Vertical}},
 		composeList:  widget.List{List: layout.List{Axis: layout.Vertical}},
 		topList:      widget.List{List: layout.List{Axis: layout.Vertical}},
+		auxList:      widget.List{List: layout.List{Axis: layout.Vertical}},
 	}
 	a.username.SingleLine = true
 	// Email-type IME keeps English usernames free of sentence capitalization
@@ -321,6 +349,7 @@ func (a *App) resetSessionUI() {
 	a.selfList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.composeList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.topList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.username.SetText("")
 	a.password.SetText("")
 }
@@ -374,6 +403,10 @@ func (a *App) setTab(page Page) {
 		a.stack = []Route{{Page: PageFavorites}}
 		a.favoriteTab = "boards"
 		a.loadFavorites()
+	case PageMessages:
+		a.stack = []Route{{Page: PageMessages, Sub: "contacts", Number: 1}}
+		a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
+		a.loadMessages()
 	case PageSelf:
 		a.stack = []Route{{Page: PageSelf}}
 		a.loadSelf()
@@ -439,6 +472,11 @@ func (a *App) click(key string) *widget.Clickable {
 func (a *App) Layout(gtx layout.Context) layout.Dimensions {
 	a.drain()
 	a.ensureStarted()
+	if a.core != nil {
+		if scale := a.core.Local.Preferences().FontScale; scale > 0 && scale != 1 {
+			gtx.Metric.PxPerSp *= scale
+		}
+	}
 	a.handleSystemBack(gtx)
 	// The window supplies exact constraints; children must not inherit the
 	// window minimum as their own minimum, or inner widgets stretch to the
@@ -633,6 +671,38 @@ func (a *App) subtitle() string {
 		return "我的收藏"
 	case PageSearch:
 		return "全站与 AI 搜索"
+	case PageMessages:
+		switch a.current().Sub {
+		case "inbox":
+			return "收件箱"
+		case "outbox":
+			return "发件箱"
+		case "refers":
+			return "回复与 @ 提醒"
+		}
+		return "私信与站内信"
+	case PageChat:
+		return "与 " + a.current().Name + " 的私信"
+	case PageMailbox:
+		return "站内信"
+	case PageMail:
+		return a.mail.Title
+	case PageMailCompose:
+		return "写站内信"
+	case PageRefers:
+		return "回复与 @ 提醒"
+	case PageUser:
+		return a.user.DisplayName()
+	case PageHistory:
+		return "阅读历史"
+	case PageBlacklist:
+		return "黑名单"
+	case PageSettings:
+		return "设置"
+	case PageVote:
+		return "投票"
+	case PageBet:
+		return "竞猜"
 	case PageSelf:
 		return "个人中心"
 	case PageCompose:
@@ -657,6 +727,20 @@ func (a *App) refreshCurrent() {
 		a.loadFavorites()
 	case PageSelf:
 		a.loadSelf()
+	case PageMessages:
+		a.loadMessages()
+	case PageChat:
+		a.loadChat()
+	case PageMail:
+		a.loadMail()
+	case PageUser:
+		a.loadUser(a.current().Name)
+	case PageBlacklist:
+		a.loadBlacklist()
+	case PageVote:
+		a.loadVote()
+	case PageBet:
+		a.loadBet()
 	case PageCompose:
 		a.loadCompose()
 	}
@@ -736,6 +820,7 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 		{PageTimeline, "nav-timeline", "timeline", "时间线"},
 		{PageFavorites, "nav-favorites", "favorite", "收藏"},
 		{PageSearch, "nav-search", "search", "搜索"},
+		{PageMessages, "nav-messages", "mail", "消息"},
 		{PageSelf, "nav-self", "self", "我"},
 	}
 	height := gtx.Dp(unit.Dp(68))
@@ -798,8 +883,12 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 
 func (a *App) navPage(page Page) Page {
 	switch page {
-	case PageTop, PageBoard, PageThread, PageCompose:
+	case PageTop, PageBoard, PageThread, PageCompose, PageVote, PageBet:
 		return PageHome
+	case PageChat, PageMail, PageMailbox, PageMailCompose, PageRefers:
+		return PageMessages
+	case PageUser, PageHistory, PageBlacklist, PageSettings:
+		return PageSelf
 	}
 	return page
 }
@@ -831,6 +920,24 @@ func (a *App) title() string {
 		return "收藏"
 	case PageSearch:
 		return "搜索"
+	case PageMessages:
+		return "消息"
+	case PageChat:
+		return a.current().Name
+	case PageMailbox, PageMail, PageMailCompose, PageRefers:
+		return "站内信"
+	case PageUser:
+		return a.user.DisplayName()
+	case PageHistory:
+		return "阅读历史"
+	case PageBlacklist:
+		return "黑名单"
+	case PageSettings:
+		return "设置"
+	case PageVote:
+		return "投票"
+	case PageBet:
+		return "竞猜"
 	case PageSelf:
 		return "我"
 	case PageCompose:
@@ -857,6 +964,30 @@ func (a *App) page(gtx layout.Context) layout.Dimensions {
 		return a.favoritesPage(gtx)
 	case PageSearch:
 		return a.searchPage(gtx)
+	case PageMessages:
+		return a.messagesPage(gtx)
+	case PageChat:
+		return a.chatPage(gtx)
+	case PageMailbox:
+		return a.messagesPage(gtx)
+	case PageMail:
+		return a.mailPage(gtx)
+	case PageMailCompose:
+		return a.mailComposePage(gtx)
+	case PageRefers:
+		return a.messagesPage(gtx)
+	case PageUser:
+		return a.userPage(gtx)
+	case PageHistory:
+		return a.historyPage(gtx)
+	case PageBlacklist:
+		return a.blacklistPage(gtx)
+	case PageSettings:
+		return a.settingsPage(gtx)
+	case PageVote:
+		return a.votePage(gtx)
+	case PageBet:
+		return a.betPage(gtx)
 	case PageSelf:
 		return a.selfPage(gtx)
 	case PageCompose:
