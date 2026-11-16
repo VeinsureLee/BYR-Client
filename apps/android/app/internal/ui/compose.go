@@ -96,11 +96,31 @@ func (a *App) composePage(gtx layout.Context) layout.Dimensions {
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			l := material.Caption(a.theme, "版面："+c.board)
-			l.Color = a.theme.ContrastBg
-			return l.Layout(gtx)
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return a.iconTile(gtx, "edit", 40, colorAccentSoft, colorAccent)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									l := material.Label(a.theme, unit.Sp(16), "发布到 "+c.board)
+									l.Font.Weight = 700
+									return l.Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									l := material.Label(a.theme, unit.Sp(11), "标题与正文，支持 UBB 标记")
+									l.Color = colorMuted
+									return l.Layout(gtx)
+								}),
+							)
+						}),
+					)
+				})
+			})
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return a.inputBox(gtx, &a.compose.titleEditor, "帖子标题")
@@ -114,11 +134,14 @@ func (a *App) composePage(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			l := material.Caption(a.theme, "Android 版暂不支持附件与图片上传。")
-			l.Color = colorHint
-			return l.Layout(gtx)
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(a.theme, unit.Sp(11), "Android 版暂不支持附件与图片上传。")
+					l.Color = colorMuted
+					return l.Layout(gtx)
+				})
+			})
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -131,7 +154,7 @@ func (a *App) composePage(gtx layout.Context) layout.Dimensions {
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					dims, clicked := a.primaryButton(gtx, "save-draft", "保存草稿")
+					dims, clicked := a.secondaryButton(gtx, "save-draft", "保存草稿")
 					if clicked {
 						a.saveComposeDraft()
 						a.message = "草稿已保存"

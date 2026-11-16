@@ -147,10 +147,18 @@ func New(window invalidator) (*App, error) {
 	iconData := map[string][]byte{
 		"home": icons.ActionHome, "timeline": icons.ActionDateRange,
 		"favorite": icons.ActionFavoriteBorder, "favorite_on": icons.ActionFavorite,
+		"star": icons.ToggleStarBorder, "star_on": icons.ToggleStar,
 		"mail": icons.CommunicationEmail, "self": icons.SocialPerson,
 		"search": icons.ActionSearch, "back": icons.NavigationArrowBack,
 		"refresh": icons.NavigationRefresh, "like": icons.ActionThumbUp,
 		"down": icons.ActionThumbDown, "reply": icons.ContentReply,
+		"hash": icons.ActionList, "board": icons.ActionList,
+		"link": icons.ContentLink, "copy": icons.ContentContentCopy,
+		"trash": icons.ActionDelete, "clock": icons.ActionSchedule,
+		"plus": icons.ContentAdd, "hot": icons.ActionTrendingUp,
+		"edit": icons.EditorModeEdit, "send": icons.ContentSend,
+		"next": icons.NavigationArrowForward, "check": icons.ActionCheckCircle,
+		"alert": icons.ActionInfoOutline, "close": icons.NavigationClose,
 	}
 	a.icons = make(map[string]*widget.Icon, len(iconData))
 	for name, data := range iconData {
@@ -340,6 +348,9 @@ func (a *App) Layout(gtx layout.Context) layout.Dimensions {
 	if !a.ready {
 		return a.loadingPage(gtx, "正在启动客户端…")
 	}
+	if len(a.stack) == 0 {
+		a.stack = []Route{{Page: PageLogin}}
+	}
 	body := func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(a.topBar),
@@ -422,10 +433,12 @@ func (a *App) errorPage(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) topBar(gtx layout.Context) layout.Dimensions {
+	height := gtx.Dp(unit.Dp(64))
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(56)))
-			paint.FillShape(gtx.Ops, color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}, clip.Rect(image.Rectangle{Max: size}).Op())
+			size := image.Pt(gtx.Constraints.Max.X, height)
+			paint.FillShape(gtx.Ops, colorSurface, clip.Rect(image.Rectangle{Max: size}).Op())
+			paint.FillShape(gtx.Ops, colorBorder, clip.Rect(image.Rect(0, height-1, size.X, height)).Op())
 			return layout.Dimensions{Size: size}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -435,33 +448,46 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 						if !a.canBack() {
 							return layout.Dimensions{}
 						}
-						btn := a.click("back")
-						clicked := btn.Clicked(gtx)
-						dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return a.iconTarget(gtx, "back")
-						})
+						dims, clicked := a.iconButton(gtx, "back", "back")
 						if clicked {
 							a.back()
 						}
 						return dims
 					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							l := material.H6(a.theme, a.title())
-							l.MaxLines = 1
-							l.Truncator = "…"
-							return l.Layout(gtx)
+						return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									l := material.Label(a.theme, unit.Sp(18), a.title())
+									l.Font.Weight = 700
+									l.MaxLines = 1
+									l.Truncator = "…"
+									return l.Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									l := material.Label(a.theme, unit.Sp(11), a.subtitle())
+									l.Color = colorMuted
+									l.MaxLines = 1
+									return l.Layout(gtx)
+								}),
+							)
 						})
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if a.current().Page == PageLogin || a.current().Page == PageCompose {
+							return layout.Dimensions{}
+						}
+						dims, clicked := a.iconButton(gtx, "top-refresh", "refresh")
+						if clicked {
+							a.refreshCurrent()
+						}
+						return dims
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						if a.current().Page != PageHome {
 							return layout.Dimensions{}
 						}
-						btn := a.click("open-search")
-						clicked := btn.Clicked(gtx)
-						dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return a.iconTarget(gtx, "search")
-						})
+						dims, clicked := a.iconButton(gtx, "open-search", "search")
 						if clicked {
 							a.push(Route{Page: PageSearch})
 						}
@@ -471,6 +497,47 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 	)
+}
+
+func (a *App) subtitle() string {
+	switch a.current().Page {
+	case PageLogin:
+		return "北邮人论坛"
+	case PageHome:
+		return "发现版面"
+	case PageBoard:
+		return a.current().Name + " · 版面"
+	case PageThread:
+		return "主题阅读"
+	case PageTimeline:
+		return "全部帖子 · 按时间"
+	case PageFavorites:
+		return "我的收藏"
+	case PageSearch:
+		return "全站与 AI 搜索"
+	case PageSelf:
+		return "个人中心"
+	case PageCompose:
+		return "写点什么"
+	}
+	return ""
+}
+
+func (a *App) refreshCurrent() {
+	switch a.current().Page {
+	case PageHome:
+		a.loadHome()
+	case PageBoard:
+		a.loadBoard()
+	case PageThread:
+		a.loadThread()
+	case PageTimeline:
+		a.loadTimeline()
+	case PageFavorites:
+		a.loadFavorites()
+	case PageSelf:
+		a.loadSelf()
+	}
 }
 
 func (a *App) statusBar(gtx layout.Context) layout.Dimensions {
@@ -539,10 +606,12 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 		{PageFavorites, "nav-favorites", "favorite", "收藏"},
 		{PageSelf, "nav-self", "self", "我"},
 	}
+	height := gtx.Dp(unit.Dp(68))
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(76)))
-			paint.FillShape(gtx.Ops, color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}, clip.Rect(image.Rectangle{Max: size}).Op())
+			size := image.Pt(gtx.Constraints.Max.X, height)
+			paint.FillShape(gtx.Ops, colorSurface, clip.Rect(image.Rectangle{Max: size}).Op())
+			paint.FillShape(gtx.Ops, colorBorder, clip.Rect(image.Rect(0, 0, size.X, 1)).Op())
 			return layout.Dimensions{Size: size}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -554,24 +623,34 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 					btn := a.click(tab.key)
 					clicked := btn.Clicked(gtx)
 					dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									fg := color.NRGBA{R: 0x6C, G: 0x7C, B: 0x93, A: 0xFF}
-									if active {
-										fg = a.theme.ContrastBg
-									}
-									return a.drawIcon(gtx, tab.icon, 22, fg)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Caption(a.theme, tab.label)
-									l.Color = color.NRGBA{R: 0x6C, G: 0x7C, B: 0x93, A: 0xFF}
-									if active {
-										l.Color = a.theme.ContrastBg
-									}
-									return l.Layout(gtx)
-								}),
-							)
+						return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							m := op.Record(gtx.Ops)
+							inner := layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										fg := colorMuted
+										if active {
+											fg = colorAccent
+										}
+										return a.drawIcon(gtx, tab.icon, 21, fg)
+									}),
+									layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										l := material.Label(a.theme, unit.Sp(10), tab.label)
+										l.Color = colorMuted
+										if active {
+											l.Color = colorAccent
+										}
+										return l.Layout(gtx)
+									}),
+								)
+							})
+							call := m.Stop()
+							if active {
+								paint.FillShape(gtx.Ops, colorAccentSoft, clip.RRect{Rect: image.Rectangle{Max: inner.Size}, NE: 10, NW: 10, SE: 10, SW: 10}.Op(gtx.Ops))
+							}
+							call.Add(gtx.Ops)
+							return inner
 						})
 					})
 					if clicked {
@@ -583,22 +662,6 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 		}),
 	)
-}
-
-func (a *App) iconTarget(gtx layout.Context, name string) layout.Dimensions {
-	px := gtx.Dp(unit.Dp(44))
-	gtx.Constraints.Min = image.Pt(px, px)
-	gtx.Constraints.Max = image.Pt(px, px)
-	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return a.drawIcon(gtx, name, 22, a.theme.Fg)
-	})
-}
-
-func (a *App) drawIcon(gtx layout.Context, name string, size unit.Dp, fg color.NRGBA) layout.Dimensions {
-	px := gtx.Dp(size)
-	gtx.Constraints.Min = image.Pt(px, px)
-	gtx.Constraints.Max = image.Pt(px, px)
-	return a.icons[name].Layout(gtx, fg)
 }
 
 func (a *App) navPage(page Page) Page {

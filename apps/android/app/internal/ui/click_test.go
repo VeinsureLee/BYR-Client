@@ -13,6 +13,7 @@ import (
 	"gioui.org/op"
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
+	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
@@ -89,4 +90,51 @@ func TestLoginButtonClickStartsLogin(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("login did not reach home: page=%v message=%q", a.stack[0].Page, a.message)
+}
+
+func TestLogoutReturnsToLoginState(t *testing.T) {
+	store, err := local.Open(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := application.New(application.Options{Local: store, Credentials: &testCredentials{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(noopInvalidator{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.started = true
+	a.ready = true
+	a.core = core
+	a.stack = []Route{{Page: PageSelf}}
+	a.user = forum.User{ID: "alice", UserName: "Alice"}
+	a.username.SetText("alice")
+	a.logout()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for {
+			select {
+			case fn := <-a.updates:
+				fn()
+				continue
+			default:
+			}
+			break
+		}
+		if !a.busy {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(a.stack) != 1 || a.stack[0].Page != PageLogin {
+		t.Fatalf("logout did not return to login: %+v", a.stack)
+	}
+	if !a.ready || a.message != "" || a.username.Text() != "" {
+		t.Fatalf("logout left stale UI state: ready=%v message=%q username=%q", a.ready, a.message, a.username.Text())
+	}
+	var router input.Router
+	var ops op.Ops
+	a.Layout(layout.Context{Ops: &ops, Source: router.Source(), Constraints: layout.Exact(image.Pt(420, 820))})
 }
