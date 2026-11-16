@@ -93,7 +93,7 @@ type App struct {
 	password widget.Editor
 	remember widget.Bool
 
-	homeList, boardList, threadList, timelineList, favoriteList, selfList, loginList widget.List
+	homeList, boardList, threadList, timelineList, favoriteList, selfList, composeList widget.List
 
 	clicks map[string]*widget.Clickable
 
@@ -105,10 +105,12 @@ type App struct {
 }
 
 type composeState struct {
-	board, title, content, replyID, editID string
-	titleEditor, contentEditor             widget.Editor
-	ready, publishing, submitted           bool
-	publishedID                            string
+	board, title, content, replyID, editID  string
+	boardEditor, titleEditor, contentEditor widget.Editor
+	anonymous, signature, email, outgo      widget.Bool
+	boardLocked, ready, loading             bool
+	publishing, submitted                   bool
+	publishedID                             string
 }
 
 func New(window invalidator) (*App, error) {
@@ -135,6 +137,7 @@ func New(window invalidator) (*App, error) {
 		timelineList: widget.List{List: layout.List{Axis: layout.Vertical}},
 		favoriteList: widget.List{List: layout.List{Axis: layout.Vertical}},
 		selfList:     widget.List{List: layout.List{Axis: layout.Vertical}},
+		composeList:  widget.List{List: layout.List{Axis: layout.Vertical}},
 	}
 	a.username.SingleLine = true
 	// Email-type IME keeps English usernames free of sentence capitalization
@@ -313,6 +316,7 @@ func (a *App) resetSessionUI() {
 	a.timelineList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.favoriteList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.selfList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.composeList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.username.SetText("")
 	a.password.SetText("")
 }
@@ -332,7 +336,12 @@ func (a *App) back() {
 	if a.busy || !a.canBack() {
 		return
 	}
-	a.saveComposeDraft()
+	if a.current().Page == PageCompose {
+		if err := a.saveComposeDraft(); err != nil {
+			a.fail(err)
+			return
+		}
+	}
 	a.stack = a.stack[:len(a.stack)-1]
 	a.window.Invalidate()
 }
@@ -341,7 +350,12 @@ func (a *App) setTab(page Page) {
 	if a.busy {
 		return
 	}
-	a.saveComposeDraft()
+	if a.current().Page == PageCompose {
+		if err := a.saveComposeDraft(); err != nil {
+			a.fail(err)
+			return
+		}
+	}
 	switch page {
 	case PageHome:
 		a.stack = []Route{{Page: PageHome}}
@@ -375,11 +389,14 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 		a.post(func() {
 			a.busy = false
 			if err != nil {
+				a.compose.loading = false
 				a.compose.publishing = false
 				a.fail(err)
 				return
 			}
-			a.message = ""
+			if a.message == label {
+				a.message = ""
+			}
 			if done != nil {
 				done()
 			}
@@ -443,7 +460,7 @@ func (a *App) Layout(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, a.page)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if a.current().Page == PageLogin {
+				if a.current().Page == PageLogin || a.current().Page == PageCompose {
 					return layout.Dimensions{}
 				}
 				return a.bottomNav(gtx)
@@ -553,7 +570,7 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 						})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						if a.current().Page == PageLogin || a.current().Page == PageCompose {
+						if a.current().Page == PageLogin || a.current().Page == PageCompose && a.compose.editID == "" {
 							return layout.Dimensions{}
 						}
 						dims, clicked := a.iconButton(gtx, "top-refresh", "refresh")
@@ -616,6 +633,8 @@ func (a *App) refreshCurrent() {
 		a.loadFavorites()
 	case PageSelf:
 		a.loadSelf()
+	case PageCompose:
+		a.loadCompose()
 	}
 }
 

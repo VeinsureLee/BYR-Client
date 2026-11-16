@@ -138,7 +138,10 @@ func TestPreviewScreens(t *testing.T) {
 	capture("self", self)
 
 	compose := previewApp(t)
-	compose.compose = composeState{board: "Go", ready: true}
+	compose.compose = composeState{board: "Go", boardLocked: true, ready: true}
+	compose.compose.boardEditor.SingleLine = true
+	compose.compose.boardEditor.SetText("Go")
+	compose.compose.titleEditor.SingleLine = true
 	compose.compose.titleEditor.SetText("Re: 测试主题")
 	compose.compose.contentEditor.SetText("这是一段回复正文。")
 	compose.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}, {Page: PageCompose, Name: "Go", ID: "42", Sub: "reply"}}
