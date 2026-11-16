@@ -260,64 +260,103 @@ func (a *App) articleTile(gtx layout.Context, key string, v forum.Article, fallb
 	if title == "" {
 		title = "无标题"
 	}
-	btn := a.click("article:" + key + ":" + string(v.ID))
-	clicked := btn.Clicked(gtx)
-	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+	author := v.Author.DisplayName()
+	meta := board
+	if v.ReplyCount > 0 {
+		meta += " · " + itoa(int(v.ReplyCount)) + " 回复"
+	}
+	if t := formatTime(v.PostTime); t != "" {
+		meta += " · " + t
+	}
+	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					avatar := func(gtx layout.Context) layout.Dimensions {
 						return a.avatar(gtx, v.Author, 34)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(11)}.Layout),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					}
+					if v.Author.Anonymous() || v.Author.ID == "" {
+						return avatar(gtx)
+					}
+					btn := a.click("article-user:" + key + ":" + string(v.ID))
+					clicked := btn.Clicked(gtx)
+					dims := btn.Layout(gtx, avatar)
+					if clicked {
+						a.openUser(string(v.Author.ID))
+					}
+					return dims
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(11)}.Layout),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							btn := a.click("article:" + key + ":" + string(v.ID))
+							clicked := btn.Clicked(gtx)
+							dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										if !bool(v.IsTop) {
-											return layout.Dimensions{}
-										}
-										return a.badgeChip(gtx, "置顶", colorWarningSoft, colorWarning)
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												if !bool(v.IsTop) {
+													return layout.Dimensions{}
+												}
+												return a.badgeChip(gtx, "置顶", colorWarningSoft, colorWarning)
+											}),
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												l := material.Label(a.theme, unit.Sp(15), title)
+												l.Font.Weight = 600
+												l.MaxLines = 2
+												l.Truncator = "…"
+												return l.Layout(gtx)
+											}),
+										)
 									}),
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										l := material.Label(a.theme, unit.Sp(15), title)
-										l.Font.Weight = 600
-										l.MaxLines = 2
-										l.Truncator = "…"
-										return l.Layout(gtx)
+										return a.drawIcon(gtx, "next", 16, colorMuted)
 									}),
 								)
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								meta := v.Author.DisplayName()
-								if board != "" {
-									meta += " · " + board
-								}
-								if v.ReplyCount > 0 {
-									meta += " · " + itoa(int(v.ReplyCount)) + " 回复"
-								}
-								if t := formatTime(v.PostTime); t != "" {
-									meta += " · " + t
-								}
-								l := material.Label(a.theme, unit.Sp(11), meta)
-								l.Color = colorMuted
-								l.MaxLines = 1
-								return l.Layout(gtx)
-							}),
-						)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return a.drawIcon(gtx, "next", 16, colorMuted)
-					}),
-				)
-			})
+							})
+							if clicked {
+								a.openThread(board, threadID(v))
+							}
+							return dims
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									name := func(gtx layout.Context) layout.Dimensions {
+										l := material.Label(a.theme, unit.Sp(11), author)
+										l.Color = colorMuted
+										l.MaxLines = 1
+										return l.Layout(gtx)
+									}
+									if v.Author.Anonymous() || v.Author.ID == "" {
+										return name(gtx)
+									}
+									btn := a.click("article-author:" + key + ":" + string(v.ID))
+									clicked := btn.Clicked(gtx)
+									dims := btn.Layout(gtx, name)
+									if clicked {
+										a.openUser(string(v.Author.ID))
+									}
+									return dims
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									if meta == "" {
+										return layout.Dimensions{}
+									}
+									l := material.Label(a.theme, unit.Sp(11), " · "+meta)
+									l.Color = colorMuted
+									l.MaxLines = 1
+									return l.Layout(gtx)
+								}),
+							)
+						}),
+					)
+				}),
+			)
 		})
 	})
-	if clicked {
-		a.openThread(board, threadID(v))
-	}
-	return dims
 }
 
 func (a *App) sectionTitle(gtx layout.Context, title, detail string) layout.Dimensions {

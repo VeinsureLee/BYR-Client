@@ -12,11 +12,10 @@ import (
 	"gioui.org/unit"
 )
 
-func TestBottomNavigationOpensSearch(t *testing.T) {
+func TestBottomNavigationComposeAndMessages(t *testing.T) {
 	a := interactionApp(t, "http://127.0.0.1:1")
 	defer a.Close()
 	a.stack = []Route{{Page: PageHome}}
-	a.click("nav-search").Click()
 
 	var router input.Router
 	var ops op.Ops
@@ -27,13 +26,25 @@ func TestBottomNavigationOpensSearch(t *testing.T) {
 		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
 	}
 	a.Layout(gtx)
-	if got := a.current().Page; got != PageSearch {
-		t.Fatalf("page = %v, want search", got)
-	}
+	a.click("nav-compose").Click()
 	ops.Reset()
 	a.Layout(gtx)
-	if got := a.current().Page; got != PageSearch {
-		t.Fatalf("search page did not survive a frame: %v", got)
+	if got := a.current().Page; got != PageCompose {
+		t.Fatalf("compose nav page = %v, want compose", got)
+	}
+	if a.compose.boardLocked {
+		t.Fatal("compose started with a locked board")
+	}
+
+	a.stack = []Route{{Page: PageHome}}
+	a.click("nav-messages").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if got := a.current().Page; got != PageMessages {
+		t.Fatalf("messages nav page = %v, want messages", got)
+	}
+	if got := a.current().Sub; got != "contacts" {
+		t.Fatalf("messages tab = %q, want contacts", got)
 	}
 }
 

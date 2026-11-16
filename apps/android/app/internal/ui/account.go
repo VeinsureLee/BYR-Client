@@ -9,7 +9,6 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/unit"
-	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"github.com/VeinsureLee/BYR-Client/core/forum"
@@ -26,7 +25,6 @@ func (a *App) openUser(name string) {
 		return
 	}
 	a.user = forum.User{}
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadUser(name)
 }
 
@@ -45,7 +43,6 @@ func (a *App) openHistory() {
 	if !a.push(Route{Page: PageHistory}) {
 		return
 	}
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.history = a.core.Local.History(a.core.Session().Username)
 }
 
@@ -54,7 +51,6 @@ func (a *App) openBlacklist() {
 		return
 	}
 	a.blacklist = forum.Blacklist{}
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadBlacklist()
 }
 
@@ -70,7 +66,6 @@ func (a *App) openSettings() {
 	if !a.push(Route{Page: PageSettings}) {
 		return
 	}
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.ipv6.Value = a.core.Local.Preferences().IPv6
 }
 
@@ -80,7 +75,6 @@ func (a *App) openVote(id string) {
 	}
 	a.vote = forum.Vote{}
 	a.choice = ""
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadVote()
 }
 
@@ -100,7 +94,6 @@ func (a *App) openBet(id string) {
 	a.choice = ""
 	a.scoreIn.SetText("10")
 	a.scoreIn.SingleLine = true
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadBet()
 }
 

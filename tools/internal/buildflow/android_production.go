@@ -52,7 +52,7 @@ func (e Engine) BuildAndroidProduction(ctx context.Context) (string, error) {
 	if err := e.Run(ctx, module, environment, "go", "tool", "gogio",
 		"-target", "android", "-arch", "arm64", "-minsdk", "24", "-targetsdk", "36",
 		"-appid", "cn.byr.bbs.byrclient", "-name", "BYR Client",
-		"-version", "0.4.1.12", "-icon", "resources/icon.png",
+		"-version", "0.4.2.13", "-icon", "resources/icon.png",
 		"-o", path, "."); err != nil {
 		return "", err
 	}
@@ -96,7 +96,7 @@ func (e Engine) BuildAndroidProduction(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if err := writeJSON(filepath.Join(prepared, "manifest.json"), map[string]any{
-		"name": "BYR Client", "version": "0.4.1", "versionCode": 12,
+		"name": "BYR Client", "version": "0.4.2", "versionCode": 13,
 		"target": "android/arm64", "framework": "gio", "stage": "android-preview",
 		"production": true, "deviceTested": false, "signing": "debug",
 		"minSdk": 24, "targetSdk": 36, "applicationId": "cn.byr.bbs.byrclient",

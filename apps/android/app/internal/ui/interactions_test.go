@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"image"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,11 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"gioui.org/io/input"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
@@ -96,6 +102,100 @@ func interactionApp(t *testing.T, baseURL string) *App {
 	a.stack = []Route{{Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	a.thread = sampleThread()
 	return a
+}
+
+func TestThreadAuthorOpensUserProfile(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.thread = sampleThread()
+	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 700)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	a.click("post-author:0").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if got := a.current().Page; got != PageUser {
+		t.Fatalf("author tap page = %v, want user", got)
+	}
+	if got := a.current().Name; got != "alice" {
+		t.Fatalf("user name = %q, want alice", got)
+	}
+}
+
+func TestContactOpensChatWithoutResettingList(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.contacts = []application.Contact{{
+		User: forum.User{ID: "bob", UserName: "Bob"}, Preview: "你好",
+	}}
+	a.stack = []Route{{Page: PageSelf}, {Page: PageMessages, Sub: "contacts", Number: 1}}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 700)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	a.click("contact:bob").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if got := a.current().Page; got != PageChat {
+		t.Fatalf("contact tap page = %v, want chat", got)
+	}
+	if got := a.current().Name; got != "bob" {
+		t.Fatalf("chat target = %q", got)
+	}
+	ops.Reset()
+	a.Layout(gtx)
+}
+
+func TestSelfSettingsEntryOpensSettings(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.user = forum.User{ID: "alice", UserName: "Alice"}
+	a.stack = []Route{{Page: PageSelf}}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	a.click("self-settings").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if got := a.current().Page; got != PageSettings {
+		t.Fatalf("settings entry page = %v, want settings", got)
+	}
+	// The theme choices must be present and tappable.
+	a.click("settings-theme:dark").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	defer func() {
+		prefs := a.core.Local.Preferences()
+		prefs.Theme = 0
+		_ = a.core.Local.SetPreferences(context.Background(), prefs)
+		setPalette(false)
+		a.dark, a.themed = false, false
+		a.theme.Bg, a.theme.Fg = colorBg, colorFg
+	}()
+	if got := a.core.Local.Preferences().Theme; got != 2 {
+		t.Fatalf("theme preference = %d, want dark", got)
+	}
 }
 
 func TestThreadReactionUpdatesServerCounts(t *testing.T) {

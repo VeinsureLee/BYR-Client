@@ -26,6 +26,12 @@ func parityServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		path := r.URL.Path
 		switch {
+		case path == "/open/section.json":
+			_, _ = w.Write([]byte(`{"section":[{"name":"0","description":"校园"},{"name":"2","description":"生活"}]}`))
+		case path == "/open/section/0.json":
+			_, _ = w.Write([]byte(`{"name":"0","description":"校园","sub_section":[{"name":"1","description":"院系"}],"board":[{"name":"Go","description":"Go 讨论","threads_today_count":3}]}`))
+		case path == "/open/section/1.json":
+			_, _ = w.Write([]byte(`{"name":"1","description":"院系","board":[{"name":"Go","description":"Go 讨论"}]}`))
 		case path == "/open/user/query/bob.json":
 			_, _ = w.Write([]byte(`{"id":"bob","user_name":"Bob","post_count":3,"score":10,"face_url":""}`))
 		case path == "/open/blacklist/list.json":
@@ -103,6 +109,47 @@ func renderParityPage(t *testing.T, a *App, render func(layout.Context) layout.D
 	dims := render(gtx)
 	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
 		t.Fatalf("page rendered blank dimensions: %+v", dims.Size)
+	}
+}
+
+func TestHomeAndSectionHierarchy(t *testing.T) {
+	server := parityServer(t)
+	a := parityApp(t, server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageHome}}
+	a.loadHome()
+	waitForIdle(t, a)
+	if len(a.sections) != 2 {
+		t.Fatalf("home sections = %+v", a.sections)
+	}
+	if a.section.Name != "" || len(a.boards) != 0 {
+		t.Fatalf("home should show only sections: section=%+v boards=%+v", a.section, a.boards)
+	}
+	renderParityPage(t, a, a.homePage)
+
+	a.openSection("0", false)
+	waitForIdle(t, a)
+	if got := a.current().Page; got != PageSection {
+		t.Fatalf("page = %v, want section", got)
+	}
+	if a.section.Description != "校园" || len(a.boards) != 1 {
+		t.Fatalf("section detail = %+v boards=%+v", a.section, a.boards)
+	}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 700)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	a.click("section-board:Go:false").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if got := a.current().Page; got != PageBoard {
+		t.Fatalf("board tap page = %v, want board", got)
 	}
 }
 

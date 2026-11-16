@@ -39,9 +39,7 @@ func (a *App) prepareCompose(r Route) {
 		boardLocked: strings.TrimSpace(r.Name) != "",
 		ready:       true,
 	}
-	a.compose.boardEditor.SingleLine = true
 	a.compose.titleEditor.SingleLine = true
-	a.compose.boardEditor.SetText(a.compose.board)
 	switch r.Sub {
 	case "reply":
 		a.compose.replyID = r.ID
@@ -51,14 +49,12 @@ func (a *App) prepareCompose(r Route) {
 	}
 
 	board := a.compose.board
-	if board != "" {
-		key := local.DraftKey(board, a.compose.replyID, a.compose.editID)
-		if draft, exists := a.core.Local.Draft(a.core.Session().Username, key); exists {
-			a.compose.title = draft.Title
-			a.compose.content = draft.Content
-			a.message = "已恢复本地草稿"
-			a.failed = false
-		}
+	key := local.DraftKey(board, a.compose.replyID, a.compose.editID)
+	if draft, exists := a.core.Local.Draft(a.core.Session().Username, key); exists {
+		a.compose.title = draft.Title
+		a.compose.content = draft.Content
+		a.message = "已恢复本地草稿"
+		a.failed = false
 	}
 	a.compose.titleEditor.SetText(a.compose.title)
 	a.compose.contentEditor.SetText(a.compose.content)
@@ -103,10 +99,7 @@ func replyTitle(title string) string {
 }
 
 func (a *App) composeBoard() string {
-	if a.compose.boardLocked {
-		return strings.TrimSpace(a.compose.board)
-	}
-	return strings.TrimSpace(a.compose.boardEditor.Text())
+	return strings.TrimSpace(a.compose.board)
 }
 
 func (a *App) saveComposeDraft() error {
@@ -120,9 +113,6 @@ func (a *App) saveComposeDraft() error {
 		return nil
 	}
 	board := a.composeBoard()
-	if board == "" {
-		return errors.New("请先填写版面英文名，再保存草稿")
-	}
 	key := local.DraftKey(board, c.replyID, c.editID)
 	if err := a.core.Local.SaveDraft(context.Background(), a.core.Session().Username, key,
 		local.Draft{Title: title, Content: content}); err != nil {
@@ -178,13 +168,50 @@ func (a *App) composePage(gtx layout.Context) layout.Dimensions {
 			})
 		})
 	})
-	if !c.boardLocked {
-		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return a.inputBox(gtx, &c.boardEditor, "版面英文名，例如 Go")
+	rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						board := a.composeBoard()
+						title := board
+						if title == "" {
+							title = "未选择版面"
+						}
+						detail := "发帖版面"
+						if c.boardLocked {
+							detail = "本主题所在版面"
+						}
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								l := material.Label(a.theme, unit.Sp(11), detail)
+								l.Color = colorMuted
+								return l.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								l := material.Label(a.theme, unit.Sp(15), title)
+								l.Font.Weight = 700
+								if board == "" {
+									l.Color = colorDanger
+								}
+								return l.Layout(gtx)
+							}),
+						)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if c.boardLocked {
+							return layout.Dimensions{}
+						}
+						dims, clicked := a.pill(gtx, "compose-board", "选择版面", "board", false, false)
+						if clicked {
+							a.openSection("", true)
+						}
+						return dims
+					}),
+				)
 			})
 		})
-	}
+	})
 	rows = append(rows,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

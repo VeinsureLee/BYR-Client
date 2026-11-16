@@ -34,7 +34,7 @@ func TestComposeOpensReadyAndRendersWithoutNetwork(t *testing.T) {
 	assertComposeRenders(t, a)
 }
 
-func TestGlobalComposeShowsBoardField(t *testing.T) {
+func TestGlobalComposeSelectsBoardFromPicker(t *testing.T) {
 	a := composeTestApp(t, "")
 	defer a.Close()
 	a.stack = []Route{{Page: PageHome}}
@@ -42,10 +42,19 @@ func TestGlobalComposeShowsBoardField(t *testing.T) {
 	if got := a.current().Page; got != PageCompose {
 		t.Fatalf("page = %v, want compose", got)
 	}
-	if a.compose.boardLocked {
-		t.Fatal("global composer unexpectedly locked the board field")
+	if a.compose.boardLocked || a.composeBoard() != "" {
+		t.Fatalf("global composer should start without a board: %+v", a.compose)
 	}
-	a.compose.boardEditor.SetText("Go")
+	assertComposeRenders(t, a)
+
+	a.openSection("", true)
+	if got := a.current().Page; got != PageSection || a.current().Sub != "pick" {
+		t.Fatalf("board picker route = %+v", a.current())
+	}
+	a.selectComposeBoard("Go")
+	if got := a.current().Page; got != PageCompose {
+		t.Fatalf("picker did not return to compose: %v", got)
+	}
 	if got := a.composeBoard(); got != "Go" {
 		t.Fatalf("board = %q, want Go", got)
 	}

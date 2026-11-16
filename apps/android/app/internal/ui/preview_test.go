@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"image"
 	"image/png"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/local"
 )
@@ -30,6 +32,29 @@ func previewApp(t *testing.T) *App {
 	}
 	a.started = true
 	a.ready = true
+	return a
+}
+
+func previewAppWithCore(t *testing.T) *App {
+	t.Helper()
+	store, err := local.Open(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := application.New(application.Options{
+		Local: store,
+		Credentials: &testCredentials{session: application.Credential{
+			Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a := previewApp(t)
+	a.core = core
 	return a
 }
 
@@ -103,6 +128,21 @@ func TestPreviewScreens(t *testing.T) {
 	home.stack = []Route{{Page: PageHome}}
 	capture("home", home)
 
+	section := previewApp(t)
+	section.sections = home.sections
+	section.section = forum.Section{
+		Name: "0", Description: "校园",
+		Subsections: []forum.Section{{Name: "1", Description: "院系"}},
+	}
+	section.boards = []forum.Board{{Name: "Go", Description: "Go 讨论", ThreadsTodayCount: 3, UserOnlineCount: 12}}
+	section.stack = []Route{{Page: PageHome}, {Page: PageSection, Name: "0"}}
+	capture("section", section)
+
+	picker := previewApp(t)
+	picker.sections = home.sections
+	picker.stack = []Route{{Page: PageCompose, Name: "", Sub: "new"}, {Page: PageSection, Sub: "pick"}}
+	capture("section-picker", picker)
+
 	board := previewApp(t)
 	board.board = forum.Board{Name: "Go", Description: "Go 讨论", Articles: []forum.Article{
 		{ID: "42", GroupID: "42", Title: "测试主题：Go 语言", Author: forum.User{ID: "alice", UserName: "Alice"}, PostTime: forum.Scalar("1700000000"), ReplyCount: 2},
@@ -144,7 +184,7 @@ func TestPreviewScreens(t *testing.T) {
 	messages.stack = []Route{{Page: PageSelf}, {Page: PageMessages, Sub: "inbox"}}
 	capture("messages", messages)
 
-	vote := previewApp(t)
+	vote := previewAppWithCore(t)
 	vote.vote = forum.Vote{ID: "42", Title: "周末去哪里", UserCount: 12, Options: []forum.VoteOption{
 		{ID: "1", Label: "爬山", Num: 7},
 		{ID: "2", Label: "看电影", Num: 5},
@@ -170,19 +210,27 @@ func TestPreviewScreens(t *testing.T) {
 	top.stack = []Route{{Page: PageTop}}
 	capture("top", top)
 
-	self := previewApp(t)
+	self := previewAppWithCore(t)
 	self.user = forum.User{ID: "alice", UserName: "Alice", PostCount: 12, Score: 100}
 	self.history = []local.History{{Board: "Go", ID: "42", Title: "测试主题"}}
 	self.stack = []Route{{Page: PageSelf}}
 	capture("self", self)
 
+	settings := previewAppWithCore(t)
+	settings.stack = []Route{{Page: PageSelf}, {Page: PageSettings}}
+	capture("settings", settings)
+
 	compose := previewApp(t)
 	compose.compose = composeState{board: "Go", boardLocked: true, ready: true}
-	compose.compose.boardEditor.SingleLine = true
-	compose.compose.boardEditor.SetText("Go")
 	compose.compose.titleEditor.SingleLine = true
 	compose.compose.titleEditor.SetText("Re: 测试主题")
 	compose.compose.contentEditor.SetText("这是一段回复正文。")
 	compose.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}, {Page: PageCompose, Name: "Go", ID: "42", Sub: "reply"}}
 	capture("compose", compose)
+
+	newPost := previewApp(t)
+	newPost.compose = composeState{ready: true}
+	newPost.compose.titleEditor.SingleLine = true
+	newPost.stack = []Route{{Page: PageHome}, {Page: PageCompose, Sub: "new"}}
+	capture("compose-new", newPost)
 }

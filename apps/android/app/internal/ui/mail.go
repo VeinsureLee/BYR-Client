@@ -36,7 +36,6 @@ func (a *App) openMessages(tab string) {
 	if !a.push(route) {
 		return
 	}
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadMessages()
 }
 
@@ -48,7 +47,6 @@ func (a *App) selectMessageTab(tab string) {
 		return
 	}
 	a.stack[len(a.stack)-1] = Route{Page: PageMessages, Sub: tab, Name: "reply", Number: 1}
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadMessages()
 }
 
@@ -90,7 +88,6 @@ func (a *App) openChat(name string) {
 		return
 	}
 	a.chat = nil
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadChat()
 }
 
@@ -118,7 +115,6 @@ func (a *App) openMail(box, id string) {
 		return
 	}
 	a.mail = forum.Mail{}
-	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.forwardIn.SetText("")
 	a.loadMail()
 }
@@ -402,15 +398,31 @@ func (a *App) chatPage(gtx layout.Context) layout.Dimensions {
 				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.avatar(gtx, u, 40)
+							btn := a.click("chat-avatar")
+							clicked := btn.Clicked(gtx)
+							dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return a.avatar(gtx, u, 40)
+							})
+							if clicked {
+								a.openUser(name)
+							}
+							return dims
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(15), name)
-									l.Font.Weight = 700
-									return l.Layout(gtx)
+									btn := a.click("chat-name")
+									clicked := btn.Clicked(gtx)
+									dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										l := material.Label(a.theme, unit.Sp(15), name)
+										l.Font.Weight = 700
+										return l.Layout(gtx)
+									})
+									if clicked {
+										a.openUser(name)
+									}
+									return dims
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									l := material.Label(a.theme, unit.Sp(11), fmt.Sprintf("%d 条消息", len(a.chat)))
@@ -419,14 +431,6 @@ func (a *App) chatPage(gtx layout.Context) layout.Dimensions {
 								}),
 							)
 						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "chat-user", "资料", "self", false, false)
-							if clicked {
-								a.openUser(name)
-							}
-							return dims
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							dims, clicked := a.filledPill(gtx, "chat-send", "发私信", "send")
 							if clicked {

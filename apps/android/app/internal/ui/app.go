@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/font/opentype"
@@ -36,6 +37,7 @@ type Page uint8
 const (
 	PageLogin Page = iota
 	PageHome
+	PageSection
 	PageTop
 	PageBoard
 	PageThread
@@ -121,7 +123,7 @@ type App struct {
 	password widget.Editor
 	remember widget.Bool
 
-	homeList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList, auxList widget.List
+	homeList, sectionList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList, auxList widget.List
 
 	clicks map[string]*widget.Clickable
 
@@ -130,18 +132,21 @@ type App struct {
 	compose     composeState
 	lastClip    string
 	images      map[string]*mobileImage
-	closed      bool
+	closed      atomic.Bool
 	themed      bool
 	dark        bool
+	pageKey     string
+	renderPanic string
+	startAt     time.Time
 }
 
 type composeState struct {
-	board, title, content, replyID, editID  string
-	boardEditor, titleEditor, contentEditor widget.Editor
-	anonymous, signature, email, outgo      widget.Bool
-	boardLocked, ready, loading             bool
-	publishing, submitted                   bool
-	publishedID                             string
+	board, title, content, replyID, editID string
+	titleEditor, contentEditor             widget.Editor
+	anonymous, signature, email, outgo     widget.Bool
+	boardLocked, ready, loading            bool
+	publishing, submitted                  bool
+	publishedID                            string
 }
 
 func New(window invalidator) (*App, error) {
@@ -163,6 +168,7 @@ func New(window invalidator) (*App, error) {
 		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{},
 		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top",
 		homeList:     widget.List{List: layout.List{Axis: layout.Vertical}},
+		sectionList:  widget.List{List: layout.List{Axis: layout.Vertical}},
 		boardList:    widget.List{List: layout.List{Axis: layout.Vertical}},
 		threadList:   widget.List{List: layout.List{Axis: layout.Vertical}},
 		timelineList: widget.List{List: layout.List{Axis: layout.Vertical}},
@@ -211,26 +217,53 @@ var colorHint = color.NRGBA{R: 0x6C, G: 0x7C, B: 0x93, A: 0xFF}
 
 func (a *App) SetVersion(v string) { a.version = v }
 func (a *App) Close() {
-	if a.closed {
+	if a.closed.Swap(true) {
 		return
 	}
 	a.saveComposeDraft()
-	a.closed = true
 	a.close()
 }
 
-// Back handles the Android system back gesture while an inner page is open.
-// It reports false at a tab root so the system can finish the activity.
+// Back handles the Android system back gesture. Inner pages pop; tab roots
+// return to Home so a swipe never drops the user out of the app by accident.
+// Home at the root is left to the system, which closes the activity.
 func (a *App) Back() bool {
-	if !a.ready || !a.canBack() || a.busy {
+	if !a.ready || !a.handlesBack() {
 		return false
 	}
-	a.back()
+	if a.busy {
+		return true
+	}
+	a.navigateBack()
 	return true
 }
 
+func (a *App) handlesBack() bool {
+	if !a.ready {
+		return false
+	}
+	page := a.current().Page
+	switch page {
+	case PageLogin:
+		return false
+	case PageHome:
+		return a.canBack()
+	}
+	return true
+}
+
+func (a *App) navigateBack() {
+	if a.canBack() {
+		a.back()
+		return
+	}
+	if a.current().Page != PageHome {
+		a.setTab(PageHome)
+	}
+}
+
 func (a *App) handleSystemBack(gtx layout.Context) {
-	if !a.ready || !a.canBack() {
+	if !a.handlesBack() {
 		return
 	}
 	for {
@@ -246,17 +279,22 @@ func (a *App) handleSystemBack(gtx layout.Context) {
 			gtx.Execute(key.FocusCmd{})
 			continue
 		}
-		if !a.busy {
-			a.back()
+		if a.busy {
+			continue
 		}
+		a.navigateBack()
 	}
 }
 
 func (a *App) post(fn func()) {
-	if a.closed {
+	if a.closed.Load() {
 		return
 	}
-	a.updates <- fn
+	select {
+	case a.updates <- fn:
+	case <-a.ctx.Done():
+		return
+	}
 	a.window.Invalidate()
 }
 
@@ -264,7 +302,15 @@ func (a *App) drain() {
 	for {
 		select {
 		case fn := <-a.updates:
-			fn()
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						a.busy = false
+						a.fail(fmt.Errorf("界面更新失败：%v", r))
+					}
+				}()
+				fn()
+			}()
 		default:
 			return
 		}
@@ -276,10 +322,16 @@ func (a *App) ensureStarted() {
 		return
 	}
 	a.started = true
+	a.startAt = time.Now()
 	go a.start()
 }
 
 func (a *App) start() {
+	defer func() {
+		if r := recover(); r != nil {
+			a.post(func() { a.initErr = fmt.Sprintf("客户端启动失败：%v", r) })
+		}
+	}()
 	dir, err := platform.DataDir()
 	if err != nil {
 		a.post(func() { a.initErr = "无法打开应用数据目录：" + err.Error() })
@@ -344,6 +396,7 @@ func (a *App) resetSessionUI() {
 	a.images = map[string]*mobileImage{}
 	a.clicks = map[string]*widget.Clickable{}
 	a.homeList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.sectionList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.boardList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.threadList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.timelineList = widget.List{List: layout.List{Axis: layout.Vertical}}
@@ -407,7 +460,6 @@ func (a *App) setTab(page Page) {
 		a.loadFavorites()
 	case PageMessages:
 		a.stack = []Route{{Page: PageMessages, Sub: "contacts", Number: 1}}
-		a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 		a.loadMessages()
 	case PageSelf:
 		a.stack = []Route{{Page: PageSelf}}
@@ -427,7 +479,17 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 	a.failed = false
 	a.window.Invalidate()
 	go func() {
-		done, err := work(a.ctx)
+		var done func()
+		var err error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("操作失败：%v", r)
+					done = nil
+				}
+			}()
+			done, err = work(a.ctx)
+		}()
 		a.post(func() {
 			a.busy = false
 			if err != nil {
@@ -486,7 +548,27 @@ func (a *App) applyTheme() {
 	}
 }
 
-func (a *App) Layout(gtx layout.Context) layout.Dimensions {
+func (a *App) syncPageState() {
+	r := a.current()
+	key := fmt.Sprintf("%d|%s|%s|%s|%d", r.Page, r.Name, r.ID, r.Sub, r.Number)
+	if key != a.pageKey {
+		a.pageKey = key
+		// Rebuild list state between pages. Resetting a list from inside its own
+		// item callback corrupts layout, so this runs only at frame start.
+		a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	}
+}
+
+func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Draw the recovery screen on a clean frame: the ops of the
+			// panicking frame can be partially clipped or unbalanced.
+			a.renderPanic = fmt.Sprintf("%v", r)
+			a.window.Invalidate()
+			dims = layout.Dimensions{}
+		}
+	}()
 	a.drain()
 	a.ensureStarted()
 	a.applyTheme()
@@ -494,6 +576,15 @@ func (a *App) Layout(gtx layout.Context) layout.Dimensions {
 		if scale := a.core.Local.Preferences().FontScale; scale > 0 && scale != 1 {
 			gtx.Metric.PxPerSp *= scale
 		}
+	}
+	if !a.ready && a.initErr == "" && !a.startAt.IsZero() && time.Since(a.startAt) > 12*time.Second {
+		a.initErr = "客户端启动超时。请检查存储权限和网络后重试。"
+	}
+	if len(a.stack) > 0 {
+		a.syncPageState()
+	}
+	if a.renderPanic != "" {
+		return a.recoveryPage(gtx)
 	}
 	a.handleSystemBack(gtx)
 	// The window supplies exact constraints; children must not inherit the
@@ -523,7 +614,8 @@ func (a *App) Layout(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, a.page)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if a.current().Page == PageLogin || a.current().Page == PageCompose {
+				page := a.current()
+				if page.Page == PageLogin || page.Page == PageCompose || page.Page == PageSection && page.Sub == "pick" {
 					return layout.Dimensions{}
 				}
 				return a.bottomNav(gtx)
@@ -591,6 +683,36 @@ func (a *App) errorPage(gtx layout.Context) layout.Dimensions {
 	})
 }
 
+func (a *App) recoveryPage(gtx layout.Context) layout.Dimensions {
+	paint.Fill(gtx.Ops, a.theme.Bg)
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(24)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return material.H6(a.theme, "界面遇到问题").Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Body2(a.theme, a.renderPanic)
+					l.Color = colorMuted
+					l.MaxLines = 4
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Dp(unit.Dp(220))
+					dims, clicked := a.primaryButton(gtx, "recover-login", "返回登录页")
+					if clicked {
+						a.renderPanic = ""
+						a.post(func() { a.resetSessionUI() })
+					}
+					return dims
+				}),
+			)
+		})
+	})
+}
+
 func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 	height := gtx.Dp(unit.Dp(64))
 	return layout.Stack{}.Layout(gtx,
@@ -633,32 +755,12 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 						})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						if a.current().Page == PageLogin || a.current().Page == PageCompose {
-							return layout.Dimensions{}
-						}
-						dims, clicked := a.iconButton(gtx, "open-compose", "plus")
-						if clicked {
-							a.composeFromCurrent()
-						}
-						return dims
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						if a.current().Page == PageLogin || a.current().Page == PageCompose && a.compose.editID == "" {
 							return layout.Dimensions{}
 						}
 						dims, clicked := a.iconButton(gtx, "top-refresh", "refresh")
 						if clicked {
 							a.refreshCurrent()
-						}
-						return dims
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						if a.current().Page != PageHome {
-							return layout.Dimensions{}
-						}
-						dims, clicked := a.iconButton(gtx, "open-search", "search")
-						if clicked {
-							a.push(Route{Page: PageSearch})
 						}
 						return dims
 					}),
@@ -673,7 +775,12 @@ func (a *App) subtitle() string {
 	case PageLogin:
 		return "北邮人论坛"
 	case PageHome:
-		return "发现版面"
+		return "发现分区"
+	case PageSection:
+		if a.current().Sub == "pick" {
+			return "选择发帖版面"
+		}
+		return "子分区与版面"
 	case PageTop:
 		if a.topTab == "recommend" {
 			return "版面推荐"
@@ -739,6 +846,8 @@ func (a *App) refreshCurrent() {
 	switch a.current().Page {
 	case PageHome:
 		a.loadHome()
+	case PageSection:
+		a.loadSectionPage()
 	case PageTop:
 		a.loadTop()
 	case PageBoard:
@@ -767,15 +876,6 @@ func (a *App) refreshCurrent() {
 		a.loadBet()
 	case PageCompose:
 		a.loadCompose()
-	}
-}
-
-func (a *App) composeFromCurrent() {
-	switch a.current().Page {
-	case PageBoard, PageThread, PageTop:
-		a.openCompose(a.current().Name, "", "new")
-	default:
-		a.openCompose("", "", "new")
 	}
 }
 
@@ -835,19 +935,19 @@ func (a *App) statusBar(gtx layout.Context) layout.Dimensions {
 
 func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 	tabs := []struct {
-		page  Page
-		key   string
-		icon  string
-		label string
+		page    Page
+		key     string
+		icon    string
+		label   string
+		compose bool
 	}{
-		{PageHome, "nav-home", "home", "首页"},
-		{PageTimeline, "nav-timeline", "timeline", "时间线"},
-		{PageFavorites, "nav-favorites", "favorite", "收藏"},
-		{PageSearch, "nav-search", "search", "搜索"},
-		{PageMessages, "nav-messages", "mail", "消息"},
-		{PageSelf, "nav-self", "self", "我"},
+		{page: PageHome, key: "nav-home", icon: "home", label: "首页"},
+		{page: PageTimeline, key: "nav-timeline", icon: "timeline", label: "时间线"},
+		{page: PageCompose, key: "nav-compose", icon: "plus", label: "发帖", compose: true},
+		{page: PageMessages, key: "nav-messages", icon: "mail", label: "消息"},
+		{page: PageSelf, key: "nav-self", icon: "self", label: "我的"},
 	}
-	height := gtx.Dp(unit.Dp(68))
+	height := gtx.Dp(unit.Dp(72))
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			size := image.Pt(gtx.Constraints.Max.X, height)
@@ -860,42 +960,65 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 			for _, tab := range tabs {
 				tab := tab
 				children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					active := a.navPage(a.current().Page) == tab.page
 					btn := a.click(tab.key)
 					clicked := btn.Clicked(gtx)
 					dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							m := op.Record(gtx.Ops)
-							inner := layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						if tab.compose {
+							return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										fg := colorMuted
-										if active {
-											fg = colorAccent
-										}
-										return a.drawIcon(gtx, tab.icon, 21, fg)
+										return a.composeNavCircle(gtx)
 									}),
 									layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										l := material.Label(a.theme, unit.Sp(10), tab.label)
-										l.Color = colorMuted
-										if active {
+										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											l := material.Label(a.theme, unit.Sp(10), tab.label)
 											l.Color = colorAccent
-										}
-										return l.Layout(gtx)
+											l.Font.Weight = 600
+											return l.Layout(gtx)
+										})
+									}),
+								)
+							})
+						}
+						active := a.navPage(a.current().Page) == tab.page
+						return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(6), Left: unit.Dp(3), Right: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							m := op.Record(gtx.Ops)
+							inner := layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								fg := colorMuted
+								if active {
+									fg = colorAccent
+								}
+								return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return a.drawIcon(gtx, tab.icon, 21, fg)
+										})
+									}),
+									layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											l := material.Label(a.theme, unit.Sp(10), tab.label)
+											l.Color = fg
+											return l.Layout(gtx)
+										})
 									}),
 								)
 							})
 							call := m.Stop()
 							if active {
-								paint.FillShape(gtx.Ops, colorAccentSoft, clip.RRect{Rect: image.Rectangle{Max: inner.Size}, NE: 10, NW: 10, SE: 10, SW: 10}.Op(gtx.Ops))
+								paint.FillShape(gtx.Ops, colorAccentSoft, clip.RRect{Rect: image.Rectangle{Max: inner.Size}, NE: 14, NW: 14, SE: 14, SW: 14}.Op(gtx.Ops))
 							}
 							call.Add(gtx.Ops)
 							return inner
 						})
 					})
 					if clicked {
-						a.setTab(tab.page)
+						if tab.compose {
+							a.openCompose("", "", "new")
+						} else {
+							a.setTab(tab.page)
+						}
 					}
 					return dims
 				}))
@@ -905,14 +1028,29 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 	)
 }
 
+func (a *App) composeNavCircle(gtx layout.Context) layout.Dimensions {
+	size := gtx.Dp(unit.Dp(42))
+	gtx.Constraints = layout.Exact(image.Pt(size, size))
+	m := op.Record(gtx.Ops)
+	layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return a.drawIcon(gtx, "plus", 22, a.theme.ContrastFg)
+	})
+	call := m.Stop()
+	paint.FillShape(gtx.Ops, colorAccent, clip.Ellipse(image.Rectangle{Max: image.Pt(size, size)}).Op(gtx.Ops))
+	call.Add(gtx.Ops)
+	return layout.Dimensions{Size: image.Pt(size, size)}
+}
+
 func (a *App) navPage(page Page) Page {
 	switch page {
-	case PageTop, PageBoard, PageThread, PageCompose, PageVote, PageBet:
+	case PageSection, PageTop, PageBoard, PageThread, PageCompose, PageVote, PageBet:
 		return PageHome
 	case PageChat, PageMail, PageMailbox, PageMailCompose, PageRefers:
 		return PageMessages
-	case PageUser, PageHistory, PageBlacklist, PageSettings:
+	case PageUser, PageHistory, PageBlacklist, PageSettings, PageFavorites:
 		return PageSelf
+	case PageSearch:
+		return PageHome
 	}
 	return page
 }
@@ -923,6 +1061,14 @@ func (a *App) title() string {
 		return "登录 · " + a.version
 	case PageHome:
 		return "首页"
+	case PageSection:
+		if a.section.Description != "" {
+			return a.section.Description
+		}
+		if a.current().Name == "" {
+			return "全部分区"
+		}
+		return a.current().Name
 	case PageTop:
 		if a.topTab == "recommend" {
 			return "版面推荐"
@@ -979,6 +1125,8 @@ func (a *App) page(gtx layout.Context) layout.Dimensions {
 		return a.loginPage(gtx)
 	case PageHome:
 		return a.homePage(gtx)
+	case PageSection:
+		return a.sectionPage(gtx)
 	case PageTop:
 		return a.topPage(gtx)
 	case PageBoard:

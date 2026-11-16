@@ -3,10 +3,18 @@ package ui
 import (
 	"context"
 	"errors"
+	"image"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"gioui.org/io/input"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/platform"
 	"github.com/VeinsureLee/BYR-Client/core/application"
@@ -38,6 +46,7 @@ func TestMissingCredentialsStartAtLogin(t *testing.T) {
 	if got := a.current().Page; got != PageLogin {
 		t.Fatalf("current page = %v, want login", got)
 	}
+	assertFrameRenders(t, a)
 }
 
 func TestExpiredCredentialsStartAtLogin(t *testing.T) {
@@ -59,6 +68,7 @@ func TestExpiredCredentialsStartAtLogin(t *testing.T) {
 	if _, err := os.Stat(credentials.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expired credential file still exists: %v", err)
 	}
+	assertFrameRenders(t, a)
 }
 
 func TestLogoutThenNewAppStartsAtLogin(t *testing.T) {
@@ -117,6 +127,115 @@ func TestLogoutThenNewAppStartsAtLogin(t *testing.T) {
 	}
 	if !second.ready || second.initErr != "" {
 		t.Fatalf("restarted app is not usable: ready=%v initErr=%q", second.ready, second.initErr)
+	}
+}
+
+func TestRestartWithRememberedSessionRendersHome(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open/section.json":
+			_, _ = w.Write([]byte(`{"section":[{"name":"0","description":"校园"}]}`))
+		case "/open/section/0.json":
+			_, _ = w.Write([]byte(`{"name":"0","description":"校园","board":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":"0000"}`))
+		}
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	t.Setenv("BYR_DATA_DIR", dir)
+	t.Setenv("BYR_BASE_URL", server.URL)
+	credentials := platform.FileCredentials{Path: filepath.Join(dir, "session.json")}
+	if err := credentials.Save(context.Background(), application.Credential{
+		Username: "alice", Token: "remembered-token", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a := startAppForTest(t)
+	defer a.Close()
+	waitForIdle(t, a)
+	if got := a.current().Page; got != PageHome {
+		t.Fatalf("restart page = %v, want home", got)
+	}
+	if len(a.sections) != 1 {
+		t.Fatalf("restart sections = %+v", a.sections)
+	}
+	assertFrameRenders(t, a)
+}
+
+func TestLogoutThenLoginAgainRenders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth2/official":
+			_, _ = w.Write([]byte(`{"access_token":"token","expires_in":3600}`))
+		case "/open/section.json":
+			_, _ = w.Write([]byte(`{"section":[{"name":"0","description":"校园"}]}`))
+		case "/open/section/0.json":
+			_, _ = w.Write([]byte(`{"name":"0","description":"校园","board":[{"name":"Go","description":"Go 讨论"}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":"0000"}`))
+		}
+	}))
+	defer server.Close()
+	t.Setenv("BYR_DATA_DIR", t.TempDir())
+	t.Setenv("BYR_BASE_URL", server.URL)
+
+	a := startAppForTest(t)
+	defer a.Close()
+	a.username.SetText("alice")
+	a.password.SetText("pw")
+	a.login()
+	waitForIdle(t, a)
+	if got := a.current().Page; got != PageHome {
+		t.Fatalf("login page = %v, want home", got)
+	}
+	assertFrameRenders(t, a)
+
+	prefs := a.core.Local.Preferences()
+	prefs.Theme = 2
+	if err := a.core.Local.SetPreferences(context.Background(), prefs); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		setPalette(false)
+		a.dark, a.themed = false, false
+		a.theme.Bg, a.theme.Fg = colorBg, colorFg
+	}()
+
+	a.logout()
+	waitForIdle(t, a)
+	if got := a.current().Page; got != PageLogin {
+		t.Fatalf("logout page = %v, want login", got)
+	}
+	assertFrameRenders(t, a)
+
+	a.username.SetText("alice")
+	a.password.SetText("pw")
+	a.login()
+	waitForIdle(t, a)
+	if got := a.current().Page; got != PageHome {
+		t.Fatalf("second login page = %v, want home", got)
+	}
+	assertFrameRenders(t, a)
+}
+
+func assertFrameRenders(t *testing.T, a *App) {
+	t.Helper()
+	var router input.Router
+	var ops op.Ops
+	dims := a.Layout(layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	})
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		t.Fatalf("frame rendered blank: %+v", dims.Size)
+	}
+	if a.renderPanic != "" {
+		t.Fatalf("frame hit a render panic: %q", a.renderPanic)
 	}
 }
 
