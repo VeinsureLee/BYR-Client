@@ -123,10 +123,19 @@ func TestPreviewScreens(t *testing.T) {
 
 	home := previewApp(t)
 	home.sections = []forum.Section{{Name: "0", Description: "校园"}, {Name: "2", Description: "生活"}}
-	home.section = forum.Section{Name: "0", Description: "校园", Subsections: []forum.Section{{Name: "1", Description: "院系"}}}
-	home.boards = []forum.Board{{Name: "Go", Description: "Go 讨论", ThreadsTodayCount: 3, UserOnlineCount: 12}}
+	home.sectionTab = "favorites"
+	home.favoriteBoards = []forum.Board{
+		{Name: "Go", Description: "Go 讨论", IsFavorite: true, ThreadsTodayCount: 3, UserOnlineCount: 12},
+		{Name: "WorkLife", Description: "工作生活", IsFavorite: true, PostTodayCount: 6, UserOnlineCount: 4},
+	}
 	home.stack = []Route{{Page: PageHome}}
 	capture("home", home)
+
+	allSections := previewApp(t)
+	allSections.sections = home.sections
+	allSections.sectionTab = "all"
+	allSections.stack = []Route{{Page: PageHome}}
+	capture("sections-all", allSections)
 
 	section := previewApp(t)
 	section.sections = home.sections
@@ -210,8 +219,7 @@ func TestPreviewScreens(t *testing.T) {
 	colorHint = colorMuted
 	darkHome := previewApp(t)
 	darkHome.sections = home.sections
-	darkHome.section = home.section
-	darkHome.boards = home.boards
+	darkHome.sectionTab = "all"
 	darkHome.stack = []Route{{Page: PageHome}}
 	capture("home-dark", darkHome)
 	setPalette(false)

@@ -21,14 +21,37 @@ func (f FileState) Load(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	b, err := os.ReadFile(f.Path)
+	if err == nil && len(b) > 0 && json.Valid(b) {
+		return b, nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	// A direct write can be interrupted by shutdown. Keep the previous valid
+	// state in a sidecar and recover it rather than starting from scratch.
+	if backup, backupErr := os.ReadFile(f.Path + ".bak"); backupErr == nil && len(backup) > 0 && json.Valid(backup) {
+		return backup, nil
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	return b, err
 }
 func (f FileState) Save(ctx context.Context, b []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(f.Path), 0700); err != nil {
 		return err
+	}
+	if preferDirectStateWrite() {
+		// Windows security products may deny creating the hidden temporary
+		// file used by the atomic path. Update the established files directly,
+		// keeping a valid previous copy for crash recovery.
+		if old, err := os.ReadFile(f.Path); err == nil && len(old) > 0 && json.Valid(old) {
+			_ = writeDirect(f.Path+".bak", old)
+		}
+		return writeDirect(f.Path, b)
 	}
 	var last error
 	for attempt := 0; attempt < 6; attempt++ {

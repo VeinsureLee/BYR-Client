@@ -161,15 +161,16 @@ func TestRestartWithRememberedSessionRendersSearch(t *testing.T) {
 	assertFrameRenders(t, a)
 	a.setTab(PageHome)
 	waitForIdle(t, a)
-	if len(a.sections) != 1 {
-		t.Fatalf("section tab did not load: %+v", a.sections)
-	}
-	if got := a.current().Page; got != PageSection || a.current().Name != "0" {
-		t.Fatalf("section tab did not open the first section: %+v", a.current())
+	if got := a.current().Page; got != PageHome || a.sectionTab != "favorites" {
+		t.Fatalf("section tab default = %+v/%q, want favorite boards", a.current(), a.sectionTab)
 	}
 	a.showAllSections()
-	if got := a.current().Page; got != PageHome {
-		t.Fatalf("all sections page = %v, want home", got)
+	waitForIdle(t, a)
+	if got := a.current().Page; got != PageHome || a.sectionTab != "all" {
+		t.Fatalf("all sections page = %+v/%q", a.current(), a.sectionTab)
+	}
+	if len(a.sections) != 1 {
+		t.Fatalf("all sections did not load: %+v", a.sections)
 	}
 }
 

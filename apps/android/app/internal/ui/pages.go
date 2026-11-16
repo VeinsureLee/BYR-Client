@@ -165,10 +165,6 @@ func (a *App) textAction(gtx layout.Context, key, label string) (layout.Dimensio
 }
 
 func (a *App) loadHome() {
-	a.loadHomeWith(false)
-}
-
-func (a *App) loadHomeWith(openFirst bool) {
 	a.run("加载分区", func(ctx context.Context) (func(), error) {
 		root, err := a.core.Forum.Sections(ctx)
 		if err != nil {
@@ -178,24 +174,32 @@ func (a *App) loadHomeWith(openFirst bool) {
 			a.sections = root.Sections
 			a.section = forum.Section{}
 			a.boards = nil
-			if openFirst && len(root.Sections) > 0 && a.current().Page == PageHome {
-				a.openSection(string(root.Sections[0].Name), false)
-			}
 		}, nil
 	})
 }
 
-// showAllSections returns to the root section list without re-selecting the
-// default first section.
+// showAllSections switches the section tab to the root section list.
 func (a *App) showAllSections() {
 	if a.busy {
 		return
 	}
+	a.sectionTab = "all"
 	a.stack = []Route{{Page: PageHome}}
 	if len(a.sections) == 0 {
 		a.loadHome()
 	}
 	a.window.Invalidate()
+}
+
+// showFavoriteBoards switches the section tab to the favorite board list.
+func (a *App) showFavoriteBoards() {
+	if a.busy {
+		return
+	}
+	a.sectionTab = "favorites"
+	a.stack = []Route{{Page: PageHome}}
+	a.favoriteTab = "boards"
+	a.loadFavorites()
 }
 
 // openSection enters a section. In picker mode a board tap returns to the
@@ -279,20 +283,37 @@ func sectionTotals(s forum.Section) (threads, posts, online int) {
 }
 
 func (a *App) homePage(gtx layout.Context) layout.Dimensions {
-	if len(a.sections) == 0 && a.busy {
-		return a.pendingPage(gtx, "正在加载分区…")
-	}
-	rows := make([]layout.Widget, 0, len(a.sections)+3)
-	rows = append(rows, a.sectionActions)
-	rows = append(rows, a.homeOverview)
-	rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-		return a.sectionTitle(gtx, "分区", fmt.Sprintf("%d 个分区", len(a.sections)))
-	})
-	for _, section := range a.sections {
-		section := section
+	rows := []layout.Widget{a.sectionActions}
+	if a.sectionTab == "favorites" {
 		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-			return a.sectionEntryCard(gtx, section, false)
+			return a.sectionTitle(gtx, "收藏版面", fmt.Sprintf("%d 个版面", len(a.favoriteBoards)))
 		})
+		if len(a.favoriteBoards) == 0 {
+			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+				return a.emptyOrPending(gtx, "还没有收藏版面")
+			})
+		} else {
+			for _, board := range a.favoriteBoards {
+				board := board
+				rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+					return a.boardCard(gtx, board)
+				})
+			}
+		}
+	} else {
+		if len(a.sections) == 0 && a.busy {
+			return a.pendingPage(gtx, "正在加载分区…")
+		}
+		rows = append(rows, a.homeOverview)
+		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+			return a.sectionTitle(gtx, "分区", fmt.Sprintf("%d 个分区", len(a.sections)))
+		})
+		for _, section := range a.sections {
+			section := section
+			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+				return a.sectionEntryCard(gtx, section, false)
+			})
+		}
 	}
 	return material.List(a.theme, &a.homeList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
 		return rows[i](gtx)
@@ -573,7 +594,7 @@ func (a *App) sectionActions(gtx layout.Context) layout.Dimensions {
 	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				selected := a.current().Page == PageHome
+				selected := a.current().Page == PageSection || a.current().Page == PageHome && a.sectionTab == "all"
 				dims, clicked := a.pill(gtx, "sections-all", "全部分区", "hash", selected, false)
 				if clicked {
 					a.showAllSections()
@@ -582,9 +603,10 @@ func (a *App) sectionActions(gtx layout.Context) layout.Dimensions {
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				dims, clicked := a.pill(gtx, "sections-favorites", "收藏版面", "star", false, false)
+				selected := a.current().Page == PageHome && a.sectionTab == "favorites"
+				dims, clicked := a.pill(gtx, "sections-favorites", "收藏版面", "star", selected, false)
 				if clicked {
-					a.openFavorites()
+					a.showFavoriteBoards()
 				}
 				return dims
 			}),

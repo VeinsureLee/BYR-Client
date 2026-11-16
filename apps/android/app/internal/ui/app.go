@@ -141,6 +141,7 @@ type App struct {
 	themed      bool
 	dark        bool
 	pageKey     string
+	sectionTab  string
 	renderPanic string
 	startAt     time.Time
 	busySince   time.Time
@@ -174,7 +175,7 @@ func New(window invalidator) (*App, error) {
 	a := &App{
 		window: window, version: "dev", theme: theme, ctx: ctx, close: cancel,
 		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{},
-		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai",
+		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai", sectionTab: "favorites",
 		homeList:     widget.List{List: layout.List{Axis: layout.Vertical}},
 		sectionList:  widget.List{List: layout.List{Axis: layout.Vertical}},
 		boardList:    widget.List{List: layout.List{Axis: layout.Vertical}},
@@ -447,6 +448,7 @@ func (a *App) resetSessionUI() {
 	a.password.SetText("")
 	a.searchEdit.SetText("")
 	a.searchMode = "ai"
+	a.sectionTab = "favorites"
 }
 
 func (a *App) canBack() bool { return len(a.stack) > 1 }
@@ -490,11 +492,9 @@ func (a *App) setTab(page Page) {
 		a.stack = []Route{{Page: PageSearch}}
 	case PageHome:
 		a.stack = []Route{{Page: PageHome}}
-		if len(a.sections) > 0 {
-			a.openSection(string(a.sections[0].Name), false)
-		} else {
-			a.loadHomeWith(true)
-		}
+		a.sectionTab = "favorites"
+		a.favoriteTab = "boards"
+		a.loadFavorites()
 	case PageTop:
 		a.stack = []Route{{Page: PageTop}}
 		a.loadTop()
@@ -606,12 +606,15 @@ func (a *App) applyTheme() {
 
 func (a *App) syncPageState() {
 	r := a.current()
-	key := fmt.Sprintf("%d|%s|%s|%s|%d", r.Page, r.Name, r.ID, r.Sub, r.Number)
+	key := fmt.Sprintf("%d|%s|%s|%s|%d|%s", r.Page, r.Name, r.ID, r.Sub, r.Number, a.sectionTab)
 	if key != a.pageKey {
 		a.pageKey = key
 		// Rebuild list state between pages. Resetting a list from inside its own
 		// item callback corrupts layout, so this runs only at frame start.
 		a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
+		if r.Page == PageHome {
+			a.homeList = widget.List{List: layout.List{Axis: layout.Vertical}}
+		}
 	}
 }
 
@@ -897,7 +900,10 @@ func (a *App) subtitle() string {
 	case PageLogin:
 		return "北邮人论坛"
 	case PageHome:
-		return "发现分区"
+		if a.sectionTab == "favorites" {
+			return "收藏版面"
+		}
+		return "全部分区"
 	case PageSection:
 		if a.current().Sub == "pick" {
 			return "选择发帖版面"
