@@ -165,6 +165,10 @@ func (a *App) textAction(gtx layout.Context, key, label string) (layout.Dimensio
 }
 
 func (a *App) loadHome() {
+	a.loadHomeWith(false)
+}
+
+func (a *App) loadHomeWith(openFirst bool) {
 	a.run("加载分区", func(ctx context.Context) (func(), error) {
 		root, err := a.core.Forum.Sections(ctx)
 		if err != nil {
@@ -174,8 +178,24 @@ func (a *App) loadHome() {
 			a.sections = root.Sections
 			a.section = forum.Section{}
 			a.boards = nil
+			if openFirst && len(root.Sections) > 0 && a.current().Page == PageHome {
+				a.openSection(string(root.Sections[0].Name), false)
+			}
 		}, nil
 	})
+}
+
+// showAllSections returns to the root section list without re-selecting the
+// default first section.
+func (a *App) showAllSections() {
+	if a.busy {
+		return
+	}
+	a.stack = []Route{{Page: PageHome}}
+	if len(a.sections) == 0 {
+		a.loadHome()
+	}
+	a.window.Invalidate()
 }
 
 // openSection enters a section. In picker mode a board tap returns to the
@@ -555,8 +575,8 @@ func (a *App) sectionActions(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				selected := a.current().Page == PageHome
 				dims, clicked := a.pill(gtx, "sections-all", "全部分区", "hash", selected, false)
-				if clicked && a.current().Page != PageHome {
-					a.setTab(PageHome)
+				if clicked {
+					a.showAllSections()
 				}
 				return dims
 			}),

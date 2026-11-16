@@ -164,6 +164,13 @@ func TestRestartWithRememberedSessionRendersSearch(t *testing.T) {
 	if len(a.sections) != 1 {
 		t.Fatalf("section tab did not load: %+v", a.sections)
 	}
+	if got := a.current().Page; got != PageSection || a.current().Name != "0" {
+		t.Fatalf("section tab did not open the first section: %+v", a.current())
+	}
+	a.showAllSections()
+	if got := a.current().Page; got != PageHome {
+		t.Fatalf("all sections page = %v, want home", got)
+	}
 }
 
 func TestLogoutThenLoginAgainRenders(t *testing.T) {

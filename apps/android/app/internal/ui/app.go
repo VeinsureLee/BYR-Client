@@ -490,7 +490,11 @@ func (a *App) setTab(page Page) {
 		a.stack = []Route{{Page: PageSearch}}
 	case PageHome:
 		a.stack = []Route{{Page: PageHome}}
-		a.loadHome()
+		if len(a.sections) > 0 {
+			a.openSection(string(a.sections[0].Name), false)
+		} else {
+			a.loadHomeWith(true)
+		}
 	case PageTop:
 		a.stack = []Route{{Page: PageTop}}
 		a.loadTop()
