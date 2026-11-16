@@ -59,40 +59,43 @@ func (a *App) iconButton(gtx layout.Context, key, name string) (layout.Dimension
 func (a *App) pill(gtx layout.Context, key, label, icon string, selected, negative bool) (layout.Dimensions, bool) {
 	btn := a.click(key)
 	clicked := btn.Clicked(gtx)
-	m := op.Record(gtx.Ops)
-	inner := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(11), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if icon == "" {
-					return layout.Dimensions{}
-				}
-				return a.drawIcon(gtx, icon, 16, pillColor(selected, negative))
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if icon == "" {
-					return layout.Dimensions{}
-				}
-				return layout.Spacer{Width: unit.Dp(5)}.Layout(gtx)
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				l := material.Label(a.theme, unit.Sp(13), label)
-				l.Color = pillColor(selected, negative)
-				return l.Layout(gtx)
-			}),
-		)
-	})
-	call := m.Stop()
-	size := inner.Size
-	bg := color.NRGBA{R: 0xF1, G: 0xF5, B: 0xFB, A: 0xFF}
-	if selected {
-		bg = colorAccentSoft
-		if negative {
-			bg = colorDangerSoft
+	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		m := op.Record(gtx.Ops)
+		inner := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(11), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if icon == "" {
+						return layout.Dimensions{}
+					}
+					return a.drawIcon(gtx, icon, 16, pillColor(selected, negative))
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if icon == "" {
+						return layout.Dimensions{}
+					}
+					return layout.Spacer{Width: unit.Dp(5)}.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(a.theme, unit.Sp(13), label)
+					l.Color = pillColor(selected, negative)
+					return l.Layout(gtx)
+				}),
+			)
+		})
+		call := m.Stop()
+		size := inner.Size
+		bg := color.NRGBA{R: 0xF1, G: 0xF5, B: 0xFB, A: 0xFF}
+		if selected {
+			bg = colorAccentSoft
+			if negative {
+				bg = colorDangerSoft
+			}
 		}
-	}
-	paint.FillShape(gtx.Ops, bg, clip.RRect{Rect: image.Rectangle{Max: size}, NE: 16, NW: 16, SE: 16, SW: 16}.Op(gtx.Ops))
-	call.Add(gtx.Ops)
-	return inner, clicked
+		paint.FillShape(gtx.Ops, bg, clip.RRect{Rect: image.Rectangle{Max: size}, NE: 16, NW: 16, SE: 16, SW: 16}.Op(gtx.Ops))
+		call.Add(gtx.Ops)
+		return inner
+	})
+	return dims, clicked
 }
 
 func pillColor(selected, negative bool) color.NRGBA {
@@ -108,25 +111,28 @@ func pillColor(selected, negative bool) color.NRGBA {
 func (a *App) filledPill(gtx layout.Context, key, label, icon string) (layout.Dimensions, bool) {
 	btn := a.click(key)
 	clicked := btn.Clicked(gtx)
-	m := op.Record(gtx.Ops)
-	inner := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(13), Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return a.drawIcon(gtx, icon, 16, a.theme.ContrastFg)
-			}),
-			layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				l := material.Label(a.theme, unit.Sp(13), label)
-				l.Color = a.theme.ContrastFg
-				return l.Layout(gtx)
-			}),
-		)
+	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		m := op.Record(gtx.Ops)
+		inner := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(13), Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return a.drawIcon(gtx, icon, 16, a.theme.ContrastFg)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(a.theme, unit.Sp(13), label)
+					l.Color = a.theme.ContrastFg
+					return l.Layout(gtx)
+				}),
+			)
+		})
+		call := m.Stop()
+		size := inner.Size
+		paint.FillShape(gtx.Ops, a.theme.ContrastBg, clip.RRect{Rect: image.Rectangle{Max: size}, NE: 16, NW: 16, SE: 16, SW: 16}.Op(gtx.Ops))
+		call.Add(gtx.Ops)
+		return inner
 	})
-	call := m.Stop()
-	size := inner.Size
-	paint.FillShape(gtx.Ops, a.theme.ContrastBg, clip.RRect{Rect: image.Rectangle{Max: size}, NE: 16, NW: 16, SE: 16, SW: 16}.Op(gtx.Ops))
-	call.Add(gtx.Ops)
-	return inner, clicked
+	return dims, clicked
 }
 
 func (a *App) badgeChip(gtx layout.Context, label string, bg, fg color.NRGBA) layout.Dimensions {

@@ -8,9 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/io/input"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
@@ -92,6 +95,52 @@ func TestLoginButtonClickStartsLogin(t *testing.T) {
 	t.Fatalf("login did not reach home: page=%v message=%q", a.stack[0].Page, a.message)
 }
 
+func TestPillRegistersPhysicalTap(t *testing.T) {
+	testPhysicalControlTap(t, func(a *App, gtx layout.Context) (layout.Dimensions, bool) {
+		return a.pill(gtx, "physical-pill", "收藏文章", "star", false, false)
+	})
+}
+
+func TestFilledPillRegistersPhysicalTap(t *testing.T) {
+	testPhysicalControlTap(t, func(a *App, gtx layout.Context) (layout.Dimensions, bool) {
+		return a.filledPill(gtx, "physical-filled-pill", "回复主题", "reply")
+	})
+}
+
+func testPhysicalControlTap(t *testing.T, control func(*App, layout.Context) (layout.Dimensions, bool)) {
+	t.Helper()
+	a, err := New(noopInvalidator{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Constraints{Max: image.Pt(420, 120)},
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	dims, clicked := control(a, gtx)
+	if clicked {
+		t.Fatal("control reported a click before pointer input")
+	}
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		t.Fatalf("control has no tap area: %+v", dims.Size)
+	}
+	router.Frame(&ops)
+	router.Queue(
+		pointer.Event{Source: pointer.Touch, Kind: pointer.Press, PointerID: 1, Position: f32.Pt(float32(dims.Size.X)/2, float32(dims.Size.Y)/2)},
+		pointer.Event{Source: pointer.Touch, Kind: pointer.Release, PointerID: 1, Position: f32.Pt(float32(dims.Size.X)/2, float32(dims.Size.Y)/2)},
+	)
+	ops.Reset()
+	gtx.Ops = &ops
+	_, clicked = control(a, gtx)
+	if !clicked {
+		t.Fatal("physical press/release did not click control")
+	}
+}
+
 func TestLogoutReturnsToLoginState(t *testing.T) {
 	store, err := local.Open(context.Background(), nil)
 	if err != nil {
@@ -114,15 +163,7 @@ func TestLogoutReturnsToLoginState(t *testing.T) {
 	a.logout()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		for {
-			select {
-			case fn := <-a.updates:
-				fn()
-				continue
-			default:
-			}
-			break
-		}
+		a.drain()
 		if !a.busy {
 			break
 		}
