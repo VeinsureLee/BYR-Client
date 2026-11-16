@@ -131,6 +131,12 @@ func TestPreviewScreens(t *testing.T) {
 	search.stack = []Route{{Page: PageHome}, {Page: PageSearch}}
 	capture("search", search)
 
+	top := previewApp(t)
+	top.topTab = "top"
+	top.articles = board.board.Articles
+	top.stack = []Route{{Page: PageTop}}
+	capture("top", top)
+
 	self := previewApp(t)
 	self.user = forum.User{ID: "alice", UserName: "Alice", PostCount: 12, Score: 100}
 	self.history = []local.History{{Board: "Go", ID: "42", Title: "测试主题"}}

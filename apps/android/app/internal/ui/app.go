@@ -36,6 +36,7 @@ type Page uint8
 const (
 	PageLogin Page = iota
 	PageHome
+	PageTop
 	PageBoard
 	PageThread
 	PageTimeline
@@ -93,11 +94,12 @@ type App struct {
 	password widget.Editor
 	remember widget.Bool
 
-	homeList, boardList, threadList, timelineList, favoriteList, selfList, composeList widget.List
+	homeList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList widget.List
 
 	clicks map[string]*widget.Clickable
 
 	favoriteTab string
+	topTab      string
 	compose     composeState
 	lastClip    string
 	images      map[string]*mobileImage
@@ -130,7 +132,7 @@ func New(window invalidator) (*App, error) {
 	a := &App{
 		window: window, version: "dev", theme: theme, ctx: ctx, close: cancel,
 		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{},
-		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards",
+		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top",
 		homeList:     widget.List{List: layout.List{Axis: layout.Vertical}},
 		boardList:    widget.List{List: layout.List{Axis: layout.Vertical}},
 		threadList:   widget.List{List: layout.List{Axis: layout.Vertical}},
@@ -138,6 +140,7 @@ func New(window invalidator) (*App, error) {
 		favoriteList: widget.List{List: layout.List{Axis: layout.Vertical}},
 		selfList:     widget.List{List: layout.List{Axis: layout.Vertical}},
 		composeList:  widget.List{List: layout.List{Axis: layout.Vertical}},
+		topList:      widget.List{List: layout.List{Axis: layout.Vertical}},
 	}
 	a.username.SingleLine = true
 	// Email-type IME keeps English usernames free of sentence capitalization
@@ -317,6 +320,7 @@ func (a *App) resetSessionUI() {
 	a.favoriteList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.selfList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.composeList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.topList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.username.SetText("")
 	a.password.SetText("")
 }
@@ -360,6 +364,9 @@ func (a *App) setTab(page Page) {
 	case PageHome:
 		a.stack = []Route{{Page: PageHome}}
 		a.loadHome()
+	case PageTop:
+		a.stack = []Route{{Page: PageTop}}
+		a.loadTop()
 	case PageTimeline:
 		a.stack = []Route{{Page: PageTimeline}}
 		a.loadTimeline()
@@ -570,6 +577,16 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 						})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if a.current().Page == PageLogin || a.current().Page == PageCompose {
+							return layout.Dimensions{}
+						}
+						dims, clicked := a.iconButton(gtx, "open-compose", "plus")
+						if clicked {
+							a.composeFromCurrent()
+						}
+						return dims
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						if a.current().Page == PageLogin || a.current().Page == PageCompose && a.compose.editID == "" {
 							return layout.Dimensions{}
 						}
@@ -601,6 +618,11 @@ func (a *App) subtitle() string {
 		return "北邮人论坛"
 	case PageHome:
 		return "发现版面"
+	case PageTop:
+		if a.topTab == "recommend" {
+			return "版面推荐"
+		}
+		return "全站热门讨论"
 	case PageBoard:
 		return a.current().Name + " · 版面"
 	case PageThread:
@@ -623,6 +645,8 @@ func (a *App) refreshCurrent() {
 	switch a.current().Page {
 	case PageHome:
 		a.loadHome()
+	case PageTop:
+		a.loadTop()
 	case PageBoard:
 		a.loadBoard()
 	case PageThread:
@@ -635,6 +659,15 @@ func (a *App) refreshCurrent() {
 		a.loadSelf()
 	case PageCompose:
 		a.loadCompose()
+	}
+}
+
+func (a *App) composeFromCurrent() {
+	switch a.current().Page {
+	case PageBoard, PageThread, PageTop:
+		a.openCompose(a.current().Name, "", "new")
+	default:
+		a.openCompose("", "", "new")
 	}
 }
 
@@ -702,6 +735,7 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 		{PageHome, "nav-home", "home", "首页"},
 		{PageTimeline, "nav-timeline", "timeline", "时间线"},
 		{PageFavorites, "nav-favorites", "favorite", "收藏"},
+		{PageSearch, "nav-search", "search", "搜索"},
 		{PageSelf, "nav-self", "self", "我"},
 	}
 	height := gtx.Dp(unit.Dp(68))
@@ -764,7 +798,7 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 
 func (a *App) navPage(page Page) Page {
 	switch page {
-	case PageBoard, PageThread, PageCompose:
+	case PageTop, PageBoard, PageThread, PageCompose:
 		return PageHome
 	}
 	return page
@@ -776,6 +810,11 @@ func (a *App) title() string {
 		return "登录 · " + a.version
 	case PageHome:
 		return "首页"
+	case PageTop:
+		if a.topTab == "recommend" {
+			return "版面推荐"
+		}
+		return "今日十大"
 	case PageBoard:
 		if a.board.Description != "" {
 			return a.board.Description
@@ -806,6 +845,8 @@ func (a *App) page(gtx layout.Context) layout.Dimensions {
 		return a.loginPage(gtx)
 	case PageHome:
 		return a.homePage(gtx)
+	case PageTop:
+		return a.topPage(gtx)
 	case PageBoard:
 		return a.boardPage(gtx)
 	case PageThread:

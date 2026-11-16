@@ -340,6 +340,24 @@ func (a *App) homeOverview(gtx layout.Context) layout.Dimensions {
 							}
 							return dims
 						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							dims, clicked := a.pill(gtx, "home-top", "今日十大", "hot", a.current().Page == PageTop && a.topTab == "top", false)
+							if clicked {
+								a.topTab = "top"
+								a.setTab(PageTop)
+							}
+							return dims
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							dims, clicked := a.pill(gtx, "home-recommend", "版面推荐", "star", a.current().Page == PageTop && a.topTab == "recommend", false)
+							if clicked {
+								a.topTab = "recommend"
+								a.setTab(PageTop)
+							}
+							return dims
+						}),
 					)
 				}),
 			)
