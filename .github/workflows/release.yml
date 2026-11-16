@@ -84,7 +84,7 @@ jobs:
           if ! grep -q 'BYR_SKIP_DMG' tools/internal/buildflow/engine.go; then
             # Older tags do not know the CI switch that skips unsigned DMG
             # creation; patch the tag's build helper for this run.
-            sed_inplace 's/if runtime.GOOS != "darwin" {/if runtime.GOOS != "darwin" || os.Getenv("BYR_SKIP_DMG") == "1" {/' tools/internal/buildflow/engine.go
+            sed_inplace 's/runtime.GOOS != "darwin"/runtime.GOOS != "darwin" || os.Getenv("BYR_SKIP_DMG") == "1"/' tools/internal/buildflow/engine.go
           fi
       - name: Build desktop package
         run: go run ./tools/dev build desktop --target "${{ matrix.target }}"
