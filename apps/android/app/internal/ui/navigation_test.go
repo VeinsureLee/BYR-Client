@@ -4,6 +4,7 @@ import (
 	"image"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"gioui.org/io/input"
@@ -11,6 +12,35 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 )
+
+func TestSearchPageDoesNotCallForumYet(t *testing.T) {
+	s := newInteractionServer(t)
+	a := interactionApp(t, s.server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageSearch}}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 820)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	if a.searchMode != "ai" {
+		t.Fatalf("default search mode = %q, want ai", a.searchMode)
+	}
+	a.click("search-submit").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if len(s.requests) != 0 {
+		t.Fatalf("search page issued forum requests: %+v", s.requests)
+	}
+	if !strings.Contains(a.message, "尚未接入") {
+		t.Fatalf("search placeholder notice = %q", a.message)
+	}
+}
 
 func TestBottomNavigationComposeAndMessages(t *testing.T) {
 	a := interactionApp(t, "http://127.0.0.1:1")
@@ -26,6 +56,20 @@ func TestBottomNavigationComposeAndMessages(t *testing.T) {
 		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
 	}
 	a.Layout(gtx)
+	a.click("nav-search").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if got := a.current().Page; got != PageSearch {
+		t.Fatalf("search nav page = %v, want search", got)
+	}
+	a.click("nav-home").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if got := a.current().Page; got != PageHome {
+		t.Fatalf("section nav page = %v, want home sections", got)
+	}
+	waitForIdle(t, a)
+
 	a.click("nav-compose").Click()
 	ops.Reset()
 	a.Layout(gtx)

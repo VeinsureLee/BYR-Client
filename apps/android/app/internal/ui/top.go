@@ -33,7 +33,7 @@ func (a *App) loadTop() {
 
 func (a *App) topPage(gtx layout.Context) layout.Dimensions {
 	if len(a.articles) == 0 && a.busy {
-		return a.loadingPage(gtx, "正在加载热门讨论…")
+		return a.pendingPage(gtx, "正在加载热门讨论…")
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -90,7 +90,7 @@ func (a *App) topPage(gtx layout.Context) layout.Dimensions {
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if len(a.articles) == 0 {
-				return a.empty(gtx, "暂无热门讨论")
+				return a.emptyOrPending(gtx, "暂无热门讨论")
 			}
 			return material.List(a.theme, &a.topList).Layout(gtx, len(a.articles), func(gtx layout.Context, i int) layout.Dimensions {
 				return a.articleTile(gtx, "top:"+a.topTab, a.articles[i], "")

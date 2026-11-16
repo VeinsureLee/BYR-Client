@@ -108,7 +108,7 @@ func (a *App) loadBet() {
 func (a *App) userPage(gtx layout.Context) layout.Dimensions {
 	u := a.user
 	if u.ID == "" && a.busy {
-		return a.loadingPage(gtx, "正在加载用户资料…")
+		return a.pendingPage(gtx, "正在加载用户资料…")
 	}
 	return material.List(a.theme, &a.auxList).Layout(gtx, 2, func(gtx layout.Context, i int) layout.Dimensions {
 		switch i {
@@ -334,7 +334,7 @@ func (a *App) blacklistPage(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if len(a.blacklist.Users) == 0 {
-				return a.empty(gtx, "黑名单为空")
+				return a.emptyOrPending(gtx, "黑名单为空")
 			}
 			return material.List(a.theme, &a.auxList).Layout(gtx, len(a.blacklist.Users), func(gtx layout.Context, i int) layout.Dimensions {
 				u := a.blacklist.Users[i]
@@ -544,7 +544,7 @@ func (a *App) savePreferences(p local.Preferences) {
 func (a *App) votePage(gtx layout.Context) layout.Dimensions {
 	v := a.vote
 	if v.ID == "" && a.busy {
-		return a.loadingPage(gtx, "正在加载投票…")
+		return a.pendingPage(gtx, "正在加载投票…")
 	}
 	return material.List(a.theme, &a.auxList).Layout(gtx, 2, func(gtx layout.Context, i int) layout.Dimensions {
 		switch i {
@@ -628,7 +628,7 @@ func (a *App) votePage(gtx layout.Context) layout.Dimensions {
 func (a *App) betPage(gtx layout.Context) layout.Dimensions {
 	v := a.bet
 	if v.ID == "" && a.busy {
-		return a.loadingPage(gtx, "正在加载竞猜…")
+		return a.pendingPage(gtx, "正在加载竞猜…")
 	}
 	return material.List(a.theme, &a.auxList).Layout(gtx, 2, func(gtx layout.Context, i int) layout.Dimensions {
 		switch i {

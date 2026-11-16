@@ -40,26 +40,52 @@ func (a *App) React(ctx context.Context, board string, article forum.Article, ki
 		duplicate = true
 	}
 	wasLiked, wasDown := bool(article.IsLiked), bool(article.IsVotedown)
+	like, down := int(article.LikeSum), int(article.VotedownSum)
+	if duplicate {
+		// The server confirmed the reaction already exists. Never increment a
+		// local count that the response did not include.
+		if r.LikeSum != nil {
+			like = int(*r.LikeSum)
+		}
+		if r.VotedownSum != nil {
+			down = int(*r.VotedownSum)
+		}
+	} else {
+		// Some deployments acknowledge the reaction without returning the new
+		// totals. Increment locally so the button reflects the action at once;
+		// a larger server count still wins if another user reacted meanwhile.
+		if kind == Like {
+			if !wasLiked {
+				like++
+			}
+			if wasDown && down > 0 {
+				down--
+			}
+			if wasDown && r.VotedownSum != nil {
+				down = int(*r.VotedownSum)
+			}
+		} else {
+			if !wasDown {
+				down++
+			}
+			if wasLiked && like > 0 {
+				like--
+			}
+			if wasLiked && r.LikeSum != nil {
+				like = int(*r.LikeSum)
+			}
+		}
+		if r.LikeSum != nil && int(*r.LikeSum) > like {
+			like = int(*r.LikeSum)
+		}
+		if r.VotedownSum != nil && int(*r.VotedownSum) > down {
+			down = int(*r.VotedownSum)
+		}
+	}
+	article.LikeSum = forum.Number(like)
+	article.VotedownSum = forum.Number(down)
 	article.IsLiked = forum.Flag(kind == Like)
 	article.IsVotedown = forum.Flag(kind == Downvote)
-	if r.LikeSum != nil {
-		article.LikeSum = *r.LikeSum
-	} else if !duplicate {
-		if kind == Like {
-			article.LikeSum++
-		} else if wasLiked && article.LikeSum > 0 {
-			article.LikeSum--
-		}
-	}
-	if r.VotedownSum != nil {
-		article.VotedownSum = *r.VotedownSum
-	} else if !duplicate {
-		if kind == Downvote {
-			article.VotedownSum++
-		} else if wasDown && article.VotedownSum > 0 {
-			article.VotedownSum--
-		}
-	}
 	return article, nil
 }
 

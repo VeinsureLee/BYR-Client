@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"testing"
+	"time"
 
 	"gioui.org/io/input"
 	"gioui.org/io/key"
@@ -59,7 +60,27 @@ func TestNavigationDoesNotChangeRouteWhileBusy(t *testing.T) {
 	}
 }
 
-func TestTabRootBackReturnsHome(t *testing.T) {
+func TestLoadingIndicatorIsDelayed(t *testing.T) {
+	a, err := New(noopInvalidator{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.busy = true
+	a.busySince = time.Now()
+	if a.showLoading() {
+		t.Fatal("loading indicator appeared immediately")
+	}
+	a.busySince = time.Now().Add(-600 * time.Millisecond)
+	if !a.showLoading() {
+		t.Fatal("loading indicator stayed hidden after the delay")
+	}
+	a.busy = false
+	if a.showLoading() {
+		t.Fatal("loading indicator remained after the request finished")
+	}
+}
+
+func TestTabRootBackReturnsSearch(t *testing.T) {
 	a, err := New(noopInvalidator{})
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +103,7 @@ func TestTabRootBackReturnsHome(t *testing.T) {
 	ops.Reset()
 	gtx.Ops = &ops
 	a.Layout(gtx)
-	if got := a.current().Page; got != PageHome {
-		t.Fatalf("tab-root back page = %v, want home", got)
+	if got := a.current().Page; got != PageSearch {
+		t.Fatalf("tab-root back page = %v, want search", got)
 	}
 }

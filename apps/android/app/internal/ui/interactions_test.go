@@ -198,6 +198,38 @@ func TestSelfSettingsEntryOpensSettings(t *testing.T) {
 	}
 }
 
+func TestThreadLikeUsesCanonicalBoardName(t *testing.T) {
+	s := newInteractionServer(t)
+	a := interactionApp(t, s.server.URL)
+	defer a.Close()
+	a.thread = sampleThread() // Board: Go
+	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "悄悄话", ID: "42", Number: 1}}
+	a.likeThread()
+	waitForIdle(t, a)
+	if len(s.find("GET", "/open/article/Go/like/42.json")) != 1 {
+		t.Fatalf("like did not use the canonical board: %+v", s.requests)
+	}
+	if a.thread.LikeSum != 3 || !bool(a.thread.IsLiked) {
+		t.Fatalf("thread reaction state = %+v", a.thread)
+	}
+}
+
+func TestThreadLikeWhileLoadingIsRejected(t *testing.T) {
+	s := newInteractionServer(t)
+	a := interactionApp(t, s.server.URL)
+	defer a.Close()
+	a.thread = forum.Thread{}
+	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	a.likeThread()
+	waitForIdle(t, a)
+	if len(s.find("GET", "/open/article/Go/like/42.json")) != 0 {
+		t.Fatalf("empty thread sent a reaction request: %+v", s.requests)
+	}
+	if !a.failed || !strings.Contains(a.message, "稍候") {
+		t.Fatalf("loading reaction was not explained: failed=%v message=%q", a.failed, a.message)
+	}
+}
+
 func TestThreadReactionUpdatesServerCounts(t *testing.T) {
 	s := newInteractionServer(t)
 	a := interactionApp(t, s.server.URL)

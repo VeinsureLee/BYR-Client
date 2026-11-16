@@ -130,7 +130,7 @@ func TestLogoutThenNewAppStartsAtLogin(t *testing.T) {
 	}
 }
 
-func TestRestartWithRememberedSessionRendersHome(t *testing.T) {
+func TestRestartWithRememberedSessionRendersSearch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -155,13 +155,15 @@ func TestRestartWithRememberedSessionRendersHome(t *testing.T) {
 	a := startAppForTest(t)
 	defer a.Close()
 	waitForIdle(t, a)
-	if got := a.current().Page; got != PageHome {
-		t.Fatalf("restart page = %v, want home", got)
-	}
-	if len(a.sections) != 1 {
-		t.Fatalf("restart sections = %+v", a.sections)
+	if got := a.current().Page; got != PageSearch {
+		t.Fatalf("restart page = %v, want search", got)
 	}
 	assertFrameRenders(t, a)
+	a.setTab(PageHome)
+	waitForIdle(t, a)
+	if len(a.sections) != 1 {
+		t.Fatalf("section tab did not load: %+v", a.sections)
+	}
 }
 
 func TestLogoutThenLoginAgainRenders(t *testing.T) {
@@ -188,8 +190,8 @@ func TestLogoutThenLoginAgainRenders(t *testing.T) {
 	a.password.SetText("pw")
 	a.login()
 	waitForIdle(t, a)
-	if got := a.current().Page; got != PageHome {
-		t.Fatalf("login page = %v, want home", got)
+	if got := a.current().Page; got != PageSearch {
+		t.Fatalf("login page = %v, want search", got)
 	}
 	assertFrameRenders(t, a)
 
@@ -215,8 +217,8 @@ func TestLogoutThenLoginAgainRenders(t *testing.T) {
 	a.password.SetText("pw")
 	a.login()
 	waitForIdle(t, a)
-	if got := a.current().Page; got != PageHome {
-		t.Fatalf("second login page = %v, want home", got)
+	if got := a.current().Page; got != PageSearch {
+		t.Fatalf("second login page = %v, want search", got)
 	}
 	assertFrameRenders(t, a)
 }

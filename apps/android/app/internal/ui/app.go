@@ -119,11 +119,13 @@ type App struct {
 	ipv6        widget.Bool
 	choice      string
 
-	username widget.Editor
-	password widget.Editor
-	remember widget.Bool
+	username   widget.Editor
+	password   widget.Editor
+	remember   widget.Bool
+	searchEdit widget.Editor
+	searchMode string
 
-	homeList, sectionList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList, auxList widget.List
+	homeList, sectionList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList, auxList, searchList widget.List
 
 	clicks map[string]*widget.Clickable
 
@@ -138,6 +140,7 @@ type App struct {
 	pageKey     string
 	renderPanic string
 	startAt     time.Time
+	busySince   time.Time
 }
 
 type composeState struct {
@@ -166,7 +169,7 @@ func New(window invalidator) (*App, error) {
 	a := &App{
 		window: window, version: "dev", theme: theme, ctx: ctx, close: cancel,
 		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{},
-		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top",
+		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai",
 		homeList:     widget.List{List: layout.List{Axis: layout.Vertical}},
 		sectionList:  widget.List{List: layout.List{Axis: layout.Vertical}},
 		boardList:    widget.List{List: layout.List{Axis: layout.Vertical}},
@@ -177,7 +180,9 @@ func New(window invalidator) (*App, error) {
 		composeList:  widget.List{List: layout.List{Axis: layout.Vertical}},
 		topList:      widget.List{List: layout.List{Axis: layout.Vertical}},
 		auxList:      widget.List{List: layout.List{Axis: layout.Vertical}},
+		searchList:   widget.List{List: layout.List{Axis: layout.Vertical}},
 	}
+	a.searchEdit.SingleLine = true
 	a.username.SingleLine = true
 	// Email-type IME keeps English usernames free of sentence capitalization
 	// and autocorrect churn that some keyboards apply to plain text fields.
@@ -242,12 +247,13 @@ func (a *App) handlesBack() bool {
 	if !a.ready {
 		return false
 	}
-	page := a.current().Page
-	switch page {
-	case PageLogin:
+	if a.canBack() {
+		return true
+	}
+	switch a.current().Page {
+	case PageLogin, PageSearch:
+		// The search tab is the launcher root; there is no in-app parent.
 		return false
-	case PageHome:
-		return a.canBack()
 	}
 	return true
 }
@@ -257,8 +263,8 @@ func (a *App) navigateBack() {
 		a.back()
 		return
 	}
-	if a.current().Page != PageHome {
-		a.setTab(PageHome)
+	if a.current().Page != PageSearch {
+		a.setTab(PageSearch)
 	}
 }
 
@@ -358,8 +364,7 @@ func (a *App) start() {
 		a.initErr = ""
 		a.ready = true
 		if core.Session().Token != "" {
-			a.stack = []Route{{Page: PageHome}}
-			a.loadHome()
+			a.stack = []Route{{Page: PageSearch}}
 		} else {
 			a.resetSessionUI()
 		}
@@ -405,8 +410,11 @@ func (a *App) resetSessionUI() {
 	a.composeList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.topList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.searchList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.username.SetText("")
 	a.password.SetText("")
+	a.searchEdit.SetText("")
+	a.searchMode = "ai"
 }
 
 func (a *App) canBack() bool { return len(a.stack) > 1 }
@@ -445,6 +453,8 @@ func (a *App) setTab(page Page) {
 		}
 	}
 	switch page {
+	case PageSearch:
+		a.stack = []Route{{Page: PageSearch}}
 	case PageHome:
 		a.stack = []Route{{Page: PageHome}}
 		a.loadHome()
@@ -475,9 +485,18 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 		return
 	}
 	a.busy = true
+	a.busySince = time.Now()
 	a.message = label
 	a.failed = false
 	a.window.Invalidate()
+	// Let an in-flight request stay invisible for a moment. A second frame at
+	// the threshold reveals the status bar and page spinner only if it is still
+	// loading, avoiding a "loading" flash when switching tabs.
+	time.AfterFunc(500*time.Millisecond, func() {
+		if !a.closed.Load() {
+			a.window.Invalidate()
+		}
+	})
 	go func() {
 		var done func()
 		var err error
@@ -605,7 +624,7 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(a.topBar),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if a.message == "" {
+				if a.message == "" || a.busy && !a.showLoading() {
 					return layout.Dimensions{}
 				}
 				return a.statusBar(gtx)
@@ -624,15 +643,80 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 	}
 	// On wide screens (foldables unfolded, tablets) keep a phone-like column
 	// centered instead of stretching desktop-style across the whole width.
+	var bodyDims layout.Dimensions
 	if maxW := gtx.Dp(unit.Dp(480)); gtx.Constraints.Max.X > maxW {
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		bodyDims = layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Exact(image.Pt(maxW, gtx.Constraints.Max.Y))
 				return body(gtx)
 			}),
 		)
+	} else {
+		bodyDims = body(gtx)
 	}
-	return body(gtx)
+	// A page push during this frame must arm the back filter before the frame
+	// ends; otherwise a swipe during the first loading moment reaches Android
+	// with no handler and finishes the activity.
+	a.handleSystemBack(gtx)
+	return bodyDims
+}
+
+// showLoading hides spinners and transient status text for the first 500ms of
+// a request so quick page switches do not flash a loading state.
+func (a *App) showLoading() bool {
+	if !a.busy {
+		return false
+	}
+	return a.busySince.IsZero() || time.Since(a.busySince) >= 500*time.Millisecond
+}
+
+func (a *App) pendingPage(gtx layout.Context, text string) layout.Dimensions {
+	if a.showLoading() {
+		return a.loadingPage(gtx, text)
+	}
+	return a.skeleton(gtx)
+}
+
+func (a *App) emptyOrPending(gtx layout.Context, text string) layout.Dimensions {
+	if a.busy {
+		if a.showLoading() {
+			return a.loadingPage(gtx, "正在加载…")
+		}
+		return a.skeleton(gtx)
+	}
+	return a.empty(gtx, text)
+}
+
+func (a *App) skeleton(gtx layout.Context) layout.Dimensions {
+	row := func(gtx layout.Context) layout.Dimensions {
+		w := gtx.Constraints.Max.X
+		h := gtx.Dp(unit.Dp(72))
+		size := image.Pt(w, h)
+		paint.FillShape(gtx.Ops, colorSurface,
+			clip.RRect{Rect: image.Rectangle{Max: size}, NE: 12, NW: 12, SE: 12, SW: 12}.Op(gtx.Ops))
+		bar := func(top int, fraction float64) {
+			width := int(float64(w-32) * fraction)
+			if width < 24 {
+				width = 24
+			}
+			off := op.Offset(image.Pt(16, top)).Push(gtx.Ops)
+			paint.FillShape(gtx.Ops, colorBorder,
+				clip.RRect{Rect: image.Rectangle{Max: image.Pt(width, 12)}, NE: 6, NW: 6, SE: 6, SW: 6}.Op(gtx.Ops))
+			off.Pop()
+		}
+		bar(h/2-16, 0.45)
+		bar(h/2+8, 0.7)
+		return layout.Dimensions{Size: size}
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, row)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, row)
+		}),
+		layout.Rigid(row),
+	)
 }
 
 func (a *App) loadingPage(gtx layout.Context, text string) layout.Dimensions {
@@ -755,7 +839,8 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 						})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						if a.current().Page == PageLogin || a.current().Page == PageCompose && a.compose.editID == "" {
+						page := a.current().Page
+						if page == PageLogin || page == PageSearch || page == PageCompose && a.compose.editID == "" {
 							return layout.Dimensions{}
 						}
 						dims, clicked := a.iconButton(gtx, "top-refresh", "refresh")
@@ -795,7 +880,7 @@ func (a *App) subtitle() string {
 	case PageFavorites:
 		return "我的收藏"
 	case PageSearch:
-		return "全站与 AI 搜索"
+		return "AI 搜索 · 全站搜索"
 	case PageMessages:
 		switch a.current().Sub {
 		case "inbox":
@@ -941,8 +1026,8 @@ func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
 		label   string
 		compose bool
 	}{
-		{page: PageHome, key: "nav-home", icon: "home", label: "首页"},
-		{page: PageTimeline, key: "nav-timeline", icon: "timeline", label: "时间线"},
+		{page: PageSearch, key: "nav-search", icon: "search", label: "搜索"},
+		{page: PageHome, key: "nav-home", icon: "hash", label: "分区"},
 		{page: PageCompose, key: "nav-compose", icon: "plus", label: "发帖", compose: true},
 		{page: PageMessages, key: "nav-messages", icon: "mail", label: "消息"},
 		{page: PageSelf, key: "nav-self", icon: "self", label: "我的"},
@@ -1043,14 +1128,14 @@ func (a *App) composeNavCircle(gtx layout.Context) layout.Dimensions {
 
 func (a *App) navPage(page Page) Page {
 	switch page {
-	case PageSection, PageTop, PageBoard, PageThread, PageCompose, PageVote, PageBet:
+	case PageSection, PageTop, PageBoard, PageThread, PageTimeline, PageCompose, PageVote, PageBet:
 		return PageHome
 	case PageChat, PageMail, PageMailbox, PageMailCompose, PageRefers:
 		return PageMessages
 	case PageUser, PageHistory, PageBlacklist, PageSettings, PageFavorites:
 		return PageSelf
 	case PageSearch:
-		return PageHome
+		return PageSearch
 	}
 	return page
 }
@@ -1060,7 +1145,7 @@ func (a *App) title() string {
 	case PageLogin:
 		return "登录 · " + a.version
 	case PageHome:
-		return "首页"
+		return "分区"
 	case PageSection:
 		if a.section.Description != "" {
 			return a.section.Description

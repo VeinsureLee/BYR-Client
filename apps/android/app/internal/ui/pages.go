@@ -137,8 +137,7 @@ func (a *App) login() {
 		err := a.core.Login(ctx, u, p, a.remember.Value)
 		return func() {
 			a.password.SetText("")
-			a.stack = []Route{{Page: PageHome}}
-			a.loadHome()
+			a.stack = []Route{{Page: PageSearch}}
 		}, err
 	})
 }
@@ -238,10 +237,11 @@ func (a *App) resolveSubsections(ctx context.Context, section *forum.Section) {
 
 func (a *App) homePage(gtx layout.Context) layout.Dimensions {
 	if len(a.sections) == 0 && a.busy {
-		return a.loadingPage(gtx, "正在加载分区…")
+		return a.pendingPage(gtx, "正在加载分区…")
 	}
-	rows := make([]layout.Widget, 0, len(a.sections)+2)
+	rows := make([]layout.Widget, 0, len(a.sections)+3)
 	rows = append(rows, a.homeOverview)
+	rows = append(rows, a.timelineEntryCard)
 	rows = append(rows, func(gtx layout.Context) layout.Dimensions {
 		return a.sectionTitle(gtx, "分区", fmt.Sprintf("%d 个分区", len(a.sections)))
 	})
@@ -256,10 +256,49 @@ func (a *App) homePage(gtx layout.Context) layout.Dimensions {
 	})
 }
 
+func (a *App) timelineEntryCard(gtx layout.Context) layout.Dimensions {
+	btn := a.click("home-timeline")
+	clicked := btn.Clicked(gtx)
+	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return a.iconTile(gtx, "clock", 38, colorAccentSoft, colorAccent)
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								l := material.Label(a.theme, unit.Sp(15), "时间线")
+								l.Font.Weight = 600
+								return l.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								l := material.Label(a.theme, unit.Sp(11), "全部帖子按发帖时间倒序浏览")
+								l.Color = colorMuted
+								return l.Layout(gtx)
+							}),
+						)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return a.drawIcon(gtx, "next", 16, colorMuted)
+					}),
+				)
+			})
+		})
+	})
+	if clicked {
+		a.push(Route{Page: PageTimeline, Number: 1})
+		a.loadTimeline()
+	}
+	return dims
+}
+
 func (a *App) sectionPage(gtx layout.Context) layout.Dimensions {
 	r := a.current()
 	if r.Name != "" && a.section.Name == "" && a.busy {
-		return a.loadingPage(gtx, "正在加载分区…")
+		return a.pendingPage(gtx, "正在加载分区…")
 	}
 	pick := r.Sub == "pick"
 	title := "全部分区"
@@ -628,7 +667,7 @@ func (a *App) loadBoard() {
 
 func (a *App) boardPage(gtx layout.Context) layout.Dimensions {
 	if a.board.Name == "" && a.busy {
-		return a.loadingPage(gtx, "正在加载版面…")
+		return a.pendingPage(gtx, "正在加载版面…")
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -748,7 +787,7 @@ func (a *App) loadThread() {
 
 func (a *App) threadPage(gtx layout.Context) layout.Dimensions {
 	if a.thread.ID == "" && a.busy {
-		return a.loadingPage(gtx, "正在加载主题…")
+		return a.pendingPage(gtx, "正在加载主题…")
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -840,7 +879,7 @@ func (a *App) threadToolbar(gtx layout.Context) layout.Dimensions {
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							dims, clicked := a.filledPill(gtx, "thread-reply", "回复主题", "reply")
 							if clicked {
-								a.openCompose(a.current().Name, a.current().ID, "reply")
+								a.openCompose(a.threadBoard(), a.current().ID, "reply")
 							}
 							return dims
 						}),
@@ -876,7 +915,7 @@ func (a *App) threadToolbar(gtx layout.Context) layout.Dimensions {
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							dims, clicked := a.pill(gtx, "thread-open-board", "进入版面", "board", false, false)
 							if clicked {
-								a.openBoard(a.current().Name)
+								a.openBoard(a.threadBoard())
 							}
 							return dims
 						}),
@@ -1037,16 +1076,24 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 	})
 }
 
+func (a *App) threadBoard() string {
+	if board := strings.TrimSpace(a.thread.Board); board != "" {
+		return board
+	}
+	return a.current().Name
+}
+
 func (a *App) likeThread() {
 	root, ok := a.threadRoot()
-	if !ok {
+	if !ok || root.ID == "" {
+		a.fail(errors.New("主题还在加载，请稍候再点赞"))
 		return
 	}
 	if bool(root.IsLiked) {
 		a.fail(errors.New("已赞过，服务器不支持取消赞"))
 		return
 	}
-	board := a.current().Name
+	board := a.threadBoard()
 	a.run("提交评价", func(ctx context.Context) (func(), error) {
 		updated, err := a.core.React(ctx, board, root, application.Like)
 		return func() {
@@ -1070,6 +1117,10 @@ func (a *App) threadRoot() (forum.Article, bool) {
 }
 
 func (a *App) react(index int, v forum.Article, kind application.ReactionKind) {
+	if v.ID == "" {
+		a.fail(errors.New("帖子还在加载，请稍候再评价"))
+		return
+	}
 	if kind == application.Like && bool(v.IsLiked) {
 		a.fail(errors.New("已赞过，服务器不支持取消赞"))
 		return
@@ -1078,7 +1129,7 @@ func (a *App) react(index int, v forum.Article, kind application.ReactionKind) {
 		a.fail(errors.New("已踩过，服务器不支持取消踩"))
 		return
 	}
-	board := a.current().Name
+	board := a.threadBoard()
 	a.run("提交评价", func(ctx context.Context) (func(), error) {
 		updated, err := a.core.React(ctx, board, v, kind)
 		return func() {
@@ -1096,8 +1147,12 @@ func (a *App) react(index int, v forum.Article, kind application.ReactionKind) {
 }
 
 func (a *App) collectThread() {
+	if a.thread.ID == "" {
+		a.fail(errors.New("主题还在加载，请稍候再收藏"))
+		return
+	}
 	was := bool(a.thread.Collect)
-	board, id := a.current().Name, a.current().ID
+	board, id := a.threadBoard(), a.current().ID
 	a.run("更新文章收藏", func(ctx context.Context) (func(), error) {
 		_, err := a.core.SetCollected(ctx, board, id, !was)
 		return func() { a.thread.Collect = forum.Flag(!was) }, err
@@ -1117,7 +1172,7 @@ func (a *App) loadTimeline() {
 
 func (a *App) timelinePage(gtx layout.Context) layout.Dimensions {
 	if len(a.articles) == 0 && a.busy {
-		return a.loadingPage(gtx, "正在加载时间线…")
+		return a.pendingPage(gtx, "正在加载时间线…")
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1150,7 +1205,7 @@ func (a *App) timelinePage(gtx layout.Context) layout.Dimensions {
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if len(a.articles) == 0 {
-				return a.empty(gtx, "时间线为空")
+				return a.emptyOrPending(gtx, "时间线为空")
 			}
 			return material.List(a.theme, &a.timelineList).Layout(gtx, len(a.articles), func(gtx layout.Context, i int) layout.Dimensions {
 				return a.articleTile(gtx, "timeline", a.articles[i], "")
@@ -1236,7 +1291,7 @@ func (a *App) favoritesPage(gtx layout.Context) layout.Dimensions {
 
 func (a *App) collectionBody(gtx layout.Context) layout.Dimensions {
 	if len(a.collect.Entries) == 0 {
-		return a.empty(gtx, "还没有收藏文章")
+		return a.emptyOrPending(gtx, "还没有收藏文章")
 	}
 	return material.List(a.theme, &a.favoriteList).Layout(gtx, len(a.collect.Entries), func(gtx layout.Context, i int) layout.Dimensions {
 		e := a.collect.Entries[i]
@@ -1300,7 +1355,7 @@ func (a *App) collectionBody(gtx layout.Context) layout.Dimensions {
 func (a *App) boardFavoritesBody(gtx layout.Context) layout.Dimensions {
 	boards := flattenFavoriteBoards(a.favorite)
 	if len(boards) == 0 {
-		return a.empty(gtx, "还没有收藏版面")
+		return a.emptyOrPending(gtx, "还没有收藏版面")
 	}
 	return material.List(a.theme, &a.favoriteList).Layout(gtx, len(boards), func(gtx layout.Context, i int) layout.Dimensions {
 		return a.boardCard(gtx, boards[i])
@@ -1316,66 +1371,143 @@ func flattenFavoriteBoards(f forum.Favorite) []forum.Board {
 }
 
 func (a *App) searchPage(gtx layout.Context) layout.Dimensions {
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+	ai := a.searchMode != "all"
+	title := "AI 搜索"
+	detail := "用自然语言描述你想找的内容"
+	icon := "hot"
+	if !ai {
+		title = "全站搜索"
+		detail = "按标题、作者、版面检索全站主题"
+		icon = "search"
+	}
+	rows := []layout.Widget{
+		func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							l := material.Label(a.theme, unit.Sp(20), "搜索论坛")
-							l.Font.Weight = 700
-							return l.Layout(gtx)
+							return a.iconTile(gtx, icon, 42, colorAccentSoft, colorAccent)
 						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							l := material.Label(a.theme, unit.Sp(12), "全站搜索与 AI 搜索正在开发中，当前暂不可用。")
-							l.Color = colorMuted
-							return l.Layout(gtx)
-						}),
-					)
-				})
-			})
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return a.comingSoonCard(gtx, "全站搜索", "按标题、作者、版面检索全站主题。", "search")
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return a.comingSoonCard(gtx, "AI 搜索", "用自然语言描述你想找的内容，由 AI 帮你定位帖子。", "hot")
-		}),
-	)
-}
-
-func (a *App) comingSoonCard(gtx layout.Context, title, detail, icon string) layout.Dimensions {
-	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return a.iconTile(gtx, icon, 42, colorAccentSoft, colorAccent)
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(15), title)
-									l.Font.Weight = 600
+									l := material.Label(a.theme, unit.Sp(20), "搜索论坛")
+									l.Font.Weight = 700
 									return l.Layout(gtx)
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return a.badgeChip(gtx, "敬请期待", colorWarningSoft, colorWarning)
+									l := material.Label(a.theme, unit.Sp(11), detail)
+									l.Color = colorMuted
+									return l.Layout(gtx)
 								}),
 							)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							l := material.Label(a.theme, unit.Sp(11), detail)
-							l.Color = colorMuted
-							return l.Layout(gtx)
+							return a.badgeChip(gtx, title, colorAccentSoft, colorAccent)
 						}),
 					)
-				}),
-			)
-		})
+				})
+			})
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						dims, clicked := a.pill(gtx, "search-mode:ai", "AI 搜索", "hot", ai, false)
+						if clicked {
+							a.searchMode = "ai"
+							a.window.Invalidate()
+						}
+						return dims
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						dims, clicked := a.pill(gtx, "search-mode:all", "全站搜索", "search", !ai, false)
+						if clicked {
+							a.searchMode = "all"
+							a.window.Invalidate()
+						}
+						return dims
+					}),
+				)
+			})
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				placeholder := "描述你想找的内容，例如：最近关于选课的讨论"
+				if !ai {
+					placeholder = "输入标题、作者或关键词"
+				}
+				return a.inputBox(gtx, &a.searchEdit, placeholder)
+			})
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				label := "开始 AI 搜索"
+				if !ai {
+					label = "开始全站搜索"
+				}
+				dims, clicked := a.primaryButton(gtx, "search-submit", label)
+				if clicked {
+					a.message = "搜索接口尚未接入，当前版本仅完成界面。"
+					a.failed = false
+					a.window.Invalidate()
+				}
+				return dims
+			})
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							l := material.Label(a.theme, unit.Sp(13), "搜索能力规划")
+							l.Font.Weight = 700
+							return l.Layout(gtx)
+						}),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return a.searchFeatureRow(gtx, "AI 搜索", "自然语言描述需求，返回相关主题与楼层")
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return a.searchFeatureRow(gtx, "全站搜索", "标题、作者、版面关键词检索")
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return a.searchFeatureRow(gtx, "结果页", "主题卡片、分页与跳转到对应楼层")
+						}),
+					)
+				})
+			})
+		},
+	}
+	return material.List(a.theme, &a.searchList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
+		return rows[i](gtx)
+	})
+}
+
+func (a *App) searchFeatureRow(gtx layout.Context, title, detail string) layout.Dimensions {
+	return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return a.badgeChip(gtx, "敬请期待", colorWarningSoft, colorWarning)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						l := material.Label(a.theme, unit.Sp(13), title)
+						l.Font.Weight = 600
+						return l.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						l := material.Label(a.theme, unit.Sp(11), detail)
+						l.Color = colorMuted
+						return l.Layout(gtx)
+					}),
+				)
+			}),
+		)
 	})
 }
 

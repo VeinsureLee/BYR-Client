@@ -168,8 +168,13 @@ func TestPreviewScreens(t *testing.T) {
 	capture("favorites", favorites)
 
 	search := previewApp(t)
-	search.stack = []Route{{Page: PageHome}, {Page: PageSearch}}
+	search.stack = []Route{{Page: PageSearch}}
 	capture("search", search)
+
+	searchAll := previewApp(t)
+	searchAll.searchMode = "all"
+	searchAll.stack = []Route{{Page: PageSearch}}
+	capture("search-all", searchAll)
 
 	user := previewApp(t)
 	user.user = forum.User{ID: "bob", UserName: "Bob", PostCount: 8, Score: 42, HomePage: "https://example.com"}

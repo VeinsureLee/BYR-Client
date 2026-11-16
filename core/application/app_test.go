@@ -129,6 +129,26 @@ func TestPublishKeepsFailedDraftAndSeparatesCleanupFailure(t *testing.T) {
 		t.Fatalf("must report published post separately from cleanup failure: %+v %v", result, err)
 	}
 }
+func TestReactionIncrementsWhenServerOmitsFreshCount(t *testing.T) {
+	a := appFor(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":true,"like_sum":2,"votedown_sum":0}`)
+	}, nil, &credentials{value: Credential{Username: "a", Token: "t"}})
+	v := forum.Article{ID: "42", LikeSum: 2}
+	v, err := a.React(context.Background(), "Go", v, Like)
+	if err != nil || !bool(v.IsLiked) || v.LikeSum != 3 {
+		t.Fatalf("stale server count must still show the new like: %+v %v", v, err)
+	}
+
+	a = appFor(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":true,"like_sum":0,"votedown_sum":5}`)
+	}, nil, &credentials{value: Credential{Username: "a", Token: "t"}})
+	v = forum.Article{ID: "42", LikeSum: 5, IsLiked: true, VotedownSum: 5}
+	v, err = a.React(context.Background(), "Go", v, Downvote)
+	if err != nil || !bool(v.IsVotedown) || v.VotedownSum != 6 || v.LikeSum != 0 {
+		t.Fatalf("stale downvote count must still show the switch: %+v %v", v, err)
+	}
+}
+
 func TestReactionIsOneWayAndCanSwitch(t *testing.T) {
 	calls := 0
 	a := appFor(t, func(w http.ResponseWriter, r *http.Request) {

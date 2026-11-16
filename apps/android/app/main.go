@@ -11,7 +11,7 @@ import (
 	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/ui"
 )
 
-var version = "0.4.2"
+var version = "0.4.3"
 
 func main() {
 	go func() {
@@ -37,6 +37,12 @@ func main() {
 					log.Print(event.Err)
 				}
 				os.Exit(0)
+			case app.ConfigEvent:
+				// Android reports resume as a focus change. Force a fresh frame
+				// so a resumed activity does not keep an empty or stale surface.
+				if event.Config.Focused {
+					window.Invalidate()
+				}
 			case app.FrameEvent:
 				context := app.NewContext(&operations, event)
 				view.Layout(context)
