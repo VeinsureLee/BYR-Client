@@ -22,12 +22,33 @@ env:
 
 jobs:
   desktop:
-    name: Build Windows desktop
-    runs-on: windows-latest
-    timeout-minutes: 30
+    name: Build desktop (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows/amd64
+            os: windows-latest
+            directory: windows-amd64
+          - target: windows/arm64
+            os: windows-latest
+            directory: windows-arm64
+          - target: linux/amd64
+            os: ubuntu-latest
+            directory: linux-amd64
+          - target: linux/arm64
+            os: ubuntu-latest
+            directory: linux-arm64
+          - target: darwin/universal
+            os: macos-latest
+            directory: darwin-universal
     defaults:
       run:
         shell: bash
+    env:
+      BYR_SKIP_DMG: '1'
     steps:
       - name: Check out release tag
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -51,17 +72,29 @@ jobs:
             echo "::error::Release tags must be vX.Y.Z (got ${RELEASE_TAG})"
             exit 1
           fi
-          sed -i -E "s/(\"version\"[[:space:]]*:[[:space:]]*\")[^\"]+(\")/\1${version}\2/" apps/desktop/mygo.json
+          sed_inplace() {
+            if sed --version >/dev/null 2>&1; then
+              sed -i -E "$1" "$2"
+            else
+              sed -i '' -E "$1" "$2"
+            fi
+          }
+          sed_inplace "s/(\"version\"[[:space:]]*:[[:space:]]*\")[^\"]+(\")/\1${version}\2/" apps/desktop/mygo.json
           grep -n '"version"' apps/desktop/mygo.json
-      - name: Build Windows package
-        run: go run ./tools/dev build desktop --target windows/amd64
+          if ! grep -q 'BYR_SKIP_DMG' tools/internal/buildflow/engine.go; then
+            # Older tags do not know the CI switch that skips unsigned DMG
+            # creation; patch the tag's build helper for this run.
+            sed_inplace 's/if runtime.GOOS != "darwin" {/if runtime.GOOS != "darwin" || os.Getenv("BYR_SKIP_DMG") == "1" {/' tools/internal/buildflow/engine.go
+          fi
+      - name: Build desktop package
+        run: go run ./tools/dev build desktop --target "${{ matrix.target }}"
       - name: Upload desktop package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: desktop-windows-amd64
+          name: desktop-${{ matrix.directory }}
           path: |
-            dist/desktop/windows-amd64/*.zip
-            dist/desktop/windows-amd64/manifest.json
+            dist/desktop/${{ matrix.directory }}/*.zip
+            dist/desktop/${{ matrix.directory }}/manifest.json
           if-no-files-found: error
           compression-level: 0
 
@@ -115,12 +148,19 @@ jobs:
           code=$((major * 10000 + minor * 100 + patch))
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "code=${code}" >> "$GITHUB_OUTPUT"
-          sed -i -E "s/var version = \"[^\"]+\"/var version = \"${version}\"/" apps/android/app/main.go
+          sed_inplace() {
+            if sed --version >/dev/null 2>&1; then
+              sed -i -E "$1" "$2"
+            else
+              sed -i '' -E "$1" "$2"
+            fi
+          }
+          sed_inplace "s/var version = \"[^\"]+\"/var version = \"${version}\"/" apps/android/app/main.go
           if ! grep -q 'BYR_ANDROID_VERSION' tools/internal/buildflow/android_production.go; then
             # Tags created before the buildflow read environment overrides still
             # carry the version as constants; stamp those constants for CI.
-            sed -i -E "s/(-version\", \")[^\"]+(\")/\1${version}.${code}\2/" tools/internal/buildflow/android_production.go
-            sed -i -E "s/(\"version\": \")[^\"]+(\", \"versionCode\": )[0-9]+/\1${version}\2${code}/" tools/internal/buildflow/android_production.go
+            sed_inplace "s/(-version\", \")[^\"]+(\")/\1${version}.${code}\2/" tools/internal/buildflow/android_production.go
+            sed_inplace "s/(\"version\": \")[^\"]+(\", \"versionCode\": )[0-9]+/\1${version}\2${code}/" tools/internal/buildflow/android_production.go
           fi
           grep -n 'var version' apps/android/app/main.go
       - name: Build Android APK
@@ -162,9 +202,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p release-assets/desktop release-assets/android
-          gh run download "$GITHUB_RUN_ID" -n desktop-windows-amd64 -D release-assets/desktop
-          gh run download "$GITHUB_RUN_ID" -n android-production -D release-assets/android
+          mkdir -p release-assets
+          for artifact in \
+            desktop-windows-amd64 \
+            desktop-windows-arm64 \
+            desktop-linux-amd64 \
+            desktop-linux-arm64 \
+            desktop-darwin-universal \
+            android-production; do
+            mkdir -p "release-assets/$artifact"
+            gh run download "$GITHUB_RUN_ID" -n "$artifact" -D "release-assets/$artifact"
+          done
       - name: Prepare assets and release notes
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -172,14 +220,16 @@ jobs:
           set -euo pipefail
           tag="${RELEASE_TAG}"
           mkdir -p release-assets/upload
-          cp release-assets/desktop/*.zip release-assets/upload/
-          cp release-assets/desktop/manifest.json release-assets/upload/desktop-manifest.json
-          cp release-assets/android/*.apk release-assets/upload/
-          cp release-assets/android/manifest.json release-assets/upload/android-manifest.json
-          if [ -f release-assets/android/FONT-LICENSE.txt ]; then
-            cp release-assets/android/FONT-LICENSE.txt release-assets/upload/android-FONT-LICENSE.txt
+          for dir in release-assets/desktop-*; do
+            name="$(basename "$dir")"
+            cp "$dir"/*.zip release-assets/upload/
+            cp "$dir/manifest.json" "release-assets/upload/${name}-manifest.json"
+          done
+          cp release-assets/android-production/*.apk release-assets/upload/
+          cp release-assets/android-production/manifest.json release-assets/upload/android-manifest.json
+          if [ -f release-assets/android-production/FONT-LICENSE.txt ]; then
+            cp release-assets/android-production/FONT-LICENSE.txt release-assets/upload/android-FONT-LICENSE.txt
           fi
-          desktop_zip="$(basename "$(ls release-assets/upload/*.zip | head -n1)")"
           android_apk="$(basename "$(ls release-assets/upload/*.apk | head -n1)")"
           prev="$(git tag --sort=version:refname | awk -v target="$tag" '$0==target { print previous; exit } { previous=$0 }')"
           body="$(git for-each-ref "refs/tags/$tag" --format='%(contents)')"
@@ -220,8 +270,10 @@ jobs:
             fi
             echo
             echo "## Release assets"
-            echo "- Windows amd64: \`${desktop_zip}\` (unsigned)"
-            echo "- Android ARM64: \`${android_apk}\` (debug-signed preview, not store-ready)"
+            for asset in release-assets/upload/*.zip; do
+              echo "- \`$(basename "$asset")\` (unsigned)"
+            done
+            echo "- \`${android_apk}\` (debug-signed preview, not store-ready)"
           } > release-notes.md
           cat release-notes.md
       - name: Create or update release

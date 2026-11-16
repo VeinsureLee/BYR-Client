@@ -167,7 +167,7 @@ func (e Engine) BuildDesktop(ctx context.Context, value string, installer bool) 
 	if !installer {
 		arguments = append(arguments, "-skip-installer")
 	}
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" || os.Getenv("BYR_SKIP_DMG") == "1" {
 		arguments = append(arguments, "-skip-dmg")
 	}
 	if err := e.Run(ctx, filepath.Join(e.Root, "apps", "desktop"), hostEnvironment(), "go", arguments...); err != nil {
