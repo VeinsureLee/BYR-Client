@@ -42,3 +42,17 @@ func TestApplicationStateSurvivesRestartWithoutCredentials(t *testing.T) {
 		t.Fatal("credentials written to ordinary state file")
 	}
 }
+
+func TestDirWritableRejectsFilePath(t *testing.T) {
+	dir := t.TempDir()
+	if !dirWritable(dir) {
+		t.Fatal("temporary directory should be writable")
+	}
+	file := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if dirWritable(file) {
+		t.Fatal("a regular file must not be treated as a writable directory")
+	}
+}

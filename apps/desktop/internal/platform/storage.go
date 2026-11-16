@@ -161,5 +161,50 @@ func DataDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(p, "BYR-Client"), nil
+	preferred := filepath.Join(p, "BYR-Client")
+	if dirWritable(preferred) {
+		return preferred, nil
+	}
+	// Some sandboxed or restricted launch contexts grant read-only access to
+	// %APPDATA%. Fall back to a writable directory next to the executable,
+	// then to the user temp directory, carrying the existing state over once.
+	if exe, err := os.Executable(); err == nil {
+		fallback := filepath.Join(filepath.Dir(exe), "data")
+		if dirWritable(fallback) {
+			migrateState(preferred, fallback)
+			return fallback, nil
+		}
+	}
+	fallback := filepath.Join(os.TempDir(), "BYR-Client")
+	if dirWritable(fallback) {
+		migrateState(preferred, fallback)
+		return fallback, nil
+	}
+	return preferred, nil
+}
+
+func dirWritable(dir string) bool {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return false
+	}
+	probe, err := os.CreateTemp(dir, ".write-test-*")
+	if err != nil {
+		return false
+	}
+	name := probe.Name()
+	closeErr := probe.Close()
+	_ = os.Remove(name)
+	return closeErr == nil
+}
+
+func migrateState(from, to string) {
+	for _, name := range []string{"state.json", "state.json.bak"} {
+		target := filepath.Join(to, name)
+		if _, err := os.Stat(target); err == nil {
+			continue
+		}
+		if b, err := os.ReadFile(filepath.Join(from, name)); err == nil && len(b) > 0 {
+			_ = os.WriteFile(target, b, 0600)
+		}
+	}
 }
