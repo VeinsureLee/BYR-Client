@@ -69,10 +69,10 @@ macOS 签名、公证和磁盘镜像有宿主/签名环境要求，Windows 本�
 | `build android` | Gio 生产预览构建 | `dist/android/` 的 ARM64 APK |
 
 生产构建读取 `apps/android/decision.json`，使用 `apps/android/app`、包名
-`cn.byr.bbs.byrclient`、Gio 与 ARM64；当前使用 debug 签名，清单标记
-`stage: android-preview`、`production: true`、`deviceTested: false`。提供发布签名密钥
-之前不得作为正式商店版本发布。构建需要 `ANDROID_HOME`、NDK 和 JDK；这些本机路径
-不写入源码或清单。
+`cn.byr.bbs.byrclient`、Gio 与 ARM64；当前版本 `0.4.1`（versionCode 12），使用
+debug 签名，清单标记 `stage: android-preview`、`production: true`、`deviceTested: false`。
+提供发布签名密钥之前不得作为正式商店版本发布。构建需要 `ANDROID_HOME`、NDK 和 JDK；
+这些本机路径不写入源码或清单。
 
 ## 生成内容分类
 
