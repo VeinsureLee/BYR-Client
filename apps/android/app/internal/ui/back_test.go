@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +78,25 @@ func TestLoadingIndicatorIsDelayed(t *testing.T) {
 	a.busy = false
 	if a.showLoading() {
 		t.Fatal("loading indicator remained after the request finished")
+	}
+}
+
+func TestSearchRootBackArmsExitInsteadOfLeaving(t *testing.T) {
+	a, err := New(noopInvalidator{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.started = true
+	a.ready = true
+	a.stack = []Route{{Page: PageSearch}}
+	if !a.Back() {
+		t.Fatal("search-root back was not consumed")
+	}
+	if got := a.current().Page; got != PageSearch {
+		t.Fatalf("first back left search: %v", got)
+	}
+	if !a.exitArmed || !strings.Contains(a.message, "再返回一次") {
+		t.Fatalf("exit confirmation was not armed: armed=%v message=%q", a.exitArmed, a.message)
 	}
 }
 

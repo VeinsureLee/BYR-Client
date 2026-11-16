@@ -141,6 +141,8 @@ type App struct {
 	renderPanic string
 	startAt     time.Time
 	busySince   time.Time
+	exitArmed   bool
+	exitAt      time.Time
 }
 
 type composeState struct {
@@ -251,9 +253,12 @@ func (a *App) handlesBack() bool {
 		return true
 	}
 	switch a.current().Page {
-	case PageLogin, PageSearch:
-		// The search tab is the launcher root; there is no in-app parent.
+	case PageLogin:
 		return false
+	case PageSearch:
+		// The search tab is the launcher root; back asks for confirmation
+		// instead of dropping the user out on a stray edge swipe.
+		return true
 	}
 	return true
 }
@@ -263,9 +268,30 @@ func (a *App) navigateBack() {
 		a.back()
 		return
 	}
-	if a.current().Page != PageSearch {
-		a.setTab(PageSearch)
+	if a.current().Page == PageSearch {
+		if a.exitArmed && time.Since(a.exitAt) < 2*time.Second {
+			a.saveComposeDraft()
+			a.close()
+			os.Exit(0)
+		}
+		a.exitArmed = true
+		a.exitAt = time.Now()
+		a.message = "再返回一次退出应用"
+		a.failed = false
+		a.window.Invalidate()
+		time.AfterFunc(2*time.Second, func() {
+			a.post(func() {
+				if a.exitArmed && time.Since(a.exitAt) >= 2*time.Second {
+					a.exitArmed = false
+					if a.message == "再返回一次退出应用" {
+						a.message = ""
+					}
+				}
+			})
+		})
+		return
 	}
+	a.setTab(PageSearch)
 }
 
 func (a *App) handleSystemBack(gtx layout.Context) {
@@ -446,6 +472,7 @@ func (a *App) setTab(page Page) {
 	if a.busy {
 		return
 	}
+	a.exitArmed = false
 	if a.current().Page == PageCompose {
 		if err := a.saveComposeDraft(); err != nil {
 			a.fail(err)
