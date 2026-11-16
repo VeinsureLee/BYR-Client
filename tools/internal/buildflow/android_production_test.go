@@ -91,3 +91,35 @@ func TestPendingDecisionStillRefusesProductionBuild(t *testing.T) {
 		t.Fatal("pending decision produced an Android build")
 	}
 }
+
+func TestAndroidReleaseVersionDefaults(t *testing.T) {
+	t.Setenv("BYR_ANDROID_VERSION", "")
+	t.Setenv("BYR_ANDROID_VERSION_CODE", "")
+	version, code, err := androidReleaseVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != defaultAndroidVersion || code != defaultAndroidVersionCode {
+		t.Fatalf("version = %q code = %d", version, code)
+	}
+}
+
+func TestAndroidReleaseVersionFromEnvironment(t *testing.T) {
+	t.Setenv("BYR_ANDROID_VERSION", "0.5.0")
+	t.Setenv("BYR_ANDROID_VERSION_CODE", "500")
+	version, code, err := androidReleaseVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != "0.5.0" || code != 500 {
+		t.Fatalf("version = %q code = %d", version, code)
+	}
+}
+
+func TestAndroidReleaseVersionRejectsInvalidCode(t *testing.T) {
+	t.Setenv("BYR_ANDROID_VERSION", "0.5.0")
+	t.Setenv("BYR_ANDROID_VERSION_CODE", "release")
+	if _, _, err := androidReleaseVersion(); err == nil {
+		t.Fatal("invalid version code was accepted")
+	}
+}

@@ -1,51 +1,244 @@
-name: Build desktop artifacts
+name: Release
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
-      target:
-        description: Desktop target (feature migration build)
-        type: choice
+      tag:
+        description: Existing tag to publish (for example v0.5.0)
         required: true
-        default: windows/amd64
-        options:
-          - windows/amd64
-          - linux/amd64
-          - darwin/arm64
+        type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
 jobs:
   desktop:
-    runs-on: ${{ fromJSON('{"windows/amd64":"windows-latest","linux/amd64":"ubuntu-latest","darwin/arm64":"macos-latest"}')[inputs.target] }}
+    name: Build Windows desktop
+    runs-on: windows-latest
     timeout-minutes: 30
     defaults:
       run:
         shell: bash
-    env:
-      DESKTOP_TARGET: ${{ inputs.target }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check out release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.work
           cache-dependency-path: apps/desktop/go.sum
-      - run: go run ./tools/dev check --scope desktop
-      - run: go run ./tools/dev build desktop --target "$DESKTOP_TARGET"
-      - name: Identify output directory
-        id: target
+      - name: Check desktop module
+        run: go run ./tools/dev check --scope desktop
+      - name: Stamp release version
         run: |
-          target_directory="${DESKTOP_TARGET/\//-}"
-          echo "directory=$target_directory" >> "$GITHUB_OUTPUT"
-      - name: Upload complete package and manifest
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must be vX.Y.Z (got ${RELEASE_TAG})"
+            exit 1
+          fi
+          sed -i -E "s/(\"version\"[[:space:]]*:[[:space:]]*\")[^\"]+(\")/\1${version}\2/" apps/desktop/mygo.json
+          grep -n '"version"' apps/desktop/mygo.json
+      - name: Build Windows package
+        run: go run ./tools/dev build desktop --target windows/amd64
+      - name: Upload desktop package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: desktop-${{ steps.target.outputs.directory }}
+          name: desktop-windows-amd64
           path: |
-            dist/desktop/${{ steps.target.outputs.directory }}/*.zip
-            dist/desktop/${{ steps.target.outputs.directory }}/manifest.json
+            dist/desktop/windows-amd64/*.zip
+            dist/desktop/windows-amd64/manifest.json
           if-no-files-found: error
           compression-level: 0
+
+  android:
+    name: Build Android preview APK
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.work
+          cache-dependency-path: apps/android/app/go.sum
+      - name: Prepare Android toolchain
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:ANDROID_HOME) { throw 'Hosted Android SDK not found' }
+          if (-not $env:JAVA_HOME_21_X64) { throw 'Hosted JDK 21 not found' }
+          $env:JAVA_HOME = $env:JAVA_HOME_21_X64
+          "JAVA_HOME=$env:JAVA_HOME" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $sdkManager = Join-Path $env:ANDROID_HOME 'cmdline-tools/latest/bin/sdkmanager.bat'
+          & $sdkManager '--install' 'platforms;android-34' 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          if ($LASTEXITCODE -ne 0) { throw 'Android SDK component installation failed' }
+          $ndkRoot = Join-Path $env:ANDROID_HOME 'ndk/28.2.13676358'
+          "ANDROID_NDK_ROOT=$ndkRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Check Android module
+        run: go run ./tools/dev check --scope android
+      - name: Stamp release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::Release tags must be vX.Y.Z (got ${RELEASE_TAG})"
+            exit 1
+          fi
+          major=$((10#${BASH_REMATCH[1]}))
+          minor=$((10#${BASH_REMATCH[2]}))
+          patch=$((10#${BASH_REMATCH[3]}))
+          code=$((major * 10000 + minor * 100 + patch))
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          sed -i -E "s/var version = \"[^\"]+\"/var version = \"${version}\"/" apps/android/app/main.go
+          if ! grep -q 'BYR_ANDROID_VERSION' tools/internal/buildflow/android_production.go; then
+            # Tags created before the buildflow read environment overrides still
+            # carry the version as constants; stamp those constants for CI.
+            sed -i -E "s/(-version\", \")[^\"]+(\")/\1${version}.${code}\2/" tools/internal/buildflow/android_production.go
+            sed -i -E "s/(\"version\": \")[^\"]+(\", \"versionCode\": )[0-9]+/\1${version}\2${code}/" tools/internal/buildflow/android_production.go
+          fi
+          grep -n 'var version' apps/android/app/main.go
+      - name: Build Android APK
+        env:
+          BYR_ANDROID_VERSION: ${{ steps.version.outputs.version }}
+          BYR_ANDROID_VERSION_CODE: ${{ steps.version.outputs.code }}
+        run: go run ./tools/dev build android
+      - name: Verify APK signature
+        run: |
+          $signer = Join-Path $env:ANDROID_HOME 'build-tools/36.0.0/apksigner.bat'
+          & $signer verify 'dist/android/BYR-Client-android-arm64.apk'
+          if ($LASTEXITCODE -ne 0) { throw 'Android APK signature verification failed' }
+      - name: Upload Android preview
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: android-production
+          path: dist/android/
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Publish GitHub release
+    needs: [desktop, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out release tag and tags
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Download build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets/desktop release-assets/android
+          gh run download "$GITHUB_RUN_ID" -n desktop-windows-amd64 -D release-assets/desktop
+          gh run download "$GITHUB_RUN_ID" -n android-production -D release-assets/android
+      - name: Prepare assets and release notes
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+          mkdir -p release-assets/upload
+          cp release-assets/desktop/*.zip release-assets/upload/
+          cp release-assets/desktop/manifest.json release-assets/upload/desktop-manifest.json
+          cp release-assets/android/*.apk release-assets/upload/
+          cp release-assets/android/manifest.json release-assets/upload/android-manifest.json
+          if [ -f release-assets/android/FONT-LICENSE.txt ]; then
+            cp release-assets/android/FONT-LICENSE.txt release-assets/upload/android-FONT-LICENSE.txt
+          fi
+          desktop_zip="$(basename "$(ls release-assets/upload/*.zip | head -n1)")"
+          android_apk="$(basename "$(ls release-assets/upload/*.apk | head -n1)")"
+          prev="$(git tag --sort=version:refname | awk -v target="$tag" '$0==target { print previous; exit } { previous=$0 }')"
+          body="$(git for-each-ref "refs/tags/$tag" --format='%(contents)')"
+          if [ -z "$body" ]; then
+            body="$(git log -1 --format='%B' "$tag")"
+          fi
+          body="$(printf '%s\n' "$body" | awk -v t="$tag" 'NR==1 && $0==t {next} {print}')"
+          {
+            echo "# $tag"
+            echo
+            printf '%s\n' "$body"
+            echo
+            if [ "$tag" = "v0.5.0" ]; then
+              echo "## Cumulative changes since v0.1.1"
+              range="v0.1.1..$tag"
+              compare_base="v0.1.1"
+            elif [ -n "$prev" ]; then
+              echo "## Changes since $prev"
+              range="$prev..$tag"
+              compare_base="$prev"
+            else
+              echo "## Changes"
+              range="$tag"
+              compare_base=""
+            fi
+            echo
+            changes="$(git log --no-merges --reverse --pretty='- %s (%h)' "$range")"
+            if [ -n "$changes" ]; then
+              printf '%s\n' "$changes"
+            else
+              echo "- This tag marks the merged milestone; no additional non-merge commits."
+            fi
+            echo
+            if [ -n "$compare_base" ]; then
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${compare_base}...${tag}"
+            else
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/commits/${tag}"
+            fi
+            echo
+            echo "## Release assets"
+            echo "- Windows amd64: \`${desktop_zip}\` (unsigned)"
+            echo "- Android ARM64: \`${android_apk}\` (debug-signed preview, not store-ready)"
+          } > release-notes.md
+          cat release-notes.md
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+          shopt -s nullglob
+          assets=(release-assets/upload/*)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::error::No release assets were prepared"
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+            gh release edit "$tag" --title "$tag" --notes-file release-notes.md
+          else
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file release-notes.md "${assets[@]}"
+          fi

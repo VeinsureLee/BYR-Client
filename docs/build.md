@@ -102,11 +102,17 @@ dist/
 上述目录不提交 Git。源码、模块锁定文件、选型状态和文档提交 Git；账号、令牌、SDK
 本机路径、签名密钥不提交。原生工具的缓存由对应工具管理，不移动进共享核心。
 
-## CI
+## CI 与发布
 
 - `ci.yml`：独立核心/工具检查，桌面、Android 生产模块及 Gio 探针的无窗口测试。
-- `release.yml`：手动选择桌面目标，在匹配系统构建并上传 ZIP 和清单。
-- `android-evaluation.yml`：手动构建 Gio ARM64 验证 APK，并上传评估产物与许可证；生产 Android 预览目前由本地构建命令生成。
+- `release.yml`：推送 `v*` tag 时自动运行，也可用 `workflow_dispatch` 指定已有 tag。先执行桌面和 Android
+  检查，再构建 Windows 桌面 ZIP 与 Android ARM64 预览 APK，最后创建或更新 GitHub Release。
+- `android-evaluation.yml`：手动构建 Gio ARM64 验证 APK，并上传评估产物与许可证。
 
-这些工作流不会自动发布生产 GitHub Release，也不改变产品页面或 Android 选型。
-本地构建已验证；工作流文件的语法检查不等于远端 GitHub Actions 已执行成功。
+发布版本从 tag 注入：桌面写入 `apps/desktop/mygo.json`，Android 写入 `app.main.version`、
+构建清单和 `versionCode`（`vX.Y.Z` 映射为 `X*10000+Y*100+Z`）。Release 正文由
+annotated tag 信息、上一 tag 到当前 tag 的提交列表和产物说明组成；因此推送
+`vX.Y.Z` tag 后即可在 GitHub Releases 看到该版本包含的功能与修复。
+
+桌面 ZIP 未签名，Android APK 仍使用 debug 签名并标记为预览版，不构成商店发布。
+工作流文件的语法检查不等于远端 GitHub Actions 已执行成功；发布后仍需检查 Actions 结果。

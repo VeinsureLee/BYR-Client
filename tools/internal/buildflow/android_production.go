@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -43,6 +45,10 @@ func (e Engine) BuildAndroidProduction(ctx context.Context) (string, error) {
 	defer removeGenerated(dist, prepared)
 	const artifact = "BYR-Client-android-arm64.apk"
 	path := filepath.Join(prepared, artifact)
+	version, versionCode, err := androidReleaseVersion()
+	if err != nil {
+		return "", err
+	}
 	environment := hostEnvironment()
 	if sdk := os.Getenv("ANDROID_HOME"); sdk == "" {
 		if sdk = os.Getenv("ANDROID_SDK_ROOT"); sdk != "" {
@@ -53,10 +59,11 @@ func (e Engine) BuildAndroidProduction(ctx context.Context) (string, error) {
 	// Targeting Android 15+ can opt the app into predictive back, where the
 	// system finishes the Activity without calling Gio's handler. Keep the
 	// legacy behavior until Gio ships OnBackInvokedCallback support.
+	gogioVersion := fmt.Sprintf("%s.%d", version, versionCode)
 	if err := e.Run(ctx, module, environment, "go", "tool", "gogio",
 		"-target", "android", "-arch", "arm64", "-minsdk", "24", "-targetsdk", "34",
 		"-appid", "cn.byr.bbs.byrclient", "-name", "BYR Client",
-		"-version", "0.4.3.14", "-icon", "resources/icon.png",
+		"-version", gogioVersion, "-icon", "resources/icon.png",
 		"-o", path, "."); err != nil {
 		return "", err
 	}
@@ -100,7 +107,7 @@ func (e Engine) BuildAndroidProduction(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if err := writeJSON(filepath.Join(prepared, "manifest.json"), map[string]any{
-		"name": "BYR Client", "version": "0.4.3", "versionCode": 14,
+		"name": "BYR Client", "version": version, "versionCode": versionCode,
 		"target": "android/arm64", "framework": "gio", "stage": "android-preview",
 		"production": true, "deviceTested": false, "signing": "debug",
 		"minSdk": 24, "targetSdk": 34, "applicationId": "cn.byr.bbs.byrclient",
@@ -114,4 +121,27 @@ func (e Engine) BuildAndroidProduction(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return destination, nil
+}
+
+const (
+	defaultAndroidVersion     = "0.4.3"
+	defaultAndroidVersionCode = 14
+)
+
+// androidReleaseVersion lets CI stamp the release tag into the APK without
+// editing source files. Local builds keep the checked-in defaults.
+func androidReleaseVersion() (string, int, error) {
+	version := strings.TrimSpace(os.Getenv("BYR_ANDROID_VERSION"))
+	if version == "" {
+		version = defaultAndroidVersion
+	}
+	versionCode := defaultAndroidVersionCode
+	if raw := strings.TrimSpace(os.Getenv("BYR_ANDROID_VERSION_CODE")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			return "", 0, fmt.Errorf("invalid BYR_ANDROID_VERSION_CODE %q", raw)
+		}
+		versionCode = parsed
+	}
+	return version, versionCode, nil
 }
