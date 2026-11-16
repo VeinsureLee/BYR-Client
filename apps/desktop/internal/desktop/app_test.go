@@ -126,6 +126,8 @@ func newHarness(t *testing.T) *harness {
 			body = `{"article":[{"id":42,"board_name":"Go","title":"测试主题","user":{"id":"alice","level":"用户"}}]}`
 		case "/open/search/board.json":
 			body = `{"section":[],"board":[{"name":"Go","description":"Go 讨论"}]}`
+		case "/open/favorpost.json":
+			body = `{"article":[{"id":42,"group_id":42,"board_name":"Go","title":"时间线旧帖","user":{"id":"alice","level":"用户"},"post_time":100,"reply_count":2},{"id":44,"group_id":44,"board_name":"Go","title":"时间线新帖","user":{"id":"bob","level":"用户"},"post_time":200,"reply_count":1}],"pagination":{"page_all_count":1,"page_current_count":1,"item_all_count":2}}`
 		case "/open/favorite/0.json":
 			body = `{"section":[],"board":[{"name":"Go","description":"Go 讨论"}]}`
 		case "/open/collection.json":
@@ -410,7 +412,7 @@ func TestHomeShowsSubsectionCardsInBoardPane(t *testing.T) {
 	}
 	h.click("进入子分区 院系")
 	h.has("计算机学院 · CS")
-	h.has("校园 > 院系 · 共 1 个版面")
+	h.has("校园 > 院系 · 1 个版面")
 	if h.app.section.Name != "1" || len(h.app.boards) != 1 {
 		t.Fatalf("subsection not entered: %+v", h.app.section)
 	}
@@ -456,13 +458,29 @@ func TestThreadReactionsCollectionAndQuoteMatchReference(t *testing.T) {
 	}
 }
 
+func TestTimelineIsSeparateFromFavorites(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.goTo(Route{Page: "timeline"})
+	h.has("时间线新帖")
+	h.has("时间线旧帖")
+	if len(h.app.articles) != 2 || h.app.articles[0].Title != "时间线新帖" {
+		t.Fatalf("timeline not sorted newest first: %+v", h.app.articles)
+	}
+	h.goTo(Route{Page: "favorites"})
+	if h.view.HasText("关注主题") {
+		t.Fatal("timeline is still shown inside favorites")
+	}
+	h.has("文章收藏")
+}
+
 func TestSearchFavoritesAndAllMigratedScreens(t *testing.T) {
 	h := newHarness(t)
 	h.login()
 	h.goTo(Route{Page: "search"})
-	h.typeIn("标题关键词", "测试")
-	h.click("搜索文章")
-	h.has("测试主题")
+	h.has("全站搜索")
+	h.has("AI 搜索")
+	h.has("敬请期待")
 	h.goTo(Route{Page: "favorites", Sub: "collection"})
 	h.has("收藏主题")
 	h.goTo(Route{Page: "contacts"})

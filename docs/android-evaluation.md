@@ -1,6 +1,16 @@
-# Gio 技术验证
+# Android 客户端与 Gio 验证
 
-## 已提供的探针
+## 生产预览（apps/android/app/）
+
+Gio v0.10.3 生产预览模块已建立，复用共享核心，当前覆盖登录、分区/版面/主题阅读、
+时间线、收藏、发帖/回复/编辑（基础）、点赞踩/收藏、个人资料和搜索占位。产物为
+`dist/android/BYR-Client-android-arm64.apk`，包名 `cn.byr.bbs.byrclient`，debug 签名，
+min SDK 24 / target SDK 36。
+
+尚未覆盖：站内信/私信、投票、竞猜、网络图片与附件、文件选择、分享 Intent、深色主题、
+真机输入法与系统返回验收。构建清单明确标记 `deviceTested: false`，不能视为实机通过。
+
+## 技术探针
 
 位置：`apps/android/probes/gio/`，Gio 与 gogio 均固定为 v0.10.3。
 模块直接引用仓库的 `core/`，没有复制一套 Go 业务代码，也不引用 MyGo。

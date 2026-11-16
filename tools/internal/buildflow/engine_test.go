@@ -71,7 +71,7 @@ func TestModuleChecksDoNotUseWorkspaceDependencyResolution(t *testing.T) {
 	if err := engine.Check(context.Background(), "all"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"core:test", "core:vet", "tools:test", "tools:vet", "apps/desktop:test", "apps/desktop:vet"}
+	want := []string{"core:test", "core:vet", "tools:test", "tools:vet", "apps/desktop:test", "apps/desktop:vet", "apps/android/app:test", "apps/android/app:vet"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("commands: %v", calls)
 	}

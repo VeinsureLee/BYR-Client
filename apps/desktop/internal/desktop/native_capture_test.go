@@ -35,6 +35,8 @@ func captureNativeWindows(dir string) error {
 			body = `{"section":[],"board":[{"name":"Go","description":"Go 讨论"}]}`
 		case "/open/widget/topten.json":
 			body = `{"article":[{"id":42,"board_name":"Go","title":"原生窗口测试主题","user":{"id":"fixture","level":"用户"}}]}`
+		case "/open/favorpost.json":
+			body = `{"article":[{"id":42,"group_id":42,"board_name":"Go","title":"原生时间线主题","user":{"id":"fixture","level":"用户"},"post_time":100}],"pagination":{"page_all_count":1,"page_current_count":1}}`
 		case "/open/user/getinfo.json":
 			body = `{"id":"native-test","user_name":"原生窗口测试","level":"用户","post_count":12}`
 		case "/open/mail/inbox.json", "/open/mail/outbox.json":
@@ -44,7 +46,7 @@ func captureNativeWindows(dir string) error {
 	}))
 	defer server.Close()
 	config := bootstrap.Config{BaseURL: server.URL, Credentials: &testCredentials{session: application.Credential{Username: "native-test", Token: "local-fixture"}}}
-	pages := []string{"home", "top", "favorites", "compose", "contacts", "self", "settings"}
+	pages := []string{"home", "top", "timeline", "favorites", "compose", "search", "contacts", "self", "settings"}
 	if os.Getenv("BYR_NATIVE_LIVE_READS") == "1" {
 		config = bootstrap.Config{Credentials: savedReadOnlyCredential{HideName: true}, HTTPClient: &http.Client{Timeout: 10 * time.Second, Transport: diagnosticTransport{}}}
 		pages = []string{"home", "top"}

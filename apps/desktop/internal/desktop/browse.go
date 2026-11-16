@@ -33,7 +33,10 @@ func (a *App) homeView(c *ui.Context) {
 					if path := a.sectionPath(); path != "" {
 						detail = append(detail, path)
 					}
-					detail = append(detail, fmt.Sprintf("共 %d 个版面", len(a.boards)))
+					detail = append(detail, fmt.Sprintf("%d 个版面", len(a.boards)))
+					if len(a.section.Subsections) > 0 {
+						detail = append(detail, fmt.Sprintf("%d 个子分区", len(a.section.Subsections)))
+					}
 					ui.Text(c, strings.Join(detail, " · ")).FontSize(12).TextColor(c.Theme().TextMuted)
 				})
 				if a.section.Parent != "" {
@@ -157,6 +160,7 @@ func (a *App) loadSection(name string) {
 		if err != nil {
 			return nil, err
 		}
+		a.resolveSubsections(ctx, &v)
 		return func() { a.section = v; a.boards = v.Boards }, nil
 	})
 }
@@ -326,6 +330,23 @@ func (a *App) articleList(c *ui.Context, articles []forum.Article) {
 		})
 	}).Grow(1).FillWidth().Gap(8)
 }
+func (a *App) timelineView(c *ui.Context) {
+	ui.Row(c).FillWidth().Wrap().Gap(10).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, "全部帖子").FontSize(16).Bold()
+			ui.Text(c, "按发帖时间倒序排列").FontSize(12).TextColor(c.Theme().TextMuted)
+		})
+		if a.pagination.TotalItems > 0 {
+			badge(c, fmt.Sprintf("%d 条", a.pagination.TotalItems), c.Theme().Accent)
+		}
+	})
+	if len(a.articles) == 0 {
+		emptyState(c, "clock", "时间线为空", "论坛没有返回可显示的帖子，稍后刷新试试。")
+		return
+	}
+	a.articleList(c, a.articles)
+	a.pager(c, a.pagination, a.pageNumber)
+}
 func (a *App) loadFavorites() {
 	r := a.route
 	a.loadData("加载收藏", func(ctx context.Context) (func(), error) {
@@ -333,9 +354,6 @@ func (a *App) loadFavorites() {
 		case "collection":
 			v, err := a.Core.Forum.Collection(ctx, "", forum.Page{Number: r.Number})
 			return func() { a.collection = v }, err
-		case "posts":
-			v, err := a.Core.Forum.FavorPosts(ctx, forum.Page{Number: r.Number})
-			return func() { a.articles = v.Articles; a.pagination = v.Pagination }, err
 		default:
 			v, err := a.Core.Forum.Favorites(ctx, "0")
 			return func() { a.favorites = v }, err
@@ -347,7 +365,6 @@ func (a *App) favoritesView(c *ui.Context) {
 		for _, v := range []struct{ key, label, icon string }{
 			{"", "版面", "board"},
 			{"collection", "文章收藏", "star"},
-			{"posts", "关注主题", "message"},
 		} {
 			tone := quiet
 			if a.route.Sub == v.key {
@@ -394,9 +411,6 @@ func (a *App) favoritesView(c *ui.Context) {
 			})
 		})
 		a.pager(c, a.collection.Pagination, a.pageNumber)
-	case "posts":
-		a.articleList(c, a.articles)
-		a.pager(c, a.pagination, a.pageNumber)
 	default:
 		ui.Scroll(c).FillWidth().Grow(1).Children(func() {
 			ui.Column(c).FillWidth().Gap(6).Children(func() {
@@ -428,48 +442,32 @@ func (a *App) favoritesView(c *ui.Context) {
 	}
 }
 func (a *App) searchView(c *ui.Context) {
-	ui.Column(c).FillWidth().Padding(14).Gap(10).
-		Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
-		ui.Text(c, "搜索文章与版面").FontSize(16).Bold()
-		ui.Row(c).FillWidth().Gap(8).Children(func() {
-			ui.TextInput(c, &a.search.Board).Label("搜索版面").Placeholder("版面名").Width(180)
-			ui.TextInput(c, &a.search.Title).Label("标题关键词").Placeholder("标题关键词").Grow(1)
-			ui.TextInput(c, &a.search.Author).Label("作者").Placeholder("作者").Width(140)
+	ui.Column(c).FillWidth().Gap(12).Children(func() {
+		ui.Column(c).FillWidth().Padding(20).Gap(6).
+			Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
+			ui.Text(c, "搜索论坛").FontSize(22).Bold()
+			ui.Text(c, "搜索能力正在开发中。全站搜索与 AI 搜索都会在这里提供，当前暂不可用。").
+				FontSize(13).TextColor(c.Theme().TextMuted)
 		})
-		ui.Row(c).Gap(8).Children(func() {
-			a.action(c, "搜索文章", "search", filled, func() { a.route.Sub = "article"; a.route.Number = 1; a.doSearch() })
-			a.action(c, "搜索版面", "board", quiet, func() { a.route.Sub = "board"; a.route.Number = 1; a.doSearch() })
-		})
+		a.searchComingSoon(c, "全站搜索", "按标题、作者、版面检索全站主题。", "search")
+		a.searchComingSoon(c, "AI 搜索", "用自然语言描述你想找的内容，由 AI 帮你定位帖子。", "hot")
 	})
-	if a.route.Sub == "board" {
-		ui.Scroll(c).FillWidth().Grow(1).Children(func() {
-			ui.Column(c).FillWidth().Gap(6).Children(func() {
-				if len(a.boards) == 0 {
-					emptyState(c, "board", "没有找到版面", "试试更短的关键词。")
-					return
-				}
-				for _, b := range a.boards {
-					a.boardRow(c, b)
-				}
-			})
-		})
-	} else {
-		a.articleList(c, a.articles)
-		a.pager(c, a.pagination, func(n int) { a.route.Number = n; a.doSearch() })
-	}
 }
-func (a *App) doSearch() {
-	s := a.search
-	s.Page.Number = a.route.Number
-	if a.route.Sub == "board" {
-		a.loadData("搜索版面", func(ctx context.Context) (func(), error) {
-			v, err := a.Core.Forum.SearchBoards(ctx, s.Board)
-			return func() { a.boards = v.Boards }, err
+
+func (a *App) searchComingSoon(c *ui.Context, title, detail, icon string) {
+	ui.Row(c).FillWidth().Padding(18).Gap(14).AlignItems(ui.Center).
+		Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
+		ui.Column(c).Size(44, 44).Center().Shrink(0).Radius(12).
+			Background(accentSurface(c)).Children(func() {
+			ui.Icon(c, icons[icon]).Size(22, 22).TextColor(c.Theme().Accent)
 		})
-	} else {
-		a.loadData("搜索文章", func(ctx context.Context) (func(), error) {
-			v, err := a.Core.Forum.SearchArticles(ctx, s)
-			return func() { a.articles = v.Articles; a.pagination = v.Pagination }, err
+		ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+			ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, title).FontSize(16).Bold()
+				badge(c, "敬请期待", c.Theme().Warning)
+			})
+			ui.Text(c, detail).FontSize(12).TextColor(c.Theme().TextMuted)
 		})
-	}
+		control(c, "敬请期待", "clock", quiet).Disabled(true)
+	})
 }

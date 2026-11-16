@@ -17,7 +17,7 @@ import (
 
 const usage = `BYR Client development workspace
 
-  go run ./tools/dev check [--scope all|core|desktop|tools|gio-probe]
+  go run ./tools/dev check [--scope all|core|desktop|android|tools|gio-probe]
   go run ./tools/dev check android-core
   go run ./tools/dev run desktop
   go run ./tools/dev build desktop [--target windows/amd64] [--installer]
@@ -26,9 +26,9 @@ const usage = `BYR Client development workspace
   go run ./tools/dev doctor
 
 Desktop output: dist/desktop/<os>-<arch>/{app/,*.zip,manifest.json}
-Android UI selection is pending: build android fails without creating an APK.
+Android builds the selected Gio production module under dist/android/.
 check android-core cross-compiles shared library packages; it is not an APK build.
-android-probe writes an evaluation APK under dist/evaluation/android/gio/.
+android-probe writes a separate evaluation APK under dist/evaluation/android/gio/.
 `
 
 func main() {
@@ -63,7 +63,7 @@ func run(ctx context.Context, arguments []string) error {
 			return err
 		}
 		flags := flag.NewFlagSet("check", flag.ContinueOnError)
-		scope := flags.String("scope", "all", "all, core, desktop, tools or gio-probe")
+		scope := flags.String("scope", "all", "all, core, desktop, android, tools or gio-probe")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -82,9 +82,13 @@ func run(ctx context.Context, arguments []string) error {
 		}
 		if arguments[1] == "android" {
 			if len(arguments) != 2 {
-				return errors.New("Android framework selection is pending; no build flags are available")
+				return errors.New("unexpected android build arguments")
 			}
-			return engine.BuildAndroid()
+			path, err := engine.BuildAndroidProduction(ctx)
+			if err == nil {
+				fmt.Printf("Android application packaged (debug-signed preview): %s\n", path)
+			}
+			return err
 		}
 		if arguments[1] == "android-probe" {
 			flags := flag.NewFlagSet("build android-probe", flag.ContinueOnError)

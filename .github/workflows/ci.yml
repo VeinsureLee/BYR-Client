@@ -41,7 +41,7 @@ jobs:
         run: go build ./...
 
   ui-shells:
-    name: MyGo shell and isolated Gio probe
+    name: MyGo shell and Android modules
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -53,6 +53,8 @@ jobs:
           go-version-file: go.work
           cache-dependency-path: |
             apps/desktop/go.sum
+            apps/android/app/go.sum
             apps/android/probes/gio/go.sum
       - run: go run ./tools/dev check --scope desktop
+      - run: go run ./tools/dev check --scope android
       - run: go run ./tools/dev check --scope gio-probe

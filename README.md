@@ -6,9 +6,9 @@
 
 | 部分 | 当前状态 |
 | --- | --- |
-| PC | MyGo v0.9.1；登录、论坛阅读、发帖编辑、附件、收藏、搜索、消息和个人设置 |
+| PC | MyGo v0.9.1；登录、论坛阅读、发帖编辑、附件、收藏、时间线、消息和个人设置；搜索入口为「敬请期待」占位 |
 | 共享核心 | 纯 Go 标准库；完整迁移的论坛接口、会话、发帖规则、草稿、历史、私信聚合、UBB 与共享资源 |
-| Android | Gio v0.10.3 优先验证，正式框架待定；共享核心可交叉编译，验证 APK 仍是技术探针 |
+| Android | Gio v0.10.3 生产预览；登录、分区/版面/主题阅读、时间线、收藏、发帖回复、点赞踩/收藏与搜索占位；ARM64 debug 预览，待真机验收 |
 | 验证范围 | 本地合约与交互、Windows 原生菜单点击、真实只读接口、各模块 test/vet；线上写入与 Android 实机尚待验收 |
 
 ## 目录
@@ -26,16 +26,17 @@ apps/
     internal/desktop/         # MyGo 页面、导航、异步任务和 UI 状态
     internal/platform/        # 系统凭据库、文件、对话框、剪贴板与浏览器
   android/
-    decision.json             # 正式选型待定
-    probes/gio/               # 独立技术验证模块
+    decision.json             # 已选择 Gio 生产模块
+    app/                      # Gio 生产 Android 客户端
+    probes/gio/               # 独立技术验证模块（保留）
 tools/                        # 模块检查、构建、完整归档与校验
 docs/                         # 架构、功能对照、选型及构建说明
 build/                        # 中间输出与本地渲染截图，不提交
 dist/                         # 按平台分类的可执行软件与评估 APK，不提交
 ```
 
-各模块独立维护依赖。根工作区聚合核心、桌面和工具；Gio 使用 `GOWORK=off`，
-通过相对 `replace` 引用同一份核心源码，不合并两种 UI 框架的依赖。
+各模块独立维护依赖。根工作区聚合核心、桌面和工具；Android 生产模块与 Gio 探针
+都使用 `GOWORK=off`，通过相对 `replace` 引用同一份核心源码，不把 Gio 依赖混入桌面工作区。
 
 ## 开发
 
@@ -43,6 +44,7 @@ dist/                         # 按平台分类的可执行软件与评估 APK�
 
 ```sh
 go run ./tools/dev check
+go run ./tools/dev check --scope android
 go run ./tools/dev check --scope gio-probe
 go run ./tools/dev check android-core
 go run ./tools/dev run desktop
@@ -63,6 +65,7 @@ go run ./tools/dev build desktop --target windows/amd64
 go run ./tools/dev build desktop --target linux/amd64
 go run ./tools/dev build desktop --target darwin/arm64
 go run ./tools/dev build android-probe --framework gio
+go run ./tools/dev build android
 ```
 
 ```text
@@ -71,6 +74,10 @@ dist/desktop/windows-amd64/
   app/FONT-LICENSE.txt
   BYR-Client-windows-amd64.zip
   manifest.json
+dist/android/
+  BYR-Client-android-arm64.apk
+  FONT-LICENSE.txt
+  manifest.json
 dist/evaluation/android/gio/
   BYR-Gio-Probe.apk
   FONT-LICENSE.txt
@@ -78,13 +85,14 @@ dist/evaluation/android/gio/
 ```
 
 桌面 ZIP 包含完整运行目录和字体许可证。跨平台编译不代替目标系统运行验收。
-Gio APK 使用独立包名与 debug 签名，仍不包含论坛页面；`build android` 会保持待选型保护，
-不会将技术探针作为正式 Android 客户端发布。
+Android 生产 APK 使用包名 `cn.byr.bbs.byrclient`、ARM64、debug 签名，构建前需要
+`ANDROID_HOME`（以及可用的 NDK/JDK）；在提供发布签名密钥前不会作为正式商店版本。
+技术探针仍使用独立包名 `cn.byr.bbs.byr_client.gioprobe`，保留作框架对照。
 
 - [迁移功能对照与验收边界](docs/features.md)
 - [架构与设计模式](docs/architecture.md)
 - [Android：Fyne / Gio 的选择](docs/android-options.md)
-- [Gio 验证范围](docs/android-evaluation.md)
+- [Android 客户端与 Gio 验证](docs/android-evaluation.md)
 - [构建流程](docs/build.md)
 
 测试使用本地模拟服务，不需要真实论坛账号，不会向线上发布帖子或发送站内信。

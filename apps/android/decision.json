@@ -1,7 +1,9 @@
 {
-  "status": "pending",
-  "selectedFramework": null,
+  "status": "selected",
+  "selectedFramework": "gio",
   "candidates": ["fyne", "gio"],
   "evaluationPriority": ["gio", "fyne"],
-  "productionModule": null
+  "productionModule": "apps/android/app",
+  "applicationId": "cn.byr.bbs.byrclient",
+  "signing": "debug"
 }

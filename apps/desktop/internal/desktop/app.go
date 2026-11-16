@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -53,7 +54,6 @@ type App struct {
 	favorites               forum.Favorite
 	collection              forum.Collection
 	pagination              forum.Pagination
-	search                  forum.Search
 	boardFilter             string
 	advancedSearch          bool
 	pageJump                string
@@ -327,6 +327,8 @@ func (a *App) title() string {
 			return "版面推荐"
 		}
 		return "今日十大"
+	case "timeline":
+		return "时间线"
 	case "favorites":
 		return "我的收藏"
 	case "compose":
@@ -372,6 +374,8 @@ func (a *App) page(c *ui.Context) {
 		a.threadView(c)
 	case "top":
 		a.articleList(c, a.articles)
+	case "timeline":
+		a.timelineView(c)
 	case "favorites":
 		a.favoritesView(c)
 	case "compose":
@@ -404,6 +408,23 @@ func (a *App) page(c *ui.Context) {
 		a.betView(c)
 	}
 }
+
+// resolveSubsections fills human-readable names for subsection references
+// (the API returns ["1","2"] without descriptions on the parent response).
+// A failed lookup leaves the reference as-is rather than breaking the page.
+func (a *App) resolveSubsections(ctx context.Context, section *forum.Section) {
+	for i := range section.Subsections {
+		sub := &section.Subsections[i]
+		if sub.Description != "" || sub.Name == "" {
+			continue
+		}
+		full, err := a.Core.Forum.Section(ctx, string(sub.Name))
+		if err == nil {
+			*sub = full
+		}
+	}
+}
+
 func (a *App) load() {
 	r := a.route
 	p := forum.Page{Number: r.Number}
@@ -428,6 +449,7 @@ func (a *App) load() {
 				if err != nil {
 					return nil, err
 				}
+				a.resolveSubsections(ctx, &section)
 			}
 			return func() { a.sections = v.Sections; a.section = section; a.boards = section.Boards }, nil
 		})
@@ -448,13 +470,18 @@ func (a *App) load() {
 			v, err := f.TopTen(ctx)
 			return func() { a.articles = v.Articles }, err
 		})
+	case "timeline":
+		a.loadData("加载时间线", func(ctx context.Context) (func(), error) {
+			v, err := f.FavorPosts(ctx, p)
+			sort.SliceStable(v.Articles, func(i, j int) bool {
+				return articleTime(v.Articles[i]) > articleTime(v.Articles[j])
+			})
+			return func() { a.articles = v.Articles; a.pagination = v.Pagination }, err
+		})
 	case "favorites":
 		a.loadFavorites()
 	case "compose":
 		a.openEditor()
-	case "search":
-		a.articles = nil
-		a.boards = nil
 	case "self", "user":
 		a.user = forum.User{}
 		a.loadData("加载用户", func(ctx context.Context) (func(), error) {
@@ -595,6 +622,11 @@ func formatTime(s forum.Scalar) string {
 		return ""
 	}
 	return time.Unix(v, 0).Format("2006-01-02 15:04")
+}
+
+func articleTime(v forum.Article) int64 {
+	n, _ := strconv.ParseInt(string(v.PostTime), 10, 64)
+	return n
 }
 func empty(c *ui.Context, n int) {
 	if n == 0 {

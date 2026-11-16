@@ -8,8 +8,9 @@ import (
 )
 
 var navigation = []struct{ page, label, icon string }{
-	{"home", "首页", "home"}, {"top", "十大", "hot"}, {"favorites", "收藏", "star"},
-	{"compose", "发帖", "plus"}, {"search", "搜索", "search"}, {"contacts", "消息", "message"}, {"self", "我", "user"},
+	{"home", "首页", "home"}, {"top", "十大", "hot"}, {"timeline", "时间线", "clock"},
+	{"favorites", "收藏", "star"}, {"compose", "发帖", "plus"}, {"search", "搜索", "search"},
+	{"contacts", "消息", "message"}, {"self", "我", "user"},
 }
 
 func navigationGroup(page string) string {
@@ -79,29 +80,32 @@ func (a *App) navigationView(c *ui.Context) {
 		if a.route.Page == "thread" && len(a.back) > 0 {
 			active = navigationGroup(a.back[0].Page)
 		}
-		for _, item := range navigation {
-			e := ui.ButtonBase(c.Key("nav-"+item.page)).Label(item.label).FillWidth().Padding(8, 0).
-				Gap(4).AlignItems(ui.Center).Radius(10).Selected(active == item.page).Disabled(a.busy)
-			fg := c.Theme().TextMuted
-			if active == item.page {
-				e.Background(accentSurface(c))
-				fg = c.Theme().Accent
-			} else if e.Hovered() {
-				e.Background(c.Theme().SurfaceHover)
-			}
-			e.TextColor(fg).Children(func() {
-				ui.Icon(c, icons[item.icon]).Size(21, 21)
-				ui.Text(c, item.label).FontSize(12)
-			})
-			if e.Clicked() {
-				r := Route{Page: item.page}
-				if item.page == "compose" && (a.route.Page == "board" || a.route.Page == "thread") {
-					r.Name = a.route.Name
+		ui.Scroll(c).FillWidth().Grow(1).Children(func() {
+			ui.Column(c).FillWidth().Gap(3).Children(func() {
+				for _, item := range navigation {
+					e := ui.ButtonBase(c.Key("nav-"+item.page)).Label(item.label).FillWidth().Padding(8, 0).
+						Gap(4).AlignItems(ui.Center).Radius(10).Selected(active == item.page).Disabled(a.busy)
+					fg := c.Theme().TextMuted
+					if active == item.page {
+						e.Background(accentSurface(c))
+						fg = c.Theme().Accent
+					} else if e.Hovered() {
+						e.Background(c.Theme().SurfaceHover)
+					}
+					e.TextColor(fg).Children(func() {
+						ui.Icon(c, icons[item.icon]).Size(21, 21)
+						ui.Text(c, item.label).FontSize(12)
+					})
+					if e.Clicked() {
+						r := Route{Page: item.page}
+						if item.page == "compose" && (a.route.Page == "board" || a.route.Page == "thread") {
+							r.Name = a.route.Name
+						}
+						a.navigate(r, false)
+					}
 				}
-				a.navigate(r, false)
-			}
-		}
-		ui.Spacer(c)
+			})
+		})
 		ui.Divider(c)
 		ui.Column(c).FillWidth().Padding(4, 8, 8).Gap(6).Children(func() {
 			ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
@@ -142,6 +146,8 @@ func (a *App) breadcrumb() string {
 		return "发现版面"
 	case "top":
 		return "热门讨论"
+	case "timeline":
+		return "全部帖子 · 按时间"
 	case "favorites":
 		return "我的收藏"
 	case "search":

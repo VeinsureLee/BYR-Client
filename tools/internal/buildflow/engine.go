@@ -35,10 +35,10 @@ type Engine struct {
 }
 
 func (e Engine) Check(ctx context.Context, scope string) error {
-	modules := map[string]string{"core": "core", "desktop": "apps/desktop", "tools": "tools", "gio-probe": "apps/android/probes/gio"}
+	modules := map[string]string{"core": "core", "desktop": "apps/desktop", "android": "apps/android/app", "tools": "tools", "gio-probe": "apps/android/probes/gio"}
 	selected := []string{scope}
 	if scope == "all" {
-		selected = []string{"core", "tools", "desktop"}
+		selected = []string{"core", "tools", "desktop", "android"}
 	}
 	for _, name := range selected {
 		directory, ok := modules[name]
