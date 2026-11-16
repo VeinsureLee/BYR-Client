@@ -15,7 +15,7 @@ import (
 )
 
 func (a *App) openCompose(board, id, sub string) {
-	if board == "" {
+	if board == "" || a.busy {
 		return
 	}
 	a.compose = composeState{board: board, ready: false}
@@ -31,7 +31,9 @@ func (a *App) openCompose(board, id, sub string) {
 		sub = "new"
 	}
 	a.compose.titleEditor.SingleLine = true
-	a.push(Route{Page: PageCompose, Name: board, ID: id, Sub: sub})
+	if !a.push(Route{Page: PageCompose, Name: board, ID: id, Sub: sub}) {
+		return
+	}
 	a.loadCompose()
 }
 

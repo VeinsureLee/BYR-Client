@@ -174,16 +174,46 @@ func New(window invalidator) (*App, error) {
 var colorHint = color.NRGBA{R: 0x6C, G: 0x7C, B: 0x93, A: 0xFF}
 
 func (a *App) SetVersion(v string) { a.version = v }
-func (a *App) Close()              { a.closed = true; a.close() }
+func (a *App) Close() {
+	if a.closed {
+		return
+	}
+	a.saveComposeDraft()
+	a.closed = true
+	a.close()
+}
 
 // Back handles the Android system back gesture while an inner page is open.
 // It reports false at a tab root so the system can finish the activity.
 func (a *App) Back() bool {
-	if !a.ready || !a.canBack() {
+	if !a.ready || !a.canBack() || a.busy {
 		return false
 	}
 	a.back()
 	return true
+}
+
+func (a *App) handleSystemBack(gtx layout.Context) {
+	if !a.ready || !a.canBack() {
+		return
+	}
+	for {
+		event, ok := gtx.Event(key.Filter{Name: key.NameBack})
+		if !ok {
+			return
+		}
+		ke, ok := event.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		if a.current().Page == PageCompose && (gtx.Focused(&a.compose.titleEditor) || gtx.Focused(&a.compose.contentEditor)) {
+			gtx.Execute(key.FocusCmd{})
+			continue
+		}
+		if !a.busy {
+			a.back()
+		}
+	}
 }
 
 func (a *App) post(fn func()) {
@@ -289,20 +319,29 @@ func (a *App) resetSessionUI() {
 
 func (a *App) canBack() bool { return len(a.stack) > 1 }
 
-func (a *App) push(r Route) {
+func (a *App) push(r Route) bool {
+	if a.busy {
+		return false
+	}
 	a.stack = append(a.stack, r)
 	a.window.Invalidate()
+	return true
 }
 
 func (a *App) back() {
-	if !a.canBack() {
+	if a.busy || !a.canBack() {
 		return
 	}
+	a.saveComposeDraft()
 	a.stack = a.stack[:len(a.stack)-1]
 	a.window.Invalidate()
 }
 
 func (a *App) setTab(page Page) {
+	if a.busy {
+		return
+	}
+	a.saveComposeDraft()
 	switch page {
 	case PageHome:
 		a.stack = []Route{{Page: PageHome}}
@@ -336,6 +375,7 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 		a.post(func() {
 			a.busy = false
 			if err != nil {
+				a.compose.publishing = false
 				a.fail(err)
 				return
 			}
@@ -375,6 +415,7 @@ func (a *App) click(key string) *widget.Clickable {
 func (a *App) Layout(gtx layout.Context) layout.Dimensions {
 	a.drain()
 	a.ensureStarted()
+	a.handleSystemBack(gtx)
 	// The window supplies exact constraints; children must not inherit the
 	// window minimum as their own minimum, or inner widgets stretch to the
 	// whole screen.

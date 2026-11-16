@@ -486,7 +486,11 @@ func (a *App) boardCard(gtx layout.Context, b forum.Board) layout.Dimensions {
 }
 
 func (a *App) openBoard(name string) {
-	a.push(Route{Page: PageBoard, Name: name, Number: 1})
+	if !a.push(Route{Page: PageBoard, Name: name, Number: 1}) {
+		return
+	}
+	a.board = forum.Board{Name: name}
+	a.boardList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadBoard()
 }
 
@@ -597,7 +601,11 @@ func (a *App) openThread(board, id string) {
 	if board == "" || id == "" {
 		return
 	}
-	a.push(Route{Page: PageThread, Name: board, ID: id, Number: 1})
+	if !a.push(Route{Page: PageThread, Name: board, ID: id, Number: 1}) {
+		return
+	}
+	a.thread = forum.Thread{}
+	a.threadList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadThread()
 }
 

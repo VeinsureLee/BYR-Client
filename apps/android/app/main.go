@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"gioui.org/app"
-	"gioui.org/io/key"
 	"gioui.org/op"
 	"gioui.org/unit"
 
@@ -38,10 +37,6 @@ func main() {
 					log.Print(event.Err)
 				}
 				os.Exit(0)
-			case key.Event:
-				if event.Name == key.NameBack && event.State == key.Press {
-					view.Back()
-				}
 			case app.FrameEvent:
 				context := app.NewContext(&operations, event)
 				view.Layout(context)
