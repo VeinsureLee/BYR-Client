@@ -74,6 +74,10 @@ debug 签名，清单标记 `stage: android-preview`、`production: true`、`dev
 提供发布签名密钥之前不得作为正式商店版本发布。构建需要 `ANDROID_HOME`、NDK 和 JDK；
 这些本机路径不写入源码或清单。
 
+targetSdk 暂为 34：Gio v0.10.3 只实现了旧版 `onBackPressed`，而 Android 15+ 对更高
+targetSdk 可能启用 predictive back，导致系统直接结束 Activity、应用内返回逻辑收不到事件。
+等 Gio 提供 `OnBackInvokedCallback` 支持后再提升 targetSdk。
+
 ## 生成内容分类
 
 ```text

@@ -49,8 +49,12 @@ func (e Engine) BuildAndroidProduction(ctx context.Context) (string, error) {
 			environment["ANDROID_HOME"] = sdk
 		}
 	}
+	// Gio v0.10.3 only forwards the legacy Activity.onBackPressed callback.
+	// Targeting Android 15+ can opt the app into predictive back, where the
+	// system finishes the Activity without calling Gio's handler. Keep the
+	// legacy behavior until Gio ships OnBackInvokedCallback support.
 	if err := e.Run(ctx, module, environment, "go", "tool", "gogio",
-		"-target", "android", "-arch", "arm64", "-minsdk", "24", "-targetsdk", "36",
+		"-target", "android", "-arch", "arm64", "-minsdk", "24", "-targetsdk", "34",
 		"-appid", "cn.byr.bbs.byrclient", "-name", "BYR Client",
 		"-version", "0.4.3.14", "-icon", "resources/icon.png",
 		"-o", path, "."); err != nil {
@@ -99,7 +103,7 @@ func (e Engine) BuildAndroidProduction(ctx context.Context) (string, error) {
 		"name": "BYR Client", "version": "0.4.3", "versionCode": 14,
 		"target": "android/arm64", "framework": "gio", "stage": "android-preview",
 		"production": true, "deviceTested": false, "signing": "debug",
-		"minSdk": 24, "targetSdk": 36, "applicationId": "cn.byr.bbs.byrclient",
+		"minSdk": 24, "targetSdk": 34, "applicationId": "cn.byr.bbs.byrclient",
 		"artifact": artifact, "sha256": hex.EncodeToString(digest.Sum(nil)),
 		"packagedAt": time.Now().UTC().Format(time.RFC3339),
 	}); err != nil {

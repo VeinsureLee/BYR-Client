@@ -9,7 +9,7 @@ Gio v0.10.3 生产预览模块已建立，复用共享核心，当前覆盖登�
 接口未接入）。分区页只展示分区，时间线作为其中的功能块；发帖从导航中间按钮进入并选择版面。
 系统返回优先返回上一页，非搜索标签根页返回搜索页，搜索根页二次确认后退出。产物体积、版本与安装说明见
 `apps/android/README.md`；APK 为 `dist/android/BYR-Client-android-arm64.apk`，包名
-`cn.byr.bbs.byrclient`，debug 签名，min SDK 24 / target SDK 36。
+`cn.byr.bbs.byrclient`，debug 签名，min SDK 24 / target SDK 34。
 
 尚未覆盖：附件选择/上传、图片查看器与表情面板、编辑器 UBB 工具栏、分享 Intent、
 真机输入法与系统返回验收。构建清单明确标记 `deviceTested: false`，不能视为实机通过。
@@ -40,7 +40,7 @@ go run ./tools/dev build android-probe --framework gio
 
 输出 `dist/evaluation/android/gio/`，包括 `BYR-Gio-Probe.apk`、校验清单和字体许可证。
 包名是 `cn.byr.bbs.byr_client.gioprobe`，与正式客户端分开。当前探针为 ARM64、debug
-签名、min SDK 24 / target SDK 36；正式产品的兼容范围和签名尚未决定。
+签名、min SDK 24 / target SDK 34；正式产品的兼容范围和签名尚未决定。
 
 已有 Android 设备连接时，可以自行安装：
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/egoist/mygo"
@@ -26,12 +27,54 @@ func (f FileState) Load(ctx context.Context) ([]byte, error) {
 	return b, err
 }
 func (f FileState) Save(ctx context.Context, b []byte) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(f.Path), 0700); err != nil {
 		return err
 	}
+	var last error
+	for attempt := 0; attempt < 6; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		last = f.saveOnce(b)
+		if last == nil {
+			return nil
+		}
+		// Windows antivirus/indexers can briefly open the freshly written
+		// temporary file or the destination. Back off and retry instead of
+		// surfacing a spurious "Access is denied" for reading history.
+		if !retryableFileError(last) {
+			return last
+		}
+		time.Sleep(time.Duration(20*(attempt+1)) * time.Millisecond)
+	}
+	if retryableFileError(last) {
+		// Some security suites deny creating hidden temporary files but allow
+		// updating the established state file. Prefer keeping preferences and
+		// history working over failing every save; this fallback is not atomic,
+		// so it is used only after the atomic path was denied repeatedly.
+		if err := writeDirect(f.Path, b); err == nil {
+			return nil
+		}
+	}
+	return last
+}
+
+func writeDirect(path string, b []byte) error {
+	t, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err = t.Write(b); err == nil {
+		err = t.Sync()
+	}
+	closeErr := t.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+func (f FileState) saveOnce(b []byte) error {
 	t, err := os.CreateTemp(filepath.Dir(f.Path), ".state-*")
 	if err != nil {
 		return err

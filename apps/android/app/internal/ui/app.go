@@ -92,20 +92,21 @@ type App struct {
 
 	stack []Route
 
-	sections   []forum.Section
-	section    forum.Section
-	boards     []forum.Board
-	board      forum.Board
-	thread     forum.Thread
-	articles   []forum.Article
-	favorite   forum.Favorite
-	collect    forum.Collection
-	pagination forum.Pagination
-	user       forum.User
-	history    []local.History
-	blacklist  forum.Blacklist
-	vote       forum.Vote
-	bet        forum.Bet
+	sections       []forum.Section
+	section        forum.Section
+	boards         []forum.Board
+	board          forum.Board
+	thread         forum.Thread
+	articles       []forum.Article
+	favorite       forum.Favorite
+	favoriteBoards []forum.Board
+	collect        forum.Collection
+	pagination     forum.Pagination
+	user           forum.User
+	history        []local.History
+	blacklist      forum.Blacklist
+	vote           forum.Vote
+	bet            forum.Bet
 
 	contacts    []application.Contact
 	chat        []application.ChatMessage
@@ -119,11 +120,13 @@ type App struct {
 	ipv6        widget.Bool
 	choice      string
 
-	username   widget.Editor
-	password   widget.Editor
-	remember   widget.Bool
-	searchEdit widget.Editor
-	searchMode string
+	username       widget.Editor
+	password       widget.Editor
+	remember       widget.Bool
+	searchEdit     widget.Editor
+	searchMode     string
+	expandedPosts  map[string]bool
+	pinnedExpanded bool
 
 	homeList, sectionList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList, auxList, searchList widget.List
 
@@ -170,7 +173,7 @@ func New(window invalidator) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{
 		window: window, version: "dev", theme: theme, ctx: ctx, close: cancel,
-		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{},
+		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{},
 		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai",
 		homeList:     widget.List{List: layout.List{Axis: layout.Vertical}},
 		sectionList:  widget.List{List: layout.List{Axis: layout.Vertical}},
@@ -417,6 +420,7 @@ func (a *App) resetSessionUI() {
 	a.thread = forum.Thread{}
 	a.articles = nil
 	a.favorite = forum.Favorite{}
+	a.favoriteBoards = nil
 	a.collect = forum.Collection{}
 	a.pagination = forum.Pagination{}
 	a.user = forum.User{}
@@ -426,6 +430,8 @@ func (a *App) resetSessionUI() {
 	a.lastClip = ""
 	a.images = map[string]*mobileImage{}
 	a.clicks = map[string]*widget.Clickable{}
+	a.expandedPosts = map[string]bool{}
+	a.pinnedExpanded = false
 	a.homeList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.sectionList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.boardList = widget.List{List: layout.List{Axis: layout.Vertical}}

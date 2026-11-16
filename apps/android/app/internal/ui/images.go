@@ -6,6 +6,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"strings"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/VeinsureLee/BYR-Client/core/content"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
+	"github.com/VeinsureLee/BYR-Client/core/resources"
 )
 
 type mobileImage struct {
@@ -38,20 +40,23 @@ func (a *App) imageEntry(raw string) *mobileImage {
 	go func() {
 		var img image.Image
 		var err error
-		if a.core == nil {
+		var b []byte
+		switch {
+		case strings.HasPrefix(raw, "emoji:"):
+			b, err = resources.Emoji.ReadFile("em/" + strings.TrimPrefix(raw, "emoji:"))
+		case a.core == nil:
 			err = contentError("客户端尚未启动")
-		} else {
-			var b []byte
+		default:
 			b, err = a.core.Forum.FetchAsset(a.ctx, raw)
-			if err == nil {
-				cfg, _, ce := image.DecodeConfig(bytes.NewReader(b))
-				if ce != nil {
-					err = ce
-				} else if cfg.Width > 12000 || cfg.Height > 12000 || cfg.Width*cfg.Height > 24000000 {
-					err = contentError("图片尺寸过大")
-				} else {
-					img, _, err = image.Decode(bytes.NewReader(b))
-				}
+		}
+		if err == nil {
+			cfg, _, ce := image.DecodeConfig(bytes.NewReader(b))
+			if ce != nil {
+				err = ce
+			} else if cfg.Width > 12000 || cfg.Height > 12000 || cfg.Width*cfg.Height > 24000000 {
+				err = contentError("图片尺寸过大")
+			} else {
+				img, _, err = image.Decode(bytes.NewReader(b))
 			}
 		}
 		a.post(func() {
@@ -127,9 +132,10 @@ func (a *App) postBody(gtx layout.Context, body string, attachments []forum.Atta
 				return material.Caption(a.theme, "[附件] "+name).Layout(gtx)
 			})
 		case content.Emoji:
-			text := part.Text
+			fallback := part.Text
+			raw := "emoji:" + part.URL
 			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				return material.Caption(a.theme, text).Layout(gtx)
+				return a.inlineEmoji(gtx, raw, fallback)
 			})
 		case content.Link:
 			text := part.Text
@@ -150,6 +156,19 @@ func rigidWidgets(widgets []layout.Widget) []layout.FlexChild {
 		out = append(out, layout.Rigid(w))
 	}
 	return out
+}
+
+func (a *App) inlineEmoji(gtx layout.Context, raw, fallback string) layout.Dimensions {
+	entry := a.imageEntry(raw)
+	if entry.loading {
+		return layout.Dimensions{Size: image.Pt(gtx.Dp(unit.Dp(22)), gtx.Dp(unit.Dp(22)))}
+	}
+	if entry.err != nil || entry.img == nil {
+		return material.Caption(a.theme, fallback).Layout(gtx)
+	}
+	size := gtx.Dp(unit.Dp(24))
+	gtx.Constraints = layout.Exact(image.Pt(size, size))
+	return widget.Image{Src: paint.NewImageOp(entry.img), Fit: widget.Contain, Position: layout.Center}.Layout(gtx)
 }
 
 func (a *App) inlineImage(gtx layout.Context, raw string) layout.Dimensions {

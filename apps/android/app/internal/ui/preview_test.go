@@ -132,6 +132,7 @@ func TestPreviewScreens(t *testing.T) {
 	section.sections = home.sections
 	section.section = forum.Section{
 		Name: "0", Description: "校园",
+		Boards:      []forum.Board{{Name: "Go", Description: "Go 讨论", ThreadsTodayCount: 3, UserOnlineCount: 12}},
 		Subsections: []forum.Section{{Name: "1", Description: "院系"}},
 	}
 	section.boards = []forum.Board{{Name: "Go", Description: "Go 讨论", ThreadsTodayCount: 3, UserOnlineCount: 12}}
@@ -155,6 +156,13 @@ func TestPreviewScreens(t *testing.T) {
 	thread.thread = sampleThread()
 	thread.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	capture("thread", thread)
+
+	pinned := previewApp(t)
+	pinnedThread := sampleThread()
+	pinnedThread.Articles[0].IsTop = true
+	pinned.thread = pinnedThread
+	pinned.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	capture("thread-pinned", pinned)
 
 	timeline := previewApp(t)
 	timeline.articles = board.board.Articles

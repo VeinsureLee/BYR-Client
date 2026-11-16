@@ -29,9 +29,13 @@ func parityServer(t *testing.T) *httptest.Server {
 		case path == "/open/section.json":
 			_, _ = w.Write([]byte(`{"section":[{"name":"0","description":"校园"},{"name":"2","description":"生活"}]}`))
 		case path == "/open/section/0.json":
-			_, _ = w.Write([]byte(`{"name":"0","description":"校园","sub_section":[{"name":"1","description":"院系"}],"board":[{"name":"Go","description":"Go 讨论","threads_today_count":3}]}`))
+			_, _ = w.Write([]byte(`{"name":"0","description":"校园","sub_section":[{"name":"1","description":"院系"}],"board":[{"name":"Go","description":"Go 讨论","threads_today_count":3,"post_today_count":9,"user_online_count":12}]}`))
+		case path == "/open/favorite/0.json":
+			_, _ = w.Write([]byte(`{"board":[{"name":"Go","description":"Go 讨论"}]}`))
+		case path == "/open/board/Go.json":
+			_, _ = w.Write([]byte(`{"name":"Go","description":"Go 讨论","is_favorite":true,"threads_today_count":3,"post_today_count":9,"user_online_count":12}`))
 		case path == "/open/section/1.json":
-			_, _ = w.Write([]byte(`{"name":"1","description":"院系","board":[{"name":"Go","description":"Go 讨论"}]}`))
+			_, _ = w.Write([]byte(`{"name":"1","description":"院系","board":[{"name":"Study","description":"学习","threads_today_count":2,"post_today_count":4,"user_online_count":5}]}`))
 		case path == "/open/user/query/bob.json":
 			_, _ = w.Write([]byte(`{"id":"bob","user_name":"Bob","post_count":3,"score":10,"face_url":""}`))
 		case path == "/open/blacklist/list.json":
@@ -135,6 +139,10 @@ func TestHomeAndSectionHierarchy(t *testing.T) {
 	if a.section.Description != "校园" || len(a.boards) != 1 {
 		t.Fatalf("section detail = %+v boards=%+v", a.section, a.boards)
 	}
+	threads, posts, online := sectionTotals(a.section)
+	if threads != 5 || posts != 13 || online != 17 {
+		t.Fatalf("section totals = %d/%d/%d, want 5/13/17", threads, posts, online)
+	}
 
 	var router input.Router
 	var ops op.Ops
@@ -151,6 +159,24 @@ func TestHomeAndSectionHierarchy(t *testing.T) {
 	if got := a.current().Page; got != PageBoard {
 		t.Fatalf("board tap page = %v, want board", got)
 	}
+}
+
+func TestFavoriteBoardsShowLiveStats(t *testing.T) {
+	server := parityServer(t)
+	a := parityApp(t, server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageFavorites, Number: 1}}
+	a.favoriteTab = "boards"
+	a.loadFavorites()
+	waitForIdle(t, a)
+	if len(a.favoriteBoards) != 1 {
+		t.Fatalf("favorite boards = %+v", a.favoriteBoards)
+	}
+	board := a.favoriteBoards[0]
+	if board.ThreadsTodayCount != 3 || board.PostTodayCount != 9 || board.UserOnlineCount != 12 || !bool(board.IsFavorite) {
+		t.Fatalf("favorite board stats = %+v", board)
+	}
+	renderParityPage(t, a, a.favoritesPage)
 }
 
 func TestAccountParityPages(t *testing.T) {

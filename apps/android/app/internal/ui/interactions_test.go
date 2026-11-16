@@ -230,6 +230,63 @@ func TestThreadLikeWhileLoadingIsRejected(t *testing.T) {
 	}
 }
 
+func TestPinnedPostStartsCollapsedAndExpands(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	thread := sampleThread()
+	thread.Articles[0].IsTop = true
+	a.thread = thread
+	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	if a.expandedPosts["42"] {
+		t.Fatal("pinned post should start collapsed")
+	}
+	a.click("pin-toggle:42:0").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if !a.expandedPosts["42"] {
+		t.Fatal("pinned post did not expand")
+	}
+}
+
+func TestBoardPinnedTopicsCollapseByDefault(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.board = forum.Board{Name: "Go", Articles: []forum.Article{
+		{ID: "1", Title: "置顶公告", IsTop: true},
+		{ID: "2", Title: "普通主题"},
+	}}
+	a.stack = []Route{{Page: PageHome}, {Page: PageBoard, Name: "Go", Number: 1}}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	if a.pinnedExpanded {
+		t.Fatal("pinned topics should start collapsed")
+	}
+	a.click("board-pinned-toggle").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if !a.pinnedExpanded {
+		t.Fatal("pinned topics did not expand")
+	}
+}
+
 func TestThreadReactionUpdatesServerCounts(t *testing.T) {
 	s := newInteractionServer(t)
 	a := interactionApp(t, s.server.URL)

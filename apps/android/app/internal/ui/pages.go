@@ -224,15 +224,38 @@ func (a *App) loadSectionPage() {
 }
 
 func (a *App) resolveSubsections(ctx context.Context, section *forum.Section) {
+	a.resolveSectionTree(ctx, section, map[forum.Scalar]bool{section.Name: true})
+}
+
+func (a *App) resolveSectionTree(ctx context.Context, section *forum.Section, visited map[forum.Scalar]bool) {
 	for i := range section.Subsections {
 		sub := &section.Subsections[i]
-		if sub.Description != "" || sub.Name == "" {
+		if sub.Name == "" || visited[sub.Name] {
 			continue
 		}
-		if full, err := a.core.Forum.Section(ctx, string(sub.Name)); err == nil {
-			*sub = full
+		visited[sub.Name] = true
+		if sub.Description == "" || len(sub.Boards) == 0 {
+			if full, err := a.core.Forum.Section(ctx, string(sub.Name)); err == nil {
+				*sub = full
+			}
 		}
+		a.resolveSectionTree(ctx, sub, visited)
 	}
+}
+
+func sectionTotals(s forum.Section) (threads, posts, online int) {
+	for _, b := range s.Boards {
+		threads += int(b.ThreadsTodayCount)
+		posts += int(b.PostTodayCount)
+		online += int(b.UserOnlineCount)
+	}
+	for _, sub := range s.Subsections {
+		t, p, o := sectionTotals(sub)
+		threads += t
+		posts += p
+		online += o
+	}
+	return threads, posts, online
 }
 
 func (a *App) homePage(gtx layout.Context) layout.Dimensions {
@@ -240,8 +263,8 @@ func (a *App) homePage(gtx layout.Context) layout.Dimensions {
 		return a.pendingPage(gtx, "正在加载分区…")
 	}
 	rows := make([]layout.Widget, 0, len(a.sections)+3)
+	rows = append(rows, a.sectionActions)
 	rows = append(rows, a.homeOverview)
-	rows = append(rows, a.timelineEntryCard)
 	rows = append(rows, func(gtx layout.Context) layout.Dimensions {
 		return a.sectionTitle(gtx, "分区", fmt.Sprintf("%d 个分区", len(a.sections)))
 	})
@@ -254,45 +277,6 @@ func (a *App) homePage(gtx layout.Context) layout.Dimensions {
 	return material.List(a.theme, &a.homeList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
 		return rows[i](gtx)
 	})
-}
-
-func (a *App) timelineEntryCard(gtx layout.Context) layout.Dimensions {
-	btn := a.click("home-timeline")
-	clicked := btn.Clicked(gtx)
-	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return a.iconTile(gtx, "clock", 38, colorAccentSoft, colorAccent)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								l := material.Label(a.theme, unit.Sp(15), "时间线")
-								l.Font.Weight = 600
-								return l.Layout(gtx)
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								l := material.Label(a.theme, unit.Sp(11), "全部帖子按发帖时间倒序浏览")
-								l.Color = colorMuted
-								return l.Layout(gtx)
-							}),
-						)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return a.drawIcon(gtx, "next", 16, colorMuted)
-					}),
-				)
-			})
-		})
-	})
-	if clicked {
-		a.push(Route{Page: PageTimeline, Number: 1})
-		a.loadTimeline()
-	}
-	return dims
 }
 
 func (a *App) sectionPage(gtx layout.Context) layout.Dimensions {
@@ -313,7 +297,10 @@ func (a *App) sectionPage(gtx layout.Context) layout.Dimensions {
 			detail += fmt.Sprintf(" · %d 个子分区", n)
 		}
 	}
-	rows := make([]layout.Widget, 0, len(a.sections)+len(a.section.Subsections)+len(a.boards)+2)
+	rows := make([]layout.Widget, 0, len(a.sections)+len(a.section.Subsections)+len(a.boards)+3)
+	if !pick {
+		rows = append(rows, a.sectionActions)
+	}
 	rows = append(rows, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -329,6 +316,16 @@ func (a *App) sectionPage(gtx layout.Context) layout.Dimensions {
 									}),
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 										l := material.Label(a.theme, unit.Sp(11), detail)
+										l.Color = colorMuted
+										return l.Layout(gtx)
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										if r.Name == "" {
+											return layout.Dimensions{}
+										}
+										threads, posts, online := sectionTotals(a.section)
+										l := material.Label(a.theme, unit.Sp(11),
+											fmt.Sprintf("今日主题 %d · 今日发帖 %d · 在线 %d", threads, posts, online))
 										l.Color = colorMuted
 										return l.Layout(gtx)
 									}),
@@ -537,56 +534,51 @@ func (a *App) homeOverview(gtx layout.Context) layout.Dimensions {
 		return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(20), "发现")
-									l.Font.Weight = 700
-									return l.Layout(gtx)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(11),
-										fmt.Sprintf("按分区浏览 · 共 %d 个分区", len(a.sections)))
-									l.Color = colorMuted
-									return l.Layout(gtx)
-								}),
-							)
-						}),
-					)
+					l := material.Label(a.theme, unit.Sp(20), "全部分区")
+					l.Font.Weight = 700
+					return l.Layout(gtx)
 				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "home-top", "今日十大", "hot", false, false)
-							if clicked {
-								a.topTab = "top"
-								a.setTab(PageTop)
-							}
-							return dims
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "home-recommend", "版面推荐", "star", false, false)
-							if clicked {
-								a.topTab = "recommend"
-								a.setTab(PageTop)
-							}
-							return dims
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "home-search", "搜索", "search", false, false)
-							if clicked {
-								a.push(Route{Page: PageSearch})
-							}
-							return dims
-						}),
-					)
+					l := material.Label(a.theme, unit.Sp(11),
+						fmt.Sprintf("按分区浏览 · 共 %d 个分区", len(a.sections)))
+					l.Color = colorMuted
+					return l.Layout(gtx)
 				}),
 			)
 		})
+	})
+}
+
+func (a *App) sectionActions(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				selected := a.current().Page == PageHome
+				dims, clicked := a.pill(gtx, "sections-all", "全部分区", "hash", selected, false)
+				if clicked && a.current().Page != PageHome {
+					a.setTab(PageHome)
+				}
+				return dims
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				dims, clicked := a.pill(gtx, "sections-favorites", "收藏版面", "star", false, false)
+				if clicked {
+					a.openFavorites()
+				}
+				return dims
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				dims, clicked := a.pill(gtx, "sections-timeline", "时间线", "clock", false, false)
+				if clicked && !a.busy {
+					if a.push(Route{Page: PageTimeline, Number: 1}) {
+						a.loadTimeline()
+					}
+				}
+				return dims
+			}),
+		)
 	})
 }
 
@@ -653,6 +645,7 @@ func (a *App) openBoard(name string) {
 		return
 	}
 	a.board = forum.Board{Name: name}
+	a.pinnedExpanded = false
 	a.boardList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadBoard()
 }
@@ -669,20 +662,95 @@ func (a *App) boardPage(gtx layout.Context) layout.Dimensions {
 	if a.board.Name == "" && a.busy {
 		return a.pendingPage(gtx, "正在加载版面…")
 	}
+	var pinned, normal []forum.Article
+	for _, article := range a.board.Articles {
+		if bool(article.IsTop) {
+			pinned = append(pinned, article)
+		} else {
+			normal = append(normal, article)
+		}
+	}
+	rows := make([]layout.Widget, 0, len(a.board.Articles)+1)
+	if len(pinned) > 0 {
+		rows = append(rows, a.pinnedGroupCard(len(pinned)))
+		if a.pinnedExpanded {
+			for _, article := range pinned {
+				article := article
+				rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+					return a.articleCard(gtx, "board:"+a.current().Name, article, a.current().Name)
+				})
+			}
+		}
+	}
+	for _, article := range normal {
+		article := article
+		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+			return a.articleCard(gtx, "board:"+a.current().Name, article, a.current().Name)
+		})
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return a.boardHeader(gtx)
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			if len(a.board.Articles) == 0 {
-				return a.empty(gtx, "暂无主题")
+			if len(rows) == 0 {
+				return a.emptyOrPending(gtx, "暂无主题")
 			}
-			return material.List(a.theme, &a.boardList).Layout(gtx, len(a.board.Articles), func(gtx layout.Context, i int) layout.Dimensions {
-				return a.articleCard(gtx, "board:"+a.current().Name, a.board.Articles[i], a.current().Name)
+			return material.List(a.theme, &a.boardList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
+				return rows[i](gtx)
 			})
 		}),
 		layout.Rigid(a.pager),
 	)
+}
+
+func (a *App) pinnedGroupCard(count int) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		btn := a.click("board-pinned-toggle")
+		clicked := btn.Clicked(gtx)
+		dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return a.tile(gtx, false, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return a.iconTile(gtx, "alert", 34, colorWarningSoft, colorWarning)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(11)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									l := material.Label(a.theme, unit.Sp(14), fmt.Sprintf("置顶主题 · %d", count))
+									l.Font.Weight = 600
+									return l.Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									label := "默认折叠，点击展开"
+									if a.pinnedExpanded {
+										label = "点击收起置顶主题"
+									}
+									l := material.Label(a.theme, unit.Sp(11), label)
+									l.Color = colorMuted
+									return l.Layout(gtx)
+								}),
+							)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							icon := "next"
+							if a.pinnedExpanded {
+								icon = "down"
+							}
+							return a.drawIcon(gtx, icon, 16, colorMuted)
+						}),
+					)
+				})
+			})
+		})
+		if clicked {
+			a.pinnedExpanded = !a.pinnedExpanded
+			a.window.Invalidate()
+		}
+		return dims
+	}
 }
 
 func (a *App) boardHeader(gtx layout.Context) layout.Dimensions {
@@ -944,6 +1012,9 @@ func (a *App) threadToolbar(gtx layout.Context) layout.Dimensions {
 
 func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Dimensions {
 	author := v.Author.DisplayName()
+	pinned := bool(v.IsTop)
+	expanded := a.expandedPosts[string(v.ID)]
+	collapsed := pinned && !expanded
 	body := strings.TrimSpace(content.Plain(v.Content))
 	if body == "" {
 		body = "(无内容)"
@@ -1015,18 +1086,62 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 						}),
 					)
 				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if !bool(v.HiddenByVotedown) {
+					if !pinned {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if !collapsed {
+									return layout.Dimensions{}
+								}
+								return a.badgeChip(gtx, "置顶内容已折叠", colorWarningSoft, colorWarning)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								label := "展开置顶内容"
+								if !collapsed {
+									label = "收起置顶内容"
+								}
+								dims, clicked := a.pill(gtx, fmt.Sprintf("pin-toggle:%s:%d", v.ID, index), label, "next", false, false)
+								if clicked {
+									a.expandedPosts[string(v.ID)] = collapsed
+									a.window.Invalidate()
+								}
+								return dims
+							}),
+						)
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if collapsed {
+						return layout.Dimensions{}
+					}
+					return layout.Spacer{Height: unit.Dp(10)}.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if collapsed || !bool(v.HiddenByVotedown) {
 						return layout.Dimensions{}
 					}
 					return a.badgeChip(gtx, "此楼被踩折叠，正文仍可阅读", colorDangerSoft, colorDanger)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if collapsed {
+						return layout.Dimensions{}
+					}
 					return a.postBody(gtx, v.Content, v.Attachments)
 				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if collapsed {
+						return layout.Dimensions{}
+					}
+					return layout.Spacer{Height: unit.Dp(8)}.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if collapsed {
+						return layout.Dimensions{}
+					}
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							label := fmt.Sprintf("赞 %d", v.LikeSum)
@@ -1057,7 +1172,7 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							dims, clicked := a.pill(gtx, fmt.Sprintf("reply:%s", v.ID), "回复", "reply", false, false)
 							if clicked {
-								a.openCompose(a.current().Name, string(v.ID), "reply")
+								a.openCompose(a.threadBoard(), string(v.ID), "reply")
 							}
 							return dims
 						}),
@@ -1232,7 +1347,26 @@ func (a *App) loadFavorites() {
 			return func() { a.collect = v; a.pagination = v.Pagination }, err
 		}
 		v, err := a.core.Forum.Favorites(ctx, "0")
-		return func() { a.favorite = v; a.pagination = forum.Pagination{} }, err
+		if err != nil {
+			return nil, err
+		}
+		boards := flattenFavoriteBoards(v)
+		for i := range boards {
+			detail, derr := a.core.Forum.Board(ctx, boards[i].Name, forum.Page{Size: 1})
+			if derr != nil || detail.Name == "" {
+				continue
+			}
+			detail.IsFavorite = true
+			if detail.Description == "" {
+				detail.Description = boards[i].Description
+			}
+			boards[i] = detail
+		}
+		return func() {
+			a.favorite = v
+			a.favoriteBoards = boards
+			a.pagination = forum.Pagination{}
+		}, nil
 	})
 }
 
@@ -1353,7 +1487,10 @@ func (a *App) collectionBody(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) boardFavoritesBody(gtx layout.Context) layout.Dimensions {
-	boards := flattenFavoriteBoards(a.favorite)
+	boards := a.favoriteBoards
+	if boards == nil {
+		boards = flattenFavoriteBoards(a.favorite)
+	}
 	if len(boards) == 0 {
 		return a.emptyOrPending(gtx, "还没有收藏版面")
 	}
