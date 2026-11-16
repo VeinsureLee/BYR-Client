@@ -153,6 +153,17 @@ func TestPreviewScreens(t *testing.T) {
 	vote.stack = []Route{{Page: PageSelf}, {Page: PageVote, ID: "42"}}
 	capture("vote", vote)
 
+	setPalette(true)
+	colorHint = colorMuted
+	darkHome := previewApp(t)
+	darkHome.sections = home.sections
+	darkHome.section = home.section
+	darkHome.boards = home.boards
+	darkHome.stack = []Route{{Page: PageHome}}
+	capture("home-dark", darkHome)
+	setPalette(false)
+	colorHint = colorMuted
+
 	top := previewApp(t)
 	top.topTab = "top"
 	top.articles = board.board.Articles

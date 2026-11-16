@@ -104,7 +104,7 @@ func (a *App) loginPage(gtx layout.Context) layout.Dimensions {
 				if a.failed && a.message != "" {
 					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						l := material.Body2(a.theme, a.message)
-						l.Color = color.NRGBA{R: 0xB3, G: 0x26, B: 0x1E, A: 0xFF}
+						l.Color = colorDanger
 						return l.Layout(gtx)
 					})
 				}

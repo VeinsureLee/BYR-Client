@@ -400,6 +400,37 @@ func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
 					}),
 					layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						l := material.Label(a.theme, unit.Sp(11), "主题")
+						l.Color = colorMuted
+						return l.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								dims, clicked := a.pill(gtx, "settings-theme:light", "浅色", "", p.Theme != 2, false)
+								if clicked && !a.busy {
+									p.Theme = 1
+									a.savePreferences(p)
+								}
+								return dims
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								dims, clicked := a.pill(gtx, "settings-theme:dark", "深色", "", p.Theme == 2, false)
+								if clicked && !a.busy {
+									p.Theme = 2
+									a.savePreferences(p)
+								}
+								return dims
+							}),
+						)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						l := material.Label(a.theme, unit.Sp(11), "字号")
+						l.Color = colorMuted
+						return l.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						sizes := []float32{0.9, 1.0, 1.15}
 						labels := []string{"小", "标准", "大"}
 						children := make([]layout.FlexChild, 0, 6)

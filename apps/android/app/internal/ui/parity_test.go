@@ -188,6 +188,39 @@ func TestMailComposeReplyUsesReplyEndpoint(t *testing.T) {
 	}
 }
 
+func TestDarkThemeAppliesPalette(t *testing.T) {
+	server := parityServer(t)
+	a := parityApp(t, server.URL)
+	defer a.Close()
+	defer func() {
+		setPalette(false)
+		colorHint = colorMuted
+		a.dark, a.themed = false, false
+		a.theme.Bg = colorBg
+		a.theme.Fg = colorFg
+	}()
+	prefs := a.core.Local.Preferences()
+	prefs.Theme = 2
+	if err := a.core.Local.SetPreferences(context.Background(), prefs); err != nil {
+		t.Fatal(err)
+	}
+	a.stack = []Route{{Page: PageSelf}}
+	var router input.Router
+	var ops op.Ops
+	a.Layout(layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 700)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	})
+	if !a.dark {
+		t.Fatal("dark preference did not reach the palette")
+	}
+	if colorSurface.R > 0x40 || a.theme.Bg.R > 0x20 {
+		t.Fatalf("palette is still light: surface=%v bg=%v", colorSurface, a.theme.Bg)
+	}
+}
+
 func TestVoteAndBetSubmit(t *testing.T) {
 	server := parityServer(t)
 	a := parityApp(t, server.URL)

@@ -25,7 +25,43 @@ var (
 	colorDangerSoft  = color.NRGBA{R: 0xFD, G: 0xEC, B: 0xEC, A: 0xFF}
 	colorWarning     = color.NRGBA{R: 0xB2, G: 0x6A, B: 0x00, A: 0xFF}
 	colorWarningSoft = color.NRGBA{R: 0xFF, G: 0xF4, B: 0xDE, A: 0xFF}
+	colorBg          = color.NRGBA{R: 0xF4, G: 0xF7, B: 0xFC, A: 0xFF}
+	colorFg          = color.NRGBA{R: 0x1E, G: 0x2B, B: 0x40, A: 0xFF}
+	colorPill        = color.NRGBA{R: 0xF1, G: 0xF5, B: 0xFB, A: 0xFF}
 )
+
+// setPalette switches the shared surfaces between the light and dark desktop
+// themes. Colors are package values because every mobile widget consumes the
+// same small set; keeping one palette avoids per-widget theme plumbing.
+func setPalette(dark bool) {
+	if dark {
+		colorSurface = color.NRGBA{R: 0x18, G: 0x22, B: 0x2F, A: 0xFF}
+		colorBorder = color.NRGBA{R: 0x2C, G: 0x3A, B: 0x4C, A: 0xFF}
+		colorMuted = color.NRGBA{R: 0x9A, G: 0xAA, B: 0xBF, A: 0xFF}
+		colorAccent = color.NRGBA{R: 0x4C, G: 0x8F, B: 0xE8, A: 0xFF}
+		colorAccentSoft = color.NRGBA{R: 0x1C, G: 0x2E, B: 0x46, A: 0xFF}
+		colorDanger = color.NRGBA{R: 0xF0, G: 0x8A, B: 0x82, A: 0xFF}
+		colorDangerSoft = color.NRGBA{R: 0x3A, G: 0x22, B: 0x25, A: 0xFF}
+		colorWarning = color.NRGBA{R: 0xE8, G: 0xB0, B: 0x5C, A: 0xFF}
+		colorWarningSoft = color.NRGBA{R: 0x3A, G: 0x2F, B: 0x1A, A: 0xFF}
+		colorBg = color.NRGBA{R: 0x0E, G: 0x16, B: 0x20, A: 0xFF}
+		colorFg = color.NRGBA{R: 0xE6, G: 0xED, B: 0xF5, A: 0xFF}
+		colorPill = color.NRGBA{R: 0x22, G: 0x30, B: 0x43, A: 0xFF}
+		return
+	}
+	colorSurface = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
+	colorBorder = color.NRGBA{R: 0xE2, G: 0xE8, B: 0xF2, A: 0xFF}
+	colorMuted = color.NRGBA{R: 0x6C, G: 0x7C, B: 0x93, A: 0xFF}
+	colorAccent = color.NRGBA{R: 0x0A, G: 0x5C, B: 0xBF, A: 0xFF}
+	colorAccentSoft = color.NRGBA{R: 0xE8, G: 0xF0, B: 0xFC, A: 0xFF}
+	colorDanger = color.NRGBA{R: 0xB3, G: 0x26, B: 0x1E, A: 0xFF}
+	colorDangerSoft = color.NRGBA{R: 0xFD, G: 0xEC, B: 0xEC, A: 0xFF}
+	colorWarning = color.NRGBA{R: 0xB2, G: 0x6A, B: 0x00, A: 0xFF}
+	colorWarningSoft = color.NRGBA{R: 0xFF, G: 0xF4, B: 0xDE, A: 0xFF}
+	colorBg = color.NRGBA{R: 0xF4, G: 0xF7, B: 0xFC, A: 0xFF}
+	colorFg = color.NRGBA{R: 0x1E, G: 0x2B, B: 0x40, A: 0xFF}
+	colorPill = color.NRGBA{R: 0xF1, G: 0xF5, B: 0xFB, A: 0xFF}
+}
 
 func (a *App) iconTarget(gtx layout.Context, name string) layout.Dimensions {
 	px := gtx.Dp(unit.Dp(40))
@@ -84,7 +120,7 @@ func (a *App) pill(gtx layout.Context, key, label, icon string, selected, negati
 		})
 		call := m.Stop()
 		size := inner.Size
-		bg := color.NRGBA{R: 0xF1, G: 0xF5, B: 0xFB, A: 0xFF}
+		bg := colorPill
 		if selected {
 			bg = colorAccentSoft
 			if negative {

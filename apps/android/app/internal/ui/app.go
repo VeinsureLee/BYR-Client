@@ -131,6 +131,8 @@ type App struct {
 	lastClip    string
 	images      map[string]*mobileImage
 	closed      bool
+	themed      bool
+	dark        bool
 }
 
 type composeState struct {
@@ -151,9 +153,9 @@ func New(window invalidator) (*App, error) {
 	theme.Shaper = text.NewShaper(text.WithCollection(faces), text.NoSystemFonts())
 	theme.Face = faces[0].Font.Typeface
 	theme.TextSize = 15
-	theme.Bg = color.NRGBA{R: 0xF4, G: 0xF7, B: 0xFC, A: 0xFF}
-	theme.Fg = color.NRGBA{R: 0x1E, G: 0x2B, B: 0x40, A: 0xFF}
-	theme.ContrastBg = color.NRGBA{R: 0x0A, G: 0x5C, B: 0xBF, A: 0xFF}
+	theme.Bg = colorBg
+	theme.Fg = colorFg
+	theme.ContrastBg = colorAccent
 	theme.ContrastFg = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{
@@ -469,9 +471,25 @@ func (a *App) click(key string) *widget.Clickable {
 	return a.clicks[key]
 }
 
+func (a *App) applyTheme() {
+	if a.ready && a.core != nil {
+		dark := a.core.Local.Preferences().Theme == 2
+		if !a.themed || a.dark != dark {
+			a.themed = true
+			a.dark = dark
+			setPalette(dark)
+			colorHint = colorMuted
+			a.theme.Bg = colorBg
+			a.theme.Fg = colorFg
+			a.theme.ContrastBg = colorAccent
+		}
+	}
+}
+
 func (a *App) Layout(gtx layout.Context) layout.Dimensions {
 	a.drain()
 	a.ensureStarted()
+	a.applyTheme()
 	if a.core != nil {
 		if scale := a.core.Local.Preferences().FontScale; scale > 0 && scale != 1 {
 			gtx.Metric.PxPerSp *= scale
@@ -686,13 +704,19 @@ func (a *App) subtitle() string {
 	case PageMailbox:
 		return "站内信"
 	case PageMail:
-		return a.mail.Title
+		if a.mail.Title != "" {
+			return a.mail.Title
+		}
+		return "站内信"
 	case PageMailCompose:
 		return "写站内信"
 	case PageRefers:
 		return "回复与 @ 提醒"
 	case PageUser:
-		return a.user.DisplayName()
+		if name := a.user.DisplayName(); name != "" {
+			return name
+		}
+		return a.current().Name
 	case PageHistory:
 		return "阅读历史"
 	case PageBlacklist:
@@ -756,11 +780,11 @@ func (a *App) composeFromCurrent() {
 }
 
 func (a *App) statusBar(gtx layout.Context) layout.Dimensions {
-	bg := color.NRGBA{R: 0xE8, G: 0xF0, B: 0xFC, A: 0xFF}
+	bg := colorAccentSoft
 	fg := a.theme.ContrastBg
 	if a.failed {
-		bg = color.NRGBA{R: 0xFD, G: 0xEC, B: 0xEC, A: 0xFF}
-		fg = color.NRGBA{R: 0xB3, G: 0x26, B: 0x1E, A: 0xFF}
+		bg = colorDangerSoft
+		fg = colorDanger
 	}
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -927,7 +951,10 @@ func (a *App) title() string {
 	case PageMailbox, PageMail, PageMailCompose, PageRefers:
 		return "站内信"
 	case PageUser:
-		return a.user.DisplayName()
+		if name := a.user.DisplayName(); name != "" {
+			return name
+		}
+		return a.current().Name
 	case PageHistory:
 		return "阅读历史"
 	case PageBlacklist:
@@ -1002,7 +1029,7 @@ func (a *App) card(gtx layout.Context, content layout.Widget) layout.Dimensions 
 	m := op.Record(gtx.Ops)
 	inner := layout.UniformInset(unit.Dp(14)).Layout(gtx, content)
 	call := m.Stop()
-	paint.FillShape(gtx.Ops, color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF},
+	paint.FillShape(gtx.Ops, colorSurface,
 		clip.RRect{Rect: image.Rectangle{Max: inner.Size}, NE: 12, NW: 12, SE: 12, SW: 12}.Op(gtx.Ops))
 	call.Add(gtx.Ops)
 	return inner
@@ -1022,12 +1049,12 @@ func (a *App) inputBox(gtx layout.Context, editor *widget.Editor, hint string) l
 	if min := gtx.Dp(unit.Dp(48)); size.Y < min {
 		size.Y = min
 	}
-	borderColor := color.NRGBA{R: 0xDD, G: 0xE4, B: 0xEF, A: 0xFF}
+	borderColor := colorBorder
 	if gtx.Focused(editor) {
 		borderColor = a.theme.ContrastBg
 	}
 	paint.FillShape(gtx.Ops, borderColor, clip.RRect{Rect: image.Rectangle{Max: size}, NE: 12, NW: 12, SE: 12, SW: 12}.Op(gtx.Ops))
-	paint.FillShape(gtx.Ops, color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF},
+	paint.FillShape(gtx.Ops, colorSurface,
 		clip.RRect{Rect: image.Rect(1, 1, size.X-1, size.Y-1), NE: 11, NW: 11, SE: 11, SW: 11}.Op(gtx.Ops))
 	call.Add(gtx.Ops)
 	return layout.Dimensions{Size: size}

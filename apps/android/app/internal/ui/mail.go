@@ -294,42 +294,80 @@ func (a *App) mailboxBody(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) refersBody(gtx layout.Context) layout.Dimensions {
-	if len(a.refers.Articles) == 0 {
-		return a.empty(gtx, "暂无提醒")
-	}
-	return material.List(a.theme, &a.auxList).Layout(gtx, len(a.refers.Articles), func(gtx layout.Context, i int) layout.Dimensions {
-		refer := a.refers.Articles[i]
-		title := refer.Title
-		if !bool(refer.IsRead) {
-			title = "[未读] " + title
-		}
-		btn := a.click("refer:" + string(refer.Index))
-		clicked := btn.Clicked(gtx)
-		dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							l := material.Label(a.theme, unit.Sp(14), title)
-							l.Font.Weight = 600
-							l.MaxLines = 2
-							return l.Layout(gtx)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							l := material.Label(a.theme, unit.Sp(11),
-								refer.Board+" · "+refer.Author.DisplayName())
-							l.Color = colorMuted
-							return l.Layout(gtx)
-						}),
-					)
-				})
-			})
+	header := func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					dims, clicked := a.pill(gtx, "refer-kind:reply", "回复我的", "reply", a.current().Name != "at", false)
+					if clicked {
+						a.selectReferKind("reply")
+					}
+					return dims
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					dims, clicked := a.pill(gtx, "refer-kind:at", "@ 我的", "send", a.current().Name == "at", false)
+					if clicked {
+						a.selectReferKind("at")
+					}
+					return dims
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					dims, clicked := a.pill(gtx, "refer-read-all", "全部已读", "check", false, false)
+					if clicked && !a.busy {
+						kind := a.current().Name
+						a.run("全部标为已读", func(ctx context.Context) (func(), error) {
+							_, err := a.core.Forum.ReadAllRefers(ctx, kind)
+							return func() { a.loadMessages() }, err
+						})
+					}
+					return dims
+				}),
+			)
 		})
-		if clicked {
-			a.openRefer(refer)
-		}
-		return dims
-	})
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(header),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if len(a.refers.Articles) == 0 {
+				return a.empty(gtx, "暂无提醒")
+			}
+			return material.List(a.theme, &a.auxList).Layout(gtx, len(a.refers.Articles), func(gtx layout.Context, i int) layout.Dimensions {
+				refer := a.refers.Articles[i]
+				title := refer.Title
+				if !bool(refer.IsRead) {
+					title = "[未读] " + title
+				}
+				btn := a.click("refer:" + string(refer.Index))
+				clicked := btn.Clicked(gtx)
+				dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									l := material.Label(a.theme, unit.Sp(14), title)
+									l.Font.Weight = 600
+									l.MaxLines = 2
+									return l.Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									l := material.Label(a.theme, unit.Sp(11),
+										refer.Board+" · "+refer.Author.DisplayName())
+									l.Color = colorMuted
+									return l.Layout(gtx)
+								}),
+							)
+						})
+					})
+				})
+				if clicked {
+					a.openRefer(refer)
+				}
+				return dims
+			})
+		}),
+	)
 }
 
 func (a *App) openRefer(refer forum.ReferEntry) {
