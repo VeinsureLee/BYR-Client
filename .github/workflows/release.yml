@@ -38,7 +38,7 @@ jobs:
             directory: linux-amd64
             installer: false
           - target: darwin/universal
-            os: macos-latest
+            os: macos-15-intel
             directory: darwin-universal
             installer: false
     defaults:
