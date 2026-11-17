@@ -121,16 +121,18 @@ type desktopMetadata struct {
 }
 
 type Manifest struct {
-	Name          string `json:"name"`
-	Version       string `json:"version"`
-	Target        string `json:"target"`
-	Framework     string `json:"framework"`
-	ApplicationID string `json:"applicationId"`
-	Stage         string `json:"stage"`
-	Entrypoint    string `json:"entrypoint"`
-	Archive       string `json:"archive"`
-	SHA256        string `json:"sha256"`
-	PackagedAt    string `json:"packagedAt"`
+	Name            string `json:"name"`
+	Version         string `json:"version"`
+	Target          string `json:"target"`
+	Framework       string `json:"framework"`
+	ApplicationID   string `json:"applicationId"`
+	Stage           string `json:"stage"`
+	Entrypoint      string `json:"entrypoint"`
+	Archive         string `json:"archive"`
+	SHA256          string `json:"sha256"`
+	Installer       string `json:"installer,omitempty"`
+	InstallerSHA256 string `json:"installerSHA256,omitempty"`
+	PackagedAt      string `json:"packagedAt"`
 }
 
 func (e Engine) BuildDesktop(ctx context.Context, value string, installer bool) (string, error) {
@@ -208,6 +210,26 @@ func (e Engine) BuildDesktop(ctx context.Context, value string, installer bool) 
 	if err := os.Rename(bundle, app); err != nil {
 		return "", err
 	}
+	installerName := ""
+	installerDigest := ""
+	if installer {
+		matches, err := filepath.Glob(filepath.Join(app, metadata.Slug+"-setup-*-"+target.Arch+".exe"))
+		if err != nil {
+			return "", err
+		}
+		if len(matches) != 1 {
+			return "", fmt.Errorf("expected one Windows installer for %s, found %d", target, len(matches))
+		}
+		installerName = "BYR-Client-" + target.Directory() + "-setup.exe"
+		installerPath := filepath.Join(prepared, installerName)
+		if err := os.Rename(matches[0], installerPath); err != nil {
+			return "", err
+		}
+		installerDigest, err = fileSHA256(installerPath)
+		if err != nil {
+			return "", err
+		}
+	}
 	archiveName := "BYR-Client-" + target.Directory() + ".zip"
 	license, err := os.ReadFile(filepath.Join(e.Root, "core", "resources", "fonts", "LICENSE"))
 	if err != nil {
@@ -222,24 +244,17 @@ func (e Engine) BuildDesktop(ctx context.Context, value string, installer bool) 
 	if err := zipDirectory(app, archivePath, binary); err != nil {
 		return "", err
 	}
-	archive, err := os.Open(archivePath)
+	archiveDigest, err := fileSHA256(archivePath)
 	if err != nil {
 		return "", err
-	}
-	digest := sha256.New()
-	_, copyErr := io.Copy(digest, archive)
-	closeErr := archive.Close()
-	if copyErr != nil {
-		return "", copyErr
-	}
-	if closeErr != nil {
-		return "", closeErr
 	}
 	manifest := Manifest{
 		Name: metadata.Name, Version: metadata.Version, Target: target.String(), Framework: "mygo",
 		Stage: "feature-migration", Entrypoint: filepath.ToSlash(filepath.Join("app", binary)),
 		ApplicationID: metadata.Identifier,
-		Archive:       archiveName, SHA256: hex.EncodeToString(digest.Sum(nil)), PackagedAt: time.Now().UTC().Format(time.RFC3339),
+		Archive:       archiveName, SHA256: archiveDigest,
+		Installer: installerName, InstallerSHA256: installerDigest,
+		PackagedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := writeJSON(filepath.Join(prepared, "manifest.json"), manifest); err != nil {
 		return "", err
@@ -314,6 +329,23 @@ func replaceInPlace(parent, prepared, destination string) error {
 		}
 	}
 	return removeGenerated(parent, prepared)
+}
+
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.New()
+	_, copyErr := io.Copy(digest, file)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return "", copyErr
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func publish(parent, prepared, destination string) error {

@@ -32,18 +32,23 @@ jobs:
           - target: windows/amd64
             os: windows-latest
             directory: windows-amd64
+            installer: true
           - target: windows/arm64
             os: windows-latest
             directory: windows-arm64
+            installer: true
           - target: linux/amd64
             os: ubuntu-latest
             directory: linux-amd64
+            installer: false
           - target: linux/arm64
             os: ubuntu-latest
             directory: linux-arm64
+            installer: false
           - target: darwin/universal
             os: macos-latest
             directory: darwin-universal
+            installer: false
     defaults:
       run:
         shell: bash
@@ -87,13 +92,36 @@ jobs:
             sed_inplace 's/runtime.GOOS != "darwin"/runtime.GOOS != "darwin" || os.Getenv("BYR_SKIP_DMG") == "1"/' tools/internal/buildflow/engine.go
           fi
       - name: Build desktop package
-        run: go run ./tools/dev build desktop --target "${{ matrix.target }}"
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.installer }}" == "true" ]]; then
+            go run ./tools/dev build desktop --target "${{ matrix.target }}" --installer
+          else
+            go run ./tools/dev build desktop --target "${{ matrix.target }}"
+          fi
+      - name: Normalize Windows installer
+        if: matrix.installer
+        run: |
+          set -euo pipefail
+          dir="dist/desktop/${{ matrix.directory }}"
+          target="${dir}/BYR-Client-${{ matrix.directory }}-setup.exe"
+          if [ -f "$target" ]; then
+            exit 0
+          fi
+          shopt -s nullglob
+          candidates=("${dir}"/app/*setup*.exe)
+          if [ ${#candidates[@]} -eq 0 ]; then
+            echo "::error::Windows installer was not produced for ${{ matrix.target }}"
+            exit 1
+          fi
+          cp "${candidates[0]}" "$target"
       - name: Upload desktop package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: desktop-${{ matrix.directory }}
           path: |
             dist/desktop/${{ matrix.directory }}/*.zip
+            dist/desktop/${{ matrix.directory }}/*.exe
             dist/desktop/${{ matrix.directory }}/manifest.json
           if-no-files-found: error
           compression-level: 0
@@ -223,6 +251,11 @@ jobs:
           for dir in release-assets/desktop-*; do
             name="$(basename "$dir")"
             cp "$dir"/*.zip release-assets/upload/
+            for exe in "$dir"/*.exe; do
+              if [ -e "$exe" ]; then
+                cp "$exe" release-assets/upload/
+              fi
+            done
             cp "$dir/manifest.json" "release-assets/upload/${name}-manifest.json"
           done
           cp release-assets/android-production/*.apk release-assets/upload/
@@ -270,8 +303,13 @@ jobs:
             fi
             echo
             echo "## Release assets"
+            for asset in release-assets/upload/*.exe; do
+              [ -e "$asset" ] || continue
+              echo "- \`$(basename "$asset")\` (Windows setup, unsigned)"
+            done
             for asset in release-assets/upload/*.zip; do
-              echo "- \`$(basename "$asset")\` (unsigned)"
+              [ -e "$asset" ] || continue
+              echo "- \`$(basename "$asset")\` (portable ZIP, unsigned)"
             done
             echo "- \`${android_apk}\` (debug-signed preview, not store-ready)"
           } > release-notes.md

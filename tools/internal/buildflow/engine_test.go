@@ -156,6 +156,15 @@ func fakeMyGo(t *testing.T) RunCommand {
 		}
 		writeFixture(t, filepath.Join(output, "windows-amd64", "BYR Client.exe"), "native application fixture")
 		writeFixture(t, filepath.Join(output, "windows-amd64", "resources", "required.dat"), "required runtime resource")
+		skipInstaller := false
+		for _, arg := range args {
+			if arg == "-skip-installer" {
+				skipInstaller = true
+			}
+		}
+		if !skipInstaller {
+			writeFixture(t, filepath.Join(output, "windows-amd64", "byr-client-setup-0.1.0-amd64.exe"), "installer fixture")
+		}
 		return nil
 	}
 }
@@ -226,6 +235,43 @@ func TestDesktopReleaseContainsRuntimeResourcesAndManifest(t *testing.T) {
 	}
 	if fileExists(filepath.Join(output, "app", "stale.dll")) {
 		t.Fatal("stale resources survived a complete replacement")
+	}
+}
+
+func TestDesktopInstallerIsPublishedBesideArchive(t *testing.T) {
+	root := fixture(t)
+	engine := Engine{Root: root, Run: fakeMyGo(t)}
+	output, err := engine.BuildDesktop(context.Background(), "windows/amd64", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installerPath := filepath.Join(output, "BYR-Client-windows-amd64-setup.exe")
+	installer, err := os.ReadFile(installerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(installer) != "installer fixture" {
+		t.Fatalf("installer contents = %q", installer)
+	}
+	manifestBytes, _ := os.ReadFile(filepath.Join(output, "manifest.json"))
+	var manifest Manifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(installer)
+	if manifest.Installer != "BYR-Client-windows-amd64-setup.exe" ||
+		manifest.InstallerSHA256 != hex.EncodeToString(digest[:]) {
+		t.Fatalf("installer manifest fields = %+v", manifest)
+	}
+	archive, err := zip.OpenReader(filepath.Join(output, manifest.Archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	for _, file := range archive.File {
+		if strings.Contains(file.Name, "setup") {
+			t.Fatalf("installer leaked into the portable archive: %s", file.Name)
+		}
 	}
 }
 
