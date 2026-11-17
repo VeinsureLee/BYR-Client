@@ -33,17 +33,9 @@ jobs:
             os: windows-latest
             directory: windows-amd64
             installer: true
-          - target: windows/arm64
-            os: windows-latest
-            directory: windows-arm64
-            installer: true
           - target: linux/amd64
             os: ubuntu-latest
             directory: linux-amd64
-            installer: false
-          - target: linux/arm64
-            os: ubuntu-latest
-            directory: linux-arm64
             installer: false
           - target: darwin/universal
             os: macos-latest
@@ -233,9 +225,7 @@ jobs:
           mkdir -p release-assets
           for artifact in \
             desktop-windows-amd64 \
-            desktop-windows-arm64 \
             desktop-linux-amd64 \
-            desktop-linux-arm64 \
             desktop-darwin-universal \
             android-production; do
             mkdir -p "release-assets/$artifact"
@@ -248,21 +238,14 @@ jobs:
           set -euo pipefail
           tag="${RELEASE_TAG}"
           mkdir -p release-assets/upload
-          for dir in release-assets/desktop-*; do
-            name="$(basename "$dir")"
-            cp "$dir"/*.zip release-assets/upload/
-            for exe in "$dir"/*.exe; do
-              if [ -e "$exe" ]; then
-                cp "$exe" release-assets/upload/
-              fi
-            done
-            cp "$dir/manifest.json" "release-assets/upload/${name}-manifest.json"
-          done
+          cp release-assets/desktop-windows-amd64/*.exe release-assets/upload/
+          cp release-assets/desktop-darwin-universal/*.zip release-assets/upload/
+          cp release-assets/desktop-linux-amd64/*.zip release-assets/upload/
           cp release-assets/android-production/*.apk release-assets/upload/
-          cp release-assets/android-production/manifest.json release-assets/upload/android-manifest.json
-          if [ -f release-assets/android-production/FONT-LICENSE.txt ]; then
-            cp release-assets/android-production/FONT-LICENSE.txt release-assets/upload/android-FONT-LICENSE.txt
-          fi
+          cp release-assets/android-production/FONT-LICENSE.txt release-assets/upload/android-FONT-LICENSE.txt
+          windows_setup="$(basename "$(ls release-assets/upload/*setup*.exe | head -n1)")"
+          macos_zip="$(basename "$(ls release-assets/upload/*darwin*.zip | head -n1)")"
+          linux_zip="$(basename "$(ls release-assets/upload/*linux*.zip | head -n1)")"
           android_apk="$(basename "$(ls release-assets/upload/*.apk | head -n1)")"
           prev="$(git tag --sort=version:refname | awk -v target="$tag" '$0==target { print previous; exit } { previous=$0 }')"
           body="$(git for-each-ref "refs/tags/$tag" --format='%(contents)')"
@@ -303,15 +286,11 @@ jobs:
             fi
             echo
             echo "## Release assets"
-            for asset in release-assets/upload/*.exe; do
-              [ -e "$asset" ] || continue
-              echo "- \`$(basename "$asset")\` (Windows setup, unsigned)"
-            done
-            for asset in release-assets/upload/*.zip; do
-              [ -e "$asset" ] || continue
-              echo "- \`$(basename "$asset")\` (portable ZIP, unsigned)"
-            done
-            echo "- \`${android_apk}\` (debug-signed preview, not store-ready)"
+            echo "- \`${windows_setup}\` (Windows x64 setup, unsigned)"
+            echo "- \`${macos_zip}\` (macOS universal app bundle, ad-hoc signed)"
+            echo "- \`${linux_zip}\` (Linux x64 portable, unsigned)"
+            echo "- \`${android_apk}\` (Android ARM64 preview, debug-signed)"
+            echo "- \`android-FONT-LICENSE.txt\` (font license)"
           } > release-notes.md
           cat release-notes.md
       - name: Create or update release
