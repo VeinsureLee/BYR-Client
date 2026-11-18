@@ -63,6 +63,10 @@ type App struct {
 	collection              forum.Collection
 	pagination              forum.Pagination
 	boardFilter             string
+	searchQuery             string
+	searchResults           []forum.Article
+	searchPagination        forum.Pagination
+	searchHasRun            bool
 	advancedSearch          bool
 	pageJump                string
 	expandedPosts           map[string]bool

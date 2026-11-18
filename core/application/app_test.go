@@ -222,6 +222,49 @@ func TestReactionAcceptsBooleanStatusFromLiveServer(t *testing.T) {
 	}
 }
 
+func TestReactionAcceptsAnonymousServerErrorAsRecorded(t *testing.T) {
+	calls := 0
+	a := appFor(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		io.WriteString(w, `{"code":"0500","msg":"未知的论坛ID"}`)
+	}, nil, &credentials{value: Credential{Username: "a", Token: "t"}})
+	v := forum.Article{ID: "42", LikeSum: 2, Author: forum.User{ID: "IWhisper#175"}}
+	v, err := a.React(context.Background(), "IWhisper", v, Like)
+	if err != nil || !bool(v.IsLiked) || v.LikeSum != 3 {
+		t.Fatalf("anonymous like with 0500 must confirm the stored reaction: %+v %v", v, err)
+	}
+	if _, err := a.React(context.Background(), "IWhisper", v, Like); err != nil {
+		t.Fatalf("already liked anonymous article: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("anonymous like calls = %d, want 1", calls)
+	}
+
+	calls = 0
+	a = appFor(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		io.WriteString(w, `{"code":"0500","msg":"未知的论坛ID"}`)
+	}, nil, &credentials{value: Credential{Username: "a", Token: "t"}})
+	v = forum.Article{ID: "42", VotedownSum: 1, Author: forum.User{ID: "IWhisper#175"}}
+	v, err = a.React(context.Background(), "IWhisper", v, Downvote)
+	if err != nil || !bool(v.IsVotedown) || v.VotedownSum != 2 {
+		t.Fatalf("anonymous downvote with 0500 must confirm the stored reaction: %+v %v", v, err)
+	}
+	if calls != 1 {
+		t.Fatalf("anonymous downvote calls = %d, want 1", calls)
+	}
+}
+
+func TestReactionMapsUnknownForumIDToUnavailable(t *testing.T) {
+	a := appFor(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"code":"0500","msg":"未知的论坛ID"}`)
+	}, nil, &credentials{value: Credential{Username: "a", Token: "t"}})
+	v := forum.Article{ID: "42"}
+	if _, err := a.React(context.Background(), "IWhisper", v, Like); !errors.Is(err, ErrReactionUnavailable) {
+		t.Fatalf("0500 reaction error = %v", err)
+	}
+}
+
 func TestPublishChecksBoardPermissionsBeforeMutation(t *testing.T) {
 	for _, tc := range []struct {
 		name, metadata string

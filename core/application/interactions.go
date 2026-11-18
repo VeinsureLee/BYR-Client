@@ -15,6 +15,13 @@ const (
 	Downvote
 )
 
+// The reaction endpoint records the reaction before resolving the article
+// author. Anonymous articles expose a display-only pseudo ID (IWhisper#N),
+// so the response can be 0500 "未知的论坛ID" even though the reaction was
+// stored. The client treats that reply as accepted for anonymous authors; a
+// later thread load confirms the authoritative state.
+var ErrReactionUnavailable = errors.New("该帖子暂不支持评价（论坛接口限制）")
+
 // React is the shared interaction facade. BYR permits switching a reaction,
 // but has no cancellation endpoint. Failed requests leave the original intact.
 func (a *App) React(ctx context.Context, board string, article forum.Article, kind ReactionKind) (forum.Article, error) {
@@ -34,10 +41,21 @@ func (a *App) React(ctx context.Context, board string, article forum.Article, ki
 	duplicate := false
 	if err != nil {
 		var api *forum.APIError
-		if !errors.As(err, &api) || (kind == Like && api.Code != "1603") || (kind == Downvote && api.Code != "1608") {
+		if !errors.As(err, &api) {
 			return article, err
 		}
-		duplicate = true
+		switch {
+		case api.Code == "0500" && article.Author.Anonymous():
+			// The server stored the reaction but could not resolve the
+			// anonymous author's account. Continue as if the response omitted
+			// the fresh totals.
+		case kind == Like && api.Code == "1603", kind == Downvote && api.Code == "1608":
+			duplicate = true
+		case api.Code == "0500":
+			return article, ErrReactionUnavailable
+		default:
+			return article, err
+		}
 	}
 	wasLiked, wasDown := bool(article.IsLiked), bool(article.IsVotedown)
 	like, down := int(article.LikeSum), int(article.VotedownSum)

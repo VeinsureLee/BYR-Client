@@ -110,6 +110,10 @@ func (a *App) logout() {
 				a.board = forum.Board{}
 				a.thread = forum.Thread{}
 				a.articles = nil
+				a.searchQuery = ""
+				a.searchResults = nil
+				a.searchPagination = forum.Pagination{}
+				a.searchHasRun = false
 				a.boards = nil
 				a.contacts = nil
 				a.chat = nil

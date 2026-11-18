@@ -158,6 +158,18 @@ func (a *App) threadRoot() (forum.Article, bool) {
 	}, true
 }
 
+func (a *App) threadBoard() string {
+	if board := strings.TrimSpace(a.thread.Board); board != "" {
+		return board
+	}
+	if len(a.thread.Articles) > 0 {
+		if board := strings.TrimSpace(a.thread.Articles[0].Board); board != "" {
+			return board
+		}
+	}
+	return a.route.Name
+}
+
 func (a *App) collect() {
 	board, id := a.route.Name, a.route.ID
 	was := bool(a.thread.Collect)
@@ -299,7 +311,7 @@ func (a *App) reactThread(v forum.Article, kind application.ReactionKind) {
 		a.notice("已赞过，服务器不支持取消赞")
 		return
 	}
-	board := a.route.Name
+	board := a.threadBoard()
 	a.run("提交评价", func(ctx context.Context) (func(), error) {
 		updated, err := a.Core.React(ctx, board, v, kind)
 		return func() {
@@ -325,7 +337,7 @@ func (a *App) react(index int, v forum.Article, kind application.ReactionKind) {
 		a.notice("已踩过，服务器不支持取消踩")
 		return
 	}
-	board := a.route.Name
+	board := a.threadBoard()
 	a.run("提交评价", func(ctx context.Context) (func(), error) {
 		updated, err := a.Core.React(ctx, board, v, kind)
 		return func() {

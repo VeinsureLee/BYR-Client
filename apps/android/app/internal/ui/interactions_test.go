@@ -43,6 +43,10 @@ func newInteractionServer(t *testing.T) *interactionServer {
 		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/open/section.json":
+			_, _ = w.Write([]byte(`{"section":[{"name":"0"}]}`))
+		case r.URL.Path == "/open/section/0.json":
+			_, _ = w.Write([]byte(`{"name":"0","board":[{"name":"Go"}]}`))
 		case strings.HasSuffix(r.URL.Path, "/like/42.json"):
 			_, _ = w.Write([]byte(`{"status":true,"like_sum":3,"votedown_sum":0}`))
 		case strings.HasSuffix(r.URL.Path, "/votedown/44.json"):
@@ -51,6 +55,8 @@ func newInteractionServer(t *testing.T) *interactionServer {
 			_, _ = w.Write([]byte(`{"id":42,"title":"主题","article":[{"id":42,"position":1,"content":"正文","like_sum":3}]}`))
 		case r.URL.Path == "/open/collection.json":
 			_, _ = w.Write([]byte(`{"article":[{"gid":42,"bname":"Go","title":"收藏文章","num":1,"user":{"id":"alice","user_name":"Alice"}}]}`))
+		case r.URL.Path == "/open/search/article.json":
+			_, _ = w.Write([]byte(`{"article":[{"id":42,"group_id":42,"board_name":"Go","title":"搜索主题","user":{"id":"alice","user_name":"Alice"}}],"pagination":{"page_all_count":1,"page_current_count":1,"item_all_count":1}}`))
 		default:
 			_, _ = w.Write([]byte(`{"code":"0000"}`))
 		}
@@ -199,18 +205,81 @@ func TestSelfSettingsEntryOpensSettings(t *testing.T) {
 }
 
 func TestThreadLikeUsesCanonicalBoardName(t *testing.T) {
-	s := newInteractionServer(t)
-	a := interactionApp(t, s.server.URL)
+	tests := []struct {
+		name         string
+		threadBoard  string
+		articleBoard string
+	}{
+		{name: "thread field", threadBoard: "IWhisper", articleBoard: "IWhisper"},
+		{name: "root article fallback", articleBoard: "IWhisper"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newInteractionServer(t)
+			a := interactionApp(t, s.server.URL)
+			defer a.Close()
+
+			thread := sampleThread()
+			thread.Board = tc.threadBoard
+			thread.Articles[0].Board = tc.articleBoard
+			thread.Articles[0].Author = forum.User{ID: "alice"}
+			a.thread = thread
+			a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "悄悄话", ID: "42", Number: 1}}
+
+			a.likeThread()
+			waitForIdle(t, a)
+
+			if len(s.find("GET", "/open/article/IWhisper/like/42.json")) != 1 {
+				t.Fatalf("like did not use canonical board: %+v", s.requests)
+			}
+			if len(s.find("GET", "/open/article/悄悄话/like/42.json")) != 0 {
+				t.Fatalf("localized board reached endpoint: %+v", s.requests)
+			}
+			got := a.thread.Articles[0]
+			if got.LikeSum != 3 || !bool(got.IsLiked) {
+				t.Fatalf("thread reaction state = %+v", got)
+			}
+			if got.Author.ID != "alice" {
+				t.Fatalf("reaction altered the author: %+v", got.Author)
+			}
+		})
+	}
+}
+
+func TestAnonymousLikeTreatsUnresolvedAuthorAsRecorded(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/like/42.json") {
+			calls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"code":"0500","msg":"未知的论坛ID"}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	a := interactionApp(t, server.URL)
 	defer a.Close()
-	a.thread = sampleThread() // Board: Go
-	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "悄悄话", ID: "42", Number: 1}}
+
+	thread := sampleThread()
+	thread.Board = "IWhisper"
+	thread.Articles[0].Board = "IWhisper"
+	thread.Articles[0].Author = forum.User{ID: "IWhisper#175"}
+	a.thread = thread
+	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "IWhisper", ID: "42", Number: 1}}
+
 	a.likeThread()
 	waitForIdle(t, a)
-	if len(s.find("GET", "/open/article/Go/like/42.json")) != 1 {
-		t.Fatalf("like did not use the canonical board: %+v", s.requests)
+
+	if calls != 1 {
+		t.Fatalf("anonymous like requests = %d, want 1", calls)
 	}
-	if a.thread.LikeSum != 3 || !bool(a.thread.IsLiked) {
-		t.Fatalf("thread reaction state = %+v", a.thread)
+	if a.failed {
+		t.Fatalf("recorded anonymous like was reported as failed: %q", a.message)
+	}
+	if got := a.thread.Articles[0]; !bool(got.IsLiked) || got.LikeSum != 3 {
+		t.Fatalf("anonymous reaction state = %+v", got)
 	}
 }
 

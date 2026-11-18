@@ -6,9 +6,9 @@
 
 | 部分 | 当前状态 |
 | --- | --- |
-| PC | MyGo v0.9.1；登录、论坛阅读、发帖编辑、附件、收藏、时间线、消息和个人设置；搜索入口为「敬请期待」占位 |
-| 共享核心 | 纯 Go 标准库；完整迁移的论坛接口、会话、发帖规则、草稿、历史、私信聚合、UBB 与共享资源 |
-| Android | Gio v0.10.3 生产预览；登录、分区/版面/主题阅读、时间线、收藏、发帖回复、点赞踩/收藏与搜索占位；ARM64 debug 预览，待真机验收 |
+| PC | MyGo v0.9.1；登录、论坛阅读、发帖编辑、附件、收藏、时间线、消息、个人设置与全站标题搜索；AI 搜索暂未配置 |
+| 共享核心 | 纯 Go 标准库；完整迁移的论坛接口、搜索用例、会话、发帖规则、草稿、历史、私信聚合、UBB 与共享资源 |
+| Android | Gio v0.10.3 生产预览；登录、分区/版面/主题阅读、时间线、收藏、发帖回复、点赞踩/收藏与全站标题搜索；ARM64 debug 预览，待真机验收 |
 | 验证范围 | 本地合约与交互、Windows 原生菜单点击、真实只读接口、各模块 test/vet；线上写入与 Android 实机尚待验收 |
 
 ## 目录
@@ -61,7 +61,7 @@ go run ./tools/dev run desktop
 ## 构建与产物
 
 ```sh
-go run ./tools/dev build desktop --target windows/amd64
+go run ./tools/dev build desktop --target windows/amd64 --installer
 go run ./tools/dev build desktop --target linux/amd64
 go run ./tools/dev build desktop --target darwin/arm64
 go run ./tools/dev build android-probe --framework gio
@@ -73,6 +73,7 @@ dist/desktop/windows-amd64/
   app/BYR Client.exe
   app/FONT-LICENSE.txt
   BYR-Client-windows-amd64.zip
+  BYR-Client-windows-amd64-setup.exe
   manifest.json
 dist/android/
   BYR-Client-android-arm64.apk
@@ -84,7 +85,8 @@ dist/evaluation/android/gio/
   manifest.json
 ```
 
-桌面 ZIP 包含完整运行目录和字体许可证。跨平台编译不代替目标系统运行验收。
+Windows 使用 `--installer` 生成 setup 安装程序；安装包未做代码签名，SmartScreen 仍可能提示
+“未知发布者”，需要发布签名证书才能消除。桌面 ZIP 包含完整运行目录和字体许可证。跨平台编译不代替目标系统运行验收。
 Android 生产 APK 使用包名 `cn.byr.bbs.byrclient`、ARM64、debug 签名，构建前需要
 `ANDROID_HOME`（以及可用的 NDK/JDK）；在提供发布签名密钥前不会作为正式商店版本。
 技术探针仍使用独立包名 `cn.byr.bbs.byr_client.gioprobe`，保留作框架对照。

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +14,7 @@ import (
 	"gioui.org/unit"
 )
 
-func TestSearchPageDoesNotCallForumYet(t *testing.T) {
+func TestSearchPageUsesRemoteSearchForAllMode(t *testing.T) {
 	s := newInteractionServer(t)
 	a := interactionApp(t, s.server.URL)
 	defer a.Close()
@@ -35,10 +36,95 @@ func TestSearchPageDoesNotCallForumYet(t *testing.T) {
 	ops.Reset()
 	a.Layout(gtx)
 	if len(s.requests) != 0 {
-		t.Fatalf("search page issued forum requests: %+v", s.requests)
+		t.Fatalf("AI search issued forum requests: %+v", s.requests)
 	}
-	if !strings.Contains(a.message, "尚未接入") {
-		t.Fatalf("search placeholder notice = %q", a.message)
+	if !strings.Contains(a.message, "AI 搜索尚未配置") {
+		t.Fatalf("AI search notice = %q", a.message)
+	}
+
+	a.click("search-mode:all").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	a.searchEdit.SetText("搜索")
+	a.click("search-submit").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	waitForIdle(t, a)
+	if got := a.current().Page; got != PageSearch {
+		t.Fatalf("page after search = %v, want search", got)
+	}
+	if a.renderPanic != "" {
+		t.Fatalf("search render panic = %q", a.renderPanic)
+	}
+	if got := a.core.Session().Token; got != "token" {
+		t.Fatalf("search discarded session token %q", got)
+	}
+	if len(a.searchResults) != 1 || a.searchResults[0].Title != "搜索主题" {
+		t.Fatalf("search results = %+v", a.searchResults)
+	}
+	if len(s.find("GET", "/open/search/article.json")) != 1 {
+		t.Fatalf("search requests = %+v", s.requests)
+	}
+
+	ops.Reset()
+	a.Layout(gtx)
+	if got := a.current().Page; got != PageSearch || a.renderPanic != "" {
+		t.Fatalf("second search frame page=%v panic=%q", got, a.renderPanic)
+	}
+}
+
+func TestSearchListResetWaitsForResultApplication(t *testing.T) {
+	s := newInteractionServer(t)
+	a := interactionApp(t, s.server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageSearch}}
+	a.searchMode = "all"
+	a.searchEdit.SetText("搜索")
+	a.searchList.Position.First = 4
+
+	a.loadSearch()
+	if got := a.searchList.Position.First; got != 4 {
+		t.Fatalf("search list reset synchronously to %d", got)
+	}
+
+	waitForIdle(t, a)
+	if got := a.searchList.Position.First; got != 0 {
+		t.Fatalf("search list position after applying result = %d, want 0", got)
+	}
+}
+
+func TestSearchFailureKeepsAuthenticatedSearchRoute(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open/section.json":
+			io.WriteString(w, `{"section":[{"name":"0"}]}`)
+		case "/open/section/0.json":
+			io.WriteString(w, `{"name":"0","board":[{"name":"Go"}]}`)
+		case "/open/search/article.json":
+			http.Error(w, "search unavailable", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	a := interactionApp(t, server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageSearch}}
+	a.searchMode = "all"
+	a.searchEdit.SetText("搜索")
+
+	a.loadSearch()
+	waitForIdle(t, a)
+
+	if got := a.current().Page; got != PageSearch {
+		t.Fatalf("ordinary search error changed page to %v", got)
+	}
+	if !a.failed || a.message == "" {
+		t.Fatalf("search failure was not exposed: failed=%t message=%q", a.failed, a.message)
+	}
+	if got := a.core.Session().Token; got != "token" {
+		t.Fatalf("ordinary search error discarded token %q", got)
 	}
 }
 

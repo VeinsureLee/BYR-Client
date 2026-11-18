@@ -120,13 +120,16 @@ type App struct {
 	ipv6        widget.Bool
 	choice      string
 
-	username       widget.Editor
-	password       widget.Editor
-	remember       widget.Bool
-	searchEdit     widget.Editor
-	searchMode     string
-	expandedPosts  map[string]bool
-	pinnedExpanded bool
+	username         widget.Editor
+	password         widget.Editor
+	remember         widget.Bool
+	searchEdit       widget.Editor
+	searchMode       string
+	searchResults    []forum.Article
+	searchPagination forum.Pagination
+	searchHasRun     bool
+	expandedPosts    map[string]bool
+	pinnedExpanded   bool
 
 	homeList, sectionList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList, auxList, searchList widget.List
 
@@ -457,6 +460,9 @@ func (a *App) resetSessionUI() {
 	a.topList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.searchList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.searchResults = nil
+	a.searchPagination = forum.Pagination{}
+	a.searchHasRun = false
 	a.username.SetText("")
 	a.password.SetText("")
 	a.searchEdit.SetText("")
@@ -1045,6 +1051,8 @@ func (a *App) refreshCurrent() {
 		a.loadTimeline()
 	case PageFavorites:
 		a.loadFavorites()
+	case PageSearch:
+		a.loadSearch()
 	case PageSelf:
 		a.loadSelf()
 	case PageMessages:

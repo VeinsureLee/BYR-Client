@@ -25,7 +25,7 @@ JSON 适配器保留文字等级，并将完整分区对象、字符串/数字�
 | 目录 | 责任 | 不承担 |
 | --- | --- | --- |
 | core/forum | 端点、DTO、分页、OAuth 签名、统一错误、附件与加密协议 | 登录持久化、页面导航 |
-| core/application | 会话生命周期、发布与权限规则、单向点赞/踩、私信聚合 | 控件、OS 调用 |
+| core/application | 会话生命周期、发布与权限规则、单向点赞/踩、私信聚合、跨端搜索用例 | 控件、OS 调用 |
 | core/local | 草稿、历史、偏好、按账号隔离与事务式序列化 | 文件位置、系统凭据库 |
 | core/content | UBB、附件标记、表情标记、Unicode 选区操作 | 框架绘制和图片缓存 |
 | core/resources | 原有 GIF、共享字体及许可证 | UI 实例、网络状态 |
@@ -38,7 +38,7 @@ JSON 适配器保留文字等级，并将完整分区对象、字符串/数字�
 
 | 模式 | 实现 | 取舍 |
 | --- | --- | --- |
-| Facade | forum.Client、application.App | 协议客户端统一传输；应用层只协调跨子系统的业务用例。按领域拆文件，不给每个端点再加转发服务 |
+| Facade | forum.Client、application.App | 协议客户端统一传输；应用层只协调跨子系统的业务用例（包括搜索参数校验与结果统一）。按领域拆文件，不给每个端点再加转发服务 |
 | Adapter | JSON 的 Scalar/Number/Flag/List；platform.Credentials、FileState、Device | 将服务器类型差异和平台 API 收敛在边界；核心声明实际消费的小接口 |
 | Strategy（函数） | TokenSource、IPv6 读取函数、构建 RunCommand | 允许平台会话、HTTP 测试和真实构建替换行为；使用函数和标准库接口，不建立策略继承树 |
 | Command（闭包） | 删除等操作的 confirmation.run | 保存待确认的操作，用户确认后执行一次；不虚构撤销服务器写入的能力 |

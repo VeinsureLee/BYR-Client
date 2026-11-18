@@ -49,6 +49,31 @@ func TestMigratedEndpointContracts(t *testing.T) {
 		{name: "favorposts", method: "GET", path: "/open/favorpost.json", urlQuery: url.Values{"page": {"1"}, "count": {"50"}}, call: func(c *Client) error { _, e := c.FavorPosts(ctx, Page{}); return e }},
 		{name: "topten", method: "GET", path: "/open/widget/topten.json", call: func(c *Client) error { _, e := c.TopTen(ctx); return e }},
 		{name: "recommend", method: "GET", path: "/open/widget/recommend.json", call: func(c *Client) error { _, e := c.Recommendations(ctx); return e }},
+		{name: "article search", method: "GET", path: "/open/search/article.json", urlQuery: url.Values{
+			"board": {"Go"}, "title1": {"北邮"}, "title2": {"校园"}, "titlen": {"广告"},
+			"author": {"alice"}, "day": {"7"}, "m": {"1"}, "a": {"2"}, "o": {"2"},
+			"page": {"2"}, "count": {"20"},
+		}, call: func(c *Client) error {
+			_, e := c.SearchArticles(ctx, Search{Board: "Go", Title: "北邮", Title2: "校园", ExcludeTitle: "广告", Author: "alice", Day: "7", Marked: "1", Attachment: "2", Order: "2", Page: Page{Number: 2, Size: 20}})
+			return e
+		}},
+		{
+			name:   "article full-site search",
+			method: "GET",
+			path:   "/open/search/article.json",
+			urlQuery: url.Values{
+				"board": {""}, "title1": {"北邮"}, "title2": {""}, "titlen": {""},
+				"author": {""}, "day": {""}, "m": {""}, "a": {""}, "o": {"1"},
+				"page": {"2"}, "count": {"30"},
+			},
+			call: func(c *Client) error {
+				_, err := c.SearchArticles(ctx, Search{
+					Title: "北邮",
+					Page:  Page{Number: 2, Size: 30},
+				})
+				return err
+			},
+		},
 		{name: "board search", method: "GET", path: "/open/search/board.json", urlQuery: url.Values{"board": {"北邮"}}, call: func(c *Client) error { _, e := c.SearchBoards(ctx, "北邮"); return e }},
 		{name: "self", method: "GET", path: "/open/user/getinfo.json", call: func(c *Client) error { _, e := c.Self(ctx); return e }},
 		{name: "user", method: "GET", path: "/open/user/query/alice.json", call: func(c *Client) error { _, e := c.User(ctx, "alice"); return e }},

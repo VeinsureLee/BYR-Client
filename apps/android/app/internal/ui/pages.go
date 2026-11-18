@@ -1260,6 +1260,11 @@ func (a *App) threadBoard() string {
 	if board := strings.TrimSpace(a.thread.Board); board != "" {
 		return board
 	}
+	if len(a.thread.Articles) > 0 {
+		if board := strings.TrimSpace(a.thread.Articles[0].Board); board != "" {
+			return board
+		}
+	}
 	return a.current().Name
 }
 
@@ -1572,147 +1577,6 @@ func flattenFavoriteBoards(f forum.Favorite) []forum.Board {
 	return out
 }
 
-func (a *App) searchPage(gtx layout.Context) layout.Dimensions {
-	ai := a.searchMode != "all"
-	title := "AI 搜索"
-	detail := "用自然语言描述你想找的内容"
-	icon := "hot"
-	if !ai {
-		title = "全站搜索"
-		detail = "按标题、作者、版面检索全站主题"
-		icon = "search"
-	}
-	rows := []layout.Widget{
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.iconTile(gtx, icon, 42, colorAccentSoft, colorAccent)
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(20), "搜索论坛")
-									l.Font.Weight = 700
-									return l.Layout(gtx)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(11), detail)
-									l.Color = colorMuted
-									return l.Layout(gtx)
-								}),
-							)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.badgeChip(gtx, title, colorAccentSoft, colorAccent)
-						}),
-					)
-				})
-			})
-		},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						dims, clicked := a.pill(gtx, "search-mode:ai", "AI 搜索", "hot", ai, false)
-						if clicked {
-							a.searchMode = "ai"
-							a.window.Invalidate()
-						}
-						return dims
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						dims, clicked := a.pill(gtx, "search-mode:all", "全站搜索", "search", !ai, false)
-						if clicked {
-							a.searchMode = "all"
-							a.window.Invalidate()
-						}
-						return dims
-					}),
-				)
-			})
-		},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				placeholder := "描述你想找的内容，例如：最近关于选课的讨论"
-				if !ai {
-					placeholder = "输入标题、作者或关键词"
-				}
-				return a.inputBox(gtx, &a.searchEdit, placeholder)
-			})
-		},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				label := "开始 AI 搜索"
-				if !ai {
-					label = "开始全站搜索"
-				}
-				dims, clicked := a.primaryButton(gtx, "search-submit", label)
-				if clicked {
-					a.message = "搜索接口尚未接入，当前版本仅完成界面。"
-					a.failed = false
-					a.window.Invalidate()
-				}
-				return dims
-			})
-		},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							l := material.Label(a.theme, unit.Sp(13), "搜索能力规划")
-							l.Font.Weight = 700
-							return l.Layout(gtx)
-						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.searchFeatureRow(gtx, "AI 搜索", "自然语言描述需求，返回相关主题与楼层")
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.searchFeatureRow(gtx, "全站搜索", "标题、作者、版面关键词检索")
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.searchFeatureRow(gtx, "结果页", "主题卡片、分页与跳转到对应楼层")
-						}),
-					)
-				})
-			})
-		},
-	}
-	return material.List(a.theme, &a.searchList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
-		return rows[i](gtx)
-	})
-}
-
-func (a *App) searchFeatureRow(gtx layout.Context, title, detail string) layout.Dimensions {
-	return layout.Inset{Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return a.badgeChip(gtx, "敬请期待", colorWarningSoft, colorWarning)
-			}),
-			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						l := material.Label(a.theme, unit.Sp(13), title)
-						l.Font.Weight = 600
-						return l.Layout(gtx)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						l := material.Label(a.theme, unit.Sp(11), detail)
-						l.Color = colorMuted
-						return l.Layout(gtx)
-					}),
-				)
-			}),
-		)
-	})
-}
-
 func (a *App) loadSelf() {
 	a.run("加载个人资料", func(ctx context.Context) (func(), error) {
 		u, err := a.core.Forum.Self(ctx)
@@ -1942,6 +1806,8 @@ func (a *App) pager(gtx layout.Context) layout.Dimensions {
 		total = max(1, int(a.thread.Pagination.TotalPages))
 	case PageTimeline, PageFavorites, PageBlacklist:
 		total = max(1, int(a.pagination.TotalPages))
+	case PageSearch:
+		total = max(1, int(a.searchPagination.TotalPages))
 	case PageMessages:
 		if a.current().Sub == "contacts" {
 			return layout.Dimensions{}
@@ -1994,6 +1860,8 @@ func (a *App) changePage(n int) {
 		a.loadBlacklist()
 	case PageMessages:
 		a.loadMessages()
+	case PageSearch:
+		a.loadSearch()
 	}
 }
 

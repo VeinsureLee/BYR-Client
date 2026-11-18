@@ -16,6 +16,7 @@ import (
 
 	"github.com/VeinsureLee/BYR-Client/apps/desktop/internal/bootstrap"
 	"github.com/VeinsureLee/BYR-Client/core/application"
+	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/resources/fonts"
 	"github.com/egoist/mygo/ui"
 )
@@ -458,6 +459,91 @@ func TestThreadReactionsCollectionAndQuoteMatchReference(t *testing.T) {
 	}
 }
 
+func TestWhisperReactionUsesCanonicalBoard(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+
+	h.mu.Lock()
+	h.overrides = map[string]string{
+		"/open/article/IWhisper/like/42.json": `{"like_sum":3,"votedown_sum":0}`,
+	}
+	h.mu.Unlock()
+
+	author := forum.User{ID: "alice"}
+	root := forum.Article{
+		ID:      "42",
+		Board:   "IWhisper",
+		Author:  author,
+		LikeSum: 2,
+	}
+	h.app.route = Route{Page: "thread", Name: "悄悄话", ID: "42", Number: 1}
+	h.app.thread = forum.Thread{
+		ID:       "42",
+		Board:    "IWhisper",
+		LikeSum:  2,
+		Articles: []forum.Article{root},
+	}
+	h.view.Frame()
+
+	h.click("赞 2")
+
+	if n := h.count("GET /open/article/IWhisper/like/42.json"); n != 1 {
+		t.Fatalf("canonical whisper like requests = %d, want 1", n)
+	}
+	if n := h.count("GET /open/article/悄悄话/like/42.json"); n != 0 {
+		t.Fatalf("localized board reached reaction endpoint %d times", n)
+	}
+	got := h.app.thread.Articles[0]
+	if !bool(got.IsLiked) || got.LikeSum != 3 {
+		t.Fatalf("reaction state = %+v", got)
+	}
+}
+
+func TestAnonymousReactionTreatsUnresolvedAuthorAsRecorded(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+
+	h.mu.Lock()
+	h.overrides = map[string]string{
+		"/open/article/IWhisper/like/42.json": `{"code":"0500","msg":"未知的论坛ID"}`,
+	}
+	h.mu.Unlock()
+
+	root := forum.Article{
+		ID:      "42",
+		Board:   "IWhisper",
+		Author:  forum.User{ID: "IWhisper#175"},
+		LikeSum: 2,
+	}
+	h.app.route = Route{Page: "thread", Name: "IWhisper", ID: "42", Number: 1}
+	h.app.thread = forum.Thread{
+		ID:       "42",
+		Board:    "IWhisper",
+		LikeSum:  2,
+		Articles: []forum.Article{root},
+	}
+	h.view.Frame()
+
+	h.click("赞 2")
+
+	if n := h.count("GET /open/article/IWhisper/like/42.json"); n != 1 {
+		t.Fatalf("anonymous like requests = %d, want 1", n)
+	}
+	if h.app.failed {
+		t.Fatalf("recorded anonymous like was reported as failed: %q", h.app.message)
+	}
+	got := h.app.thread.Articles[0]
+	if !bool(got.IsLiked) || got.LikeSum != 3 {
+		t.Fatalf("anonymous reaction state = %+v", got)
+	}
+
+	// The optimistic state must suppress a duplicate like request.
+	h.click("赞 3")
+	if n := h.count("GET /open/article/IWhisper/like/42.json"); n != 1 {
+		t.Fatalf("duplicate anonymous like reached the server %d times", n)
+	}
+}
+
 func TestTimelineIsSeparateFromFavorites(t *testing.T) {
 	h := newHarness(t)
 	h.login()
@@ -481,6 +567,12 @@ func TestSearchFavoritesAndAllMigratedScreens(t *testing.T) {
 	h.has("全站搜索")
 	h.has("AI 搜索")
 	h.has("敬请期待")
+	h.typeIn("搜索关键词", "测试")
+	h.click("开始搜索")
+	h.has("测试主题")
+	if n := h.count("GET /open/search/article.json"); n < 1 {
+		t.Fatalf("search requests = %d", n)
+	}
 	h.goTo(Route{Page: "favorites", Sub: "collection"})
 	h.has("收藏主题")
 	h.goTo(Route{Page: "contacts"})

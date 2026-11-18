@@ -441,33 +441,3 @@ func (a *App) favoritesView(c *ui.Context) {
 		})
 	}
 }
-func (a *App) searchView(c *ui.Context) {
-	ui.Column(c).FillWidth().Gap(12).Children(func() {
-		ui.Column(c).FillWidth().Padding(20).Gap(6).
-			Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
-			ui.Text(c, "搜索论坛").FontSize(22).Bold()
-			ui.Text(c, "搜索能力正在开发中。全站搜索与 AI 搜索都会在这里提供，当前暂不可用。").
-				FontSize(13).TextColor(c.Theme().TextMuted)
-		})
-		a.searchComingSoon(c, "全站搜索", "按标题、作者、版面检索全站主题。", "search")
-		a.searchComingSoon(c, "AI 搜索", "用自然语言描述你想找的内容，由 AI 帮你定位帖子。", "hot")
-	})
-}
-
-func (a *App) searchComingSoon(c *ui.Context, title, detail, icon string) {
-	ui.Row(c).FillWidth().Padding(18).Gap(14).AlignItems(ui.Center).
-		Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
-		ui.Column(c).Size(44, 44).Center().Shrink(0).Radius(12).
-			Background(accentSurface(c)).Children(func() {
-			ui.Icon(c, icons[icon]).Size(22, 22).TextColor(c.Theme().Accent)
-		})
-		ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-			ui.Row(c).Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, title).FontSize(16).Bold()
-				badge(c, "敬请期待", c.Theme().Warning)
-			})
-			ui.Text(c, detail).FontSize(12).TextColor(c.Theme().TextMuted)
-		})
-		control(c, "敬请期待", "clock", quiet).Disabled(true)
-	})
-}
