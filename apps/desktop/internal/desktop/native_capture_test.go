@@ -61,7 +61,7 @@ func captureNativeWindows(dir string) error {
 		a := New(services.App, &testDevice{}, func(fn func()) { window.Update(fn) })
 		var renderedPage string
 		var renderedBusy bool
-		window = mygo.NewWindow(mygo.WindowOptions{Title: "BYR Native Regression", Width: 1100, Height: 760, Hidden: true, Content: ui.View(func(c *ui.Context) { a.View(c); renderedPage = a.route.Page; renderedBusy = a.busy })})
+		window = mygo.NewWindow(mygo.WindowOptions{Title: "BYR Native Regression", Width: 1100, Height: 760, Hidden: true, Content: ui.View(func(c *ui.Context) { a.View(c); renderedPage = string(a.route.Page); renderedBusy = a.busy })})
 		window.OnClosed(a.Close)
 		window.ShowInactive()
 		a.Start()
@@ -88,7 +88,7 @@ func captureNativeWindows(dir string) error {
 						return
 					}
 				} else {
-					window.Update(func() { a.navigate(Route{Page: page}, false) })
+					window.Update(func() { a.navigate(Route{Page: Page(page)}, false) })
 				}
 				// A main-thread barrier ensures the route change has been applied.
 				mygo.RunOnMain(func() {})

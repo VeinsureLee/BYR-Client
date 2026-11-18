@@ -290,7 +290,7 @@ func (a *App) articleList(c *ui.Context, articles []forum.Article) {
 		emptyState(c, "message", "暂无主题", "这里还没有可显示的主题，稍后刷新试试。")
 		return
 	}
-	ui.List(c.Key("articles-"+a.route.Page+a.route.Name+strconv.Itoa(a.route.Number)), nil, len(articles), func(i int) {
+	ui.List(c.Key("articles-"+string(a.route.Page)+a.route.Name+strconv.Itoa(a.route.Number)), nil, len(articles), func(i int) {
 		v := articles[i]
 		ui.Column(c.Key(string(v.ID)+v.Board)).FillWidth().Padding(12, 14).Gap(6).
 			Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(12).Children(func() {

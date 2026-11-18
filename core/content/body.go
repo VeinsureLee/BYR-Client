@@ -62,7 +62,11 @@ func Parse(body string, attachments []forum.Attachment) []Part {
 		}
 		switch {
 		case group(1) != "":
-			i, _ := strconv.Atoi(group(1))
+			i, err := strconv.Atoi(group(1))
+			if err != nil {
+				addText("[图片缺失]")
+				continue
+			}
 			i--
 			if i < 0 || i >= len(files) {
 				addText("[图片缺失]")

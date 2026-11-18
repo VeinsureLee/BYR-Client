@@ -8,6 +8,7 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"github.com/VeinsureLee/BYR-Client/core/forum"
@@ -109,12 +110,19 @@ func (a *App) saveComposeDraft() error {
 	}
 	title := c.titleEditor.Text()
 	content := c.contentEditor.Text()
-	if strings.TrimSpace(title) == "" && strings.TrimSpace(content) == "" {
-		return nil
-	}
 	board := a.composeBoard()
 	draft := local.Draft{Title: title, Content: content}
 	key := local.DraftKey(board, c.replyID, c.editID)
+	if strings.TrimSpace(title) == "" && strings.TrimSpace(content) == "" {
+		if err := a.core.Local.SaveDraft(context.Background(), a.core.Session().Username, key, local.Draft{}); err != nil {
+			return err
+		}
+		if c.replyID == "" && c.editID == "" && board != "" {
+			return a.core.Local.SaveDraft(context.Background(), a.core.Session().Username,
+				local.DraftKey("", "", ""), local.Draft{})
+		}
+		return nil
+	}
 	if err := a.core.Local.SaveDraft(context.Background(), a.core.Session().Username, key, draft); err != nil {
 		return err
 	}
@@ -128,6 +136,20 @@ func (a *App) saveComposeDraft() error {
 	}
 	c.board = board
 	return nil
+}
+
+// composeInput lays out an editor and persists only when its text changed in
+// this frame. This keeps autosave in the composer boundary without making the
+// generic input widget aware of local storage.
+func (a *App) composeInput(gtx layout.Context, editor *widget.Editor, hint string) layout.Dimensions {
+	before := editor.Text()
+	dims := a.inputBox(gtx, editor, hint)
+	if before != editor.Text() {
+		if err := a.saveComposeDraft(); err != nil {
+			a.fail(err)
+		}
+	}
+	return dims
 }
 
 func (a *App) composePage(gtx layout.Context) layout.Dimensions {
@@ -223,7 +245,7 @@ func (a *App) composePage(gtx layout.Context) layout.Dimensions {
 	rows = append(rows,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return a.inputBox(gtx, &c.titleEditor, "帖子标题")
+				return a.composeInput(gtx, &c.titleEditor, "帖子标题")
 			})
 		},
 		func(gtx layout.Context) layout.Dimensions {
@@ -231,7 +253,7 @@ func (a *App) composePage(gtx layout.Context) layout.Dimensions {
 				height := gtx.Dp(unit.Dp(240))
 				gtx.Constraints.Min.Y = height
 				gtx.Constraints.Max.Y = height
-				return a.inputBox(gtx, &c.contentEditor, "正文（支持 UBB）")
+				return a.composeInput(gtx, &c.contentEditor, "正文（支持 UBB）")
 			})
 		},
 		func(gtx layout.Context) layout.Dimensions {
@@ -336,10 +358,6 @@ func (a *App) publish() {
 			a.compose.submitted = true
 			a.compose.publishing = false
 			a.compose.publishedID = string(result.Article.ID)
-			if editID == "" && post.ReplyID == "" {
-				_ = a.core.Local.SaveDraft(ctx, a.core.Session().Username,
-					local.DraftKey("", "", ""), local.Draft{})
-			}
 			id := threadRoute
 			if post.ReplyID == "" && editID == "" {
 				id = threadID(result.Article)

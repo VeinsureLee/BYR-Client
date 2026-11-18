@@ -66,6 +66,10 @@ func TestLoginPersistenceExpiryAndLogout(t *testing.T) {
 	if creds.value.Token != "oauth-token" || a.Session().Username != "alice" {
 		t.Fatal("session not persisted")
 	}
+	a.RememberCollection("Go", "42")
+	if !a.CollectionState("Go", "42", false) {
+		t.Fatal("collection state was not remembered")
+	}
 	creds.fail = true
 	if err := a.Logout(ctx); err == nil || a.Session().Token == "" {
 		t.Fatal("failed credential clear pretended to logout")
@@ -73,6 +77,9 @@ func TestLoginPersistenceExpiryAndLogout(t *testing.T) {
 	creds.fail = false
 	if err := a.Logout(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if a.CollectionState("Go", "42", false) {
+		t.Fatal("logout retained the previous account's collection state")
 	}
 	if _, err := a.Token(ctx); !errors.Is(err, forum.ErrUnauthenticated) {
 		t.Fatal(err)
@@ -90,7 +97,9 @@ func TestPublishKeepsFailedDraftAndSeparatesCleanupFailure(t *testing.T) {
 	creds := &credentials{value: Credential{Username: "a", Token: "t"}}
 	store, _ := local.Open(ctx, nil)
 	key := local.DraftKey("Go", "", "")
+	globalKey := local.DraftKey("", "", "")
 	store.SaveDraft(ctx, "a", key, local.Draft{Title: "draft", Content: "body"})
+	store.SaveDraft(ctx, "a", globalKey, local.Draft{Title: "draft", Content: "body"})
 	fail := true
 	posts := 0
 	a := appFor(t, func(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +127,9 @@ func TestPublishKeepsFailedDraftAndSeparatesCleanupFailure(t *testing.T) {
 	}
 	if _, ok := store.Draft("a", key); ok {
 		t.Fatal("successful publish retained draft")
+	}
+	if _, ok := store.Draft("a", globalKey); ok {
+		t.Fatal("successful publish retained boardless draft")
 	}
 	if posts != 2 {
 		t.Fatalf("retried mutation: %d", posts)

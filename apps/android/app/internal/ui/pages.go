@@ -165,12 +165,16 @@ func (a *App) textAction(gtx layout.Context, key, label string) (layout.Dimensio
 }
 
 func (a *App) loadHome() {
+	route := a.current()
 	a.run("加载分区", func(ctx context.Context) (func(), error) {
 		root, err := a.core.Forum.Sections(ctx)
 		if err != nil {
 			return nil, err
 		}
 		return func() {
+			if a.current() != route {
+				return
+			}
 			a.sections = root.Sections
 			a.section = forum.Section{}
 			a.boards = nil
@@ -304,6 +308,9 @@ func (a *App) homePage(gtx layout.Context) layout.Dimensions {
 		if len(a.sections) == 0 && a.busy {
 			return a.pendingPage(gtx, "正在加载分区…")
 		}
+		if len(a.sections) == 0 && a.failed {
+			return a.requestErrorPage(gtx)
+		}
 		rows = append(rows, a.homeOverview)
 		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
 			return a.sectionTitle(gtx, "分区", fmt.Sprintf("%d 个分区", len(a.sections)))
@@ -396,6 +403,11 @@ func (a *App) sectionPage(gtx layout.Context) layout.Dimensions {
 				return a.sectionEntryCard(gtx, section, pick)
 			})
 		}
+		if len(a.sections) == 0 {
+			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+				return a.emptyOrPending(gtx, "暂无可浏览的分区")
+			})
+		}
 	} else {
 		for _, sub := range a.section.Subsections {
 			sub := sub
@@ -411,7 +423,7 @@ func (a *App) sectionPage(gtx layout.Context) layout.Dimensions {
 		}
 		if len(a.section.Subsections) == 0 && len(a.boards) == 0 {
 			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-				return a.empty(gtx, "这个分区暂无可浏览的版面")
+				return a.emptyOrPending(gtx, "这个分区暂无可浏览的版面")
 			})
 		}
 	}
@@ -696,7 +708,12 @@ func (a *App) loadBoard() {
 	r := a.current()
 	a.run("加载版面", func(ctx context.Context) (func(), error) {
 		v, err := a.core.Forum.Board(ctx, r.Name, forum.Page{Number: max(1, r.Number), Size: 30})
-		return func() { a.board = v }, err
+		return func() {
+			if a.current() != r {
+				return
+			}
+			a.board = v
+		}, err
 	})
 }
 
@@ -886,11 +903,17 @@ func (a *App) loadThread() {
 		}
 		v.Collect = forum.Flag(a.core.CollectionState(r.Name, r.ID, bool(v.Collect)))
 		return func() {
+			if a.current() != r {
+				return
+			}
 			a.thread = v
 			if v.Pagination.CurrentPage > 0 {
 				a.stack[len(a.stack)-1].Number = int(v.Pagination.CurrentPage)
 			}
-			_ = a.core.Local.Visit(ctx, a.core.Session().Username, local.History{Board: r.Name, ID: r.ID, Title: v.Title})
+			if err := a.core.Local.Visit(ctx, a.core.Session().Username, local.History{Board: r.Name, ID: r.ID, Title: v.Title}); err != nil {
+				a.message = "阅读历史保存失败：" + err.Error()
+				a.failed = true
+			}
 		}, nil
 	})
 }
@@ -908,7 +931,7 @@ func (a *App) threadPage(gtx layout.Context) layout.Dimensions {
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if len(a.thread.Articles) == 0 {
-				return a.empty(gtx, "暂无帖子内容")
+				return a.emptyOrPending(gtx, "暂无帖子内容")
 			}
 			return material.List(a.theme, &a.threadList).Layout(gtx, len(a.thread.Articles), func(gtx layout.Context, i int) layout.Dimensions {
 				return a.postCard(gtx, i, a.thread.Articles[i])
@@ -1701,6 +1724,9 @@ func (a *App) loadSelf() {
 }
 
 func (a *App) selfPage(gtx layout.Context) layout.Dimensions {
+	if a.user.ID == "" && a.failed && !a.busy {
+		return a.requestErrorPage(gtx)
+	}
 	u := a.user
 	rows := make([]layout.Widget, 0, 4)
 	rows = append(rows, func(gtx layout.Context) layout.Dimensions {
@@ -1987,6 +2013,9 @@ func threadID(v forum.Article) string {
 }
 
 func articleTime(v forum.Article) int64 {
-	n, _ := strconv.ParseInt(string(v.PostTime), 10, 64)
+	n, err := strconv.ParseInt(string(v.PostTime), 10, 64)
+	if err != nil {
+		return 0
+	}
 	return n
 }

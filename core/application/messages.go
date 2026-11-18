@@ -19,7 +19,13 @@ type ChatMessage struct {
 	Mine bool
 }
 
-func timestamp(s forum.Scalar) int64 { v, _ := strconv.ParseInt(string(s), 10, 64); return v }
+func timestamp(s forum.Scalar) int64 {
+	v, err := strconv.ParseInt(string(s), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
 func (a *App) Contacts(ctx context.Context) ([]Contact, error) {
 	byID := map[forum.Scalar]Contact{}
 	var failures []error

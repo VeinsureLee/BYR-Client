@@ -18,17 +18,26 @@ type Credential struct {
 	Username, Token string
 	ExpiresAt       int64
 }
+
+// CredentialStore persists only the session credential. Implementations belong
+// to the platform boundary so the application layer remains testable.
 type CredentialStore interface {
 	Load(context.Context) (Credential, error)
 	Save(context.Context, Credential) error
 	Clear(context.Context) error
 }
+
+// Options supplies the application facade's concrete protocol and local-state
+// collaborators. Local is required; Credentials may be nil for session-only use.
 type Options struct {
 	BaseURL     string
 	HTTPClient  *http.Client
 	Local       *local.Store
 	Credentials CredentialStore
 }
+
+// App coordinates forum use cases while keeping storage and platform services
+// behind consumer-owned interfaces.
 type App struct {
 	Forum       *forum.Client
 	Local       *local.Store
@@ -38,6 +47,7 @@ type App struct {
 	collections map[collectionKey]bool
 }
 
+// New constructs an application facade without performing I/O.
 func New(o Options) (*App, error) {
 	if o.Local == nil {
 		return nil, errors.New("local store is required")
@@ -50,7 +60,13 @@ func New(o Options) (*App, error) {
 	a.Forum = f
 	return a, nil
 }
-func (a *App) Session() Credential { a.mu.RLock(); defer a.mu.RUnlock(); return a.session }
+
+// Session returns a copy of the current in-memory credential.
+func (a *App) Session() Credential {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.session
+}
 func (a *App) Token(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -117,17 +133,20 @@ func (a *App) Logout(ctx context.Context) error {
 	}
 	a.mu.Lock()
 	a.session = Credential{}
+	a.collections = nil
 	a.mu.Unlock()
 	return nil
 }
 
-// Publish removes the draft only after server success. A local cleanup error is
-// separate: callers must not retry a published post because disk cleanup failed.
+// Publication reports the server article and a separate local cleanup error.
+// Callers must not retry a published post because disk cleanup failed.
 type Publication struct {
 	Article    forum.Article
 	LocalError error
 }
 
+// Publish validates permissions, performs the server mutation, and removes
+// local composer drafts only after the server confirms success.
 func (a *App) Publish(ctx context.Context, p forum.Post, editID string) (Publication, error) {
 	if strings.TrimSpace(p.Board) == "" || strings.TrimSpace(p.Title) == "" || strings.TrimSpace(p.Content) == "" {
 		return Publication{}, errors.New("版面、标题和内容不能为空")
@@ -149,8 +168,25 @@ func (a *App) Publish(ctx context.Context, p forum.Post, editID string) (Publica
 	if err != nil {
 		return Publication{}, err
 	}
-	cleanup := a.Local.SaveDraft(ctx, account, local.DraftKey(p.Board, p.ReplyID, editID), local.Draft{})
+	cleanup := a.clearPublicationDrafts(ctx, account, p, editID)
 	return Publication{Article: article, LocalError: cleanup}, nil
+}
+
+// clearPublicationDrafts removes both the selected-board draft and the
+// boardless new-post draft used by the mobile composer. Each deletion is
+// attempted so one failed cleanup does not leave another copy behind.
+func (a *App) clearPublicationDrafts(ctx context.Context, account string, p forum.Post, editID string) error {
+	keys := []string{local.DraftKey(p.Board, p.ReplyID, editID)}
+	if p.ReplyID == "" && editID == "" && p.Board != "" {
+		keys = append(keys, local.DraftKey("", "", ""))
+	}
+	var failures []error
+	for _, key := range keys {
+		if err := a.Local.SaveDraft(ctx, account, key, local.Draft{}); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // ValidatePost is shared by presentation previews and the publishing use case.

@@ -18,6 +18,7 @@ import (
 
 	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/platform"
 	"github.com/VeinsureLee/BYR-Client/core/application"
+	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
@@ -107,6 +108,14 @@ func TestLogoutThenNewAppStartsAtLogin(t *testing.T) {
 	first.dir = dir
 	first.stack = []Route{{Page: PageSelf}}
 	first.username.SetText("alice")
+	first.mailbox = forum.Mailbox{Mails: []forum.Mail{{Title: "old mailbox"}}}
+	first.mail = forum.Mail{Title: "old mail"}
+	first.refers = forum.Refers{Articles: []forum.ReferEntry{{Title: "old refer"}}}
+	first.contacts = []application.Contact{{User: forum.User{ID: "old-contact"}}}
+	first.chat = []application.ChatMessage{{Mail: forum.Mail{Title: "old chat"}}}
+	first.blacklist = forum.Blacklist{Users: []forum.User{{ID: "old-blocked"}}}
+	first.vote = forum.Vote{Title: "old vote"}
+	first.bet = forum.Bet{Title: "old bet"}
 	first.logout()
 	waitForIdle(t, first)
 	if got := first.current().Page; got != PageLogin {
@@ -114,6 +123,12 @@ func TestLogoutThenNewAppStartsAtLogin(t *testing.T) {
 	}
 	if core.Session().Token != "" {
 		t.Fatal("logout retained the in-memory token")
+	}
+	if len(first.mailbox.Mails) != 0 || first.mail.Title != "" || len(first.refers.Articles) != 0 ||
+		len(first.contacts) != 0 || len(first.chat) != 0 || len(first.blacklist.Users) != 0 ||
+		first.vote.Title != "" || first.bet.Title != "" {
+		t.Fatalf("logout retained account-scoped message state: mailbox=%+v mail=%+v refers=%+v contacts=%+v chat=%+v blacklist=%+v vote=%+v bet=%+v",
+			first.mailbox, first.mail, first.refers, first.contacts, first.chat, first.blacklist, first.vote, first.bet)
 	}
 	if _, err := os.Stat(credentials.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("logout retained credential file: %v", err)

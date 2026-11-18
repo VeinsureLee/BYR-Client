@@ -170,7 +170,11 @@ func (c *Client) request(ctx context.Context, method, prefix string, parts []str
 	// Keep the empty attachment ID: /attachment/<board>/add/.json is a
 	// different endpoint from /attachment/<board>/add.json.
 	endpoint.RawPath = strings.TrimRight(c.base.EscapedPath(), "/") + "/" + strings.Join(path, "/")
-	endpoint.Path, _ = url.PathUnescape(endpoint.RawPath)
+	pathValue, err := url.PathUnescape(endpoint.RawPath)
+	if err != nil {
+		return fmt.Errorf("could not build forum request path: %w", err)
+	}
+	endpoint.Path = pathValue
 	if c.ipv6 != nil && c.ipv6() && endpoint.Host == "bbs.byr.cn" && prefix != "oauth2" && prefix != "user" {
 		endpoint.Host = "bbs6.byr.cn"
 	}

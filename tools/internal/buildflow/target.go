@@ -16,7 +16,10 @@ func ParseTarget(value string) (Target, error) {
 	if !allowed[value] {
 		return Target{}, fmt.Errorf("unsupported desktop target %q", value)
 	}
-	os, arch, _ := strings.Cut(value, "/")
+	os, arch, ok := strings.Cut(value, "/")
+	if !ok {
+		return Target{}, fmt.Errorf("invalid desktop target %q", value)
+	}
 	return Target{OS: os, Arch: arch}, nil
 }
 

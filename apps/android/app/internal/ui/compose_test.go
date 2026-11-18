@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -103,6 +104,58 @@ func TestBackFromComposeSavesDraft(t *testing.T) {
 	draft, ok := a.core.Local.Draft(a.core.Session().Username, local.DraftKey("Go", "", ""))
 	if !ok || draft.Title != "草稿标题" || draft.Content != "草稿正文" {
 		t.Fatalf("draft was not saved: ok=%v draft=%+v", ok, draft)
+	}
+}
+
+func TestClearingComposeRemovesSavedDrafts(t *testing.T) {
+	a := composeTestApp(t, "")
+	defer a.Close()
+	a.stack = []Route{{Page: PageBoard, Name: "Go", Number: 1}}
+	a.openCompose("Go", "", "new")
+	a.compose.titleEditor.SetText("草稿标题")
+	a.compose.contentEditor.SetText("草稿正文")
+	if err := a.saveComposeDraft(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.core.Local.Draft(a.core.Session().Username, local.DraftKey("Go", "", "")); !ok {
+		t.Fatal("draft was not stored before clearing")
+	}
+
+	a.compose.titleEditor.SetText("")
+	a.compose.contentEditor.SetText("")
+	if err := a.saveComposeDraft(); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{local.DraftKey("Go", "", ""), local.DraftKey("", "", "")} {
+		if _, ok := a.core.Local.Draft(a.core.Session().Username, key); ok {
+			t.Fatalf("clearing composer retained draft %q", key)
+		}
+	}
+}
+
+func TestComposeInputAutosavesChangedText(t *testing.T) {
+	a := composeTestApp(t, "")
+	defer a.Close()
+	a.stack = []Route{{Page: PageBoard, Name: "Go", Number: 1}}
+	a.openCompose("Go", "", "new")
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 680)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.composePage(gtx)
+	router.Frame(&ops)
+	gtx.Execute(key.FocusCmd{Tag: &a.compose.titleEditor})
+	router.Queue(key.EditEvent{Range: key.Range{Start: 0, End: 0}, Text: "自动保存标题"})
+	ops.Reset()
+	a.composePage(gtx)
+	draft, ok := a.core.Local.Draft(a.core.Session().Username, local.DraftKey("Go", "", ""))
+	if !ok || draft.Title != "自动保存标题" {
+		t.Fatalf("changed editor text was not autosaved: ok=%v draft=%+v", ok, draft)
 	}
 }
 

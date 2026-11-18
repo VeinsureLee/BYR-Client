@@ -19,7 +19,10 @@ func (a *App) messageTabs(c *ui.Context) {
 	case "mail":
 		active = "mailbox"
 	}
-	tabs := []struct{ page, name, label, icon string }{
+	tabs := []struct {
+		page              Page
+		name, label, icon string
+	}{
 		{"contacts", "", "私信会话", "message"},
 		{"mailbox", "inbox", "收件箱", "mail"},
 		{"mailbox", "outbox", "发件箱", "send"},

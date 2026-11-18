@@ -7,13 +7,16 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-var navigation = []struct{ page, label, icon string }{
+var navigation = []struct {
+	page        Page
+	label, icon string
+}{
 	{"home", "首页", "home"}, {"top", "十大", "hot"}, {"timeline", "时间线", "clock"},
 	{"favorites", "收藏", "star"}, {"compose", "发帖", "plus"}, {"search", "搜索", "search"},
 	{"contacts", "消息", "message"}, {"self", "我", "user"},
 }
 
-func navigationGroup(page string) string {
+func navigationGroup(page Page) Page {
 	switch page {
 	case "home", "board", "thread":
 		return "home"
@@ -52,7 +55,7 @@ func (a *App) shell(c *ui.Context) {
 			})
 			ui.Divider(c)
 			a.statusView(c)
-			ui.Column(c.Key(a.route.Page)).Grow(1).FillWidth().MinWidth(0).Padding(20, 24).Gap(14).Children(func() {
+			ui.Column(c.Key(string(a.route.Page))).Grow(1).FillWidth().MinWidth(0).Padding(20, 24).Gap(14).Children(func() {
 				if a.pageError != "" {
 					a.pageErrorView(c)
 					return

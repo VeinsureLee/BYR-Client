@@ -148,8 +148,12 @@ func doctor(output io.Writer, engine buildflow.Engine) error {
 		fmt.Fprintln(output, "Android SDK: set ANDROID_HOME when evaluating Android UI")
 	} else {
 		fmt.Fprintf(output, "Android SDK: %s\n", sdk)
-		ndks, _ := filepath.Glob(filepath.Join(sdk, "ndk", "*"))
-		fmt.Fprintf(output, "Android NDK installations found: %d\n", len(ndks))
+		ndks, err := filepath.Glob(filepath.Join(sdk, "ndk", "*"))
+		if err != nil {
+			fmt.Fprintf(output, "Android NDK scan failed: %v\n", err)
+		} else {
+			fmt.Fprintf(output, "Android NDK installations found: %d\n", len(ndks))
+		}
 	}
 	for _, tool := range []string{"java", "adb"} {
 		path, err := exec.LookPath(tool)

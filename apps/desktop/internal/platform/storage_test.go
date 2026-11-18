@@ -56,3 +56,13 @@ func TestDirWritableRejectsFilePath(t *testing.T) {
 		t.Fatal("a regular file must not be treated as a writable directory")
 	}
 }
+
+func TestInvalidStateIsReportedWhenBackupCannotRecoverIt(t *testing.T) {
+	file := FileState{Path: filepath.Join(t.TempDir(), "state.json")}
+	if err := os.WriteFile(file.Path, []byte(`{broken`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Load(context.Background()); err == nil {
+		t.Fatal("invalid state was returned as a successful load")
+	}
+}

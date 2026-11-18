@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -32,6 +33,9 @@ func (f FileState) Load(ctx context.Context) ([]byte, error) {
 	if backup, backupErr := os.ReadFile(f.Path + ".bak"); backupErr == nil && len(backup) > 0 && json.Valid(backup) {
 		return backup, nil
 	}
+	if err == nil && len(b) > 0 {
+		return nil, errors.New("state file is invalid")
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -48,10 +52,7 @@ func (f FileState) Save(ctx context.Context, b []byte) error {
 		// Windows security products may deny creating the hidden temporary
 		// file used by the atomic path. Update the established files directly,
 		// keeping a valid previous copy for crash recovery.
-		if old, err := os.ReadFile(f.Path); err == nil && len(old) > 0 && json.Valid(old) {
-			_ = writeDirect(f.Path+".bak", old)
-		}
-		return writeDirect(f.Path, b)
+		return f.saveDirectWithBackup(b)
 	}
 	var last error
 	for attempt := 0; attempt < 6; attempt++ {
@@ -75,11 +76,25 @@ func (f FileState) Save(ctx context.Context, b []byte) error {
 		// updating the established state file. Prefer keeping preferences and
 		// history working over failing every save; this fallback is not atomic,
 		// so it is used only after the atomic path was denied repeatedly.
-		if err := writeDirect(f.Path, b); err == nil {
+		if err := f.saveDirectWithBackup(b); err == nil {
 			return nil
+		} else {
+			return err
 		}
 	}
 	return last
+}
+
+func (f FileState) saveDirectWithBackup(b []byte) error {
+	old, err := os.ReadFile(f.Path)
+	if err == nil && len(old) > 0 && json.Valid(old) {
+		if err := writeDirect(f.Path+".bak", old); err != nil {
+			return fmt.Errorf("backup state: %w", err)
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read previous state: %w", err)
+	}
+	return writeDirect(f.Path, b)
 }
 
 func writeDirect(path string, b []byte) error {

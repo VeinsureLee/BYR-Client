@@ -22,9 +22,17 @@ type Device interface {
 	Pick(context.Context) (string, []byte, error)
 	Save(string, []byte) error
 }
+
+// Page identifies a desktop route. Keeping route names out of arbitrary
+// strings makes navigation APIs self-documenting without introducing a page
+// hierarchy or inheritance tree.
+type Page string
+
+// Route is the navigation state for a desktop view.
 type Route struct {
-	Page, Name, ID, Sub string
-	Number              int
+	Page          Page
+	Name, ID, Sub string
+	Number        int
 }
 type App struct {
 	Core                    *application.App
@@ -625,7 +633,10 @@ func formatTime(s forum.Scalar) string {
 }
 
 func articleTime(v forum.Article) int64 {
-	n, _ := strconv.ParseInt(string(v.PostTime), 10, 64)
+	n, err := strconv.ParseInt(string(v.PostTime), 10, 64)
+	if err != nil {
+		return 0
+	}
 	return n
 }
 func empty(c *ui.Context, n int) {

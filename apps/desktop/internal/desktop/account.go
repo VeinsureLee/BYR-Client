@@ -54,7 +54,10 @@ func (a *App) userView(c *ui.Context) {
 				ui.Divider(c)
 				ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
 					if a.route.Page == "self" {
-						for _, item := range []struct{ page, label, icon string }{
+						for _, item := range []struct {
+							page        Page
+							label, icon string
+						}{
 							{"favorites", "我的收藏", "star"},
 							{"history", "阅读历史", "clock"},
 							{"blacklist", "黑名单", "user"},

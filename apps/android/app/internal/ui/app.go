@@ -428,6 +428,19 @@ func (a *App) resetSessionUI() {
 	a.history = nil
 	a.favoriteTab = "boards"
 	a.compose = composeState{}
+	a.mailEditor = mailEditor{}
+	a.mailbox = forum.Mailbox{}
+	a.mail = forum.Mail{}
+	a.refers = forum.Refers{}
+	a.contacts = nil
+	a.chat = nil
+	a.blacklist = forum.Blacklist{}
+	a.vote = forum.Vote{}
+	a.bet = forum.Bet{}
+	a.blacklistIn.SetText("")
+	a.scoreIn.SetText("")
+	a.forwardIn.SetText("")
+	a.choice = ""
 	a.lastClip = ""
 	a.images = map[string]*mobileImage{}
 	a.clicks = map[string]*widget.Clickable{}
@@ -473,6 +486,15 @@ func (a *App) back() {
 		}
 	}
 	a.stack = a.stack[:len(a.stack)-1]
+	route := a.current()
+	a.clearRouteModel(route)
+	a.failed = false
+	a.message = ""
+	a.post(func() {
+		if a.current() == route && !a.busy {
+			a.restoreRoute(route)
+		}
+	})
 	a.window.Invalidate()
 }
 
@@ -718,6 +740,9 @@ func (a *App) pendingPage(gtx layout.Context, text string) layout.Dimensions {
 }
 
 func (a *App) emptyOrPending(gtx layout.Context, text string) layout.Dimensions {
+	if a.failed && !a.busy {
+		return a.requestErrorPage(gtx)
+	}
 	if a.busy {
 		if a.showLoading() {
 			return a.loadingPage(gtx, "正在加载…")
@@ -725,6 +750,40 @@ func (a *App) emptyOrPending(gtx layout.Context, text string) layout.Dimensions 
 		return a.skeleton(gtx)
 	}
 	return a.empty(gtx, text)
+}
+
+// requestErrorPage keeps a failed read distinct from a successful empty
+// response and offers the same route-aware retry used by the toolbar.
+func (a *App) requestErrorPage(gtx layout.Context) layout.Dimensions {
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(24)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.H6(a.theme, "内容加载失败")
+					l.Color = colorDanger
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Body2(a.theme, a.message)
+					l.Color = colorMuted
+					l.MaxLines = 4
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					btn := a.click("retry-page")
+					clicked := btn.Clicked(gtx)
+					dims := material.Button(a.theme, btn, "重试").Layout(gtx)
+					if clicked {
+						a.failed = false
+						a.refreshCurrent()
+					}
+					return dims
+				}),
+			)
+		})
+	})
 }
 
 func (a *App) skeleton(gtx layout.Context) layout.Dimensions {

@@ -67,6 +67,32 @@ func TestAccountIsolationRoundTripAndHistoryBound(t *testing.T) {
 		t.Fatal("empty draft retained")
 	}
 }
+
+func TestReplyAndEditDraftsHaveDistinctKeys(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replyKey := DraftKey("Go", "42", "")
+	editKey := DraftKey("Go", "", "42")
+	if replyKey == editKey {
+		t.Fatalf("reply and edit drafts share key %q", replyKey)
+	}
+	if err := s.SaveDraft(ctx, "alice", replyKey, Draft{Content: "reply"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveDraft(ctx, "alice", editKey, Draft{Content: "edit"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := s.Draft("alice", replyKey); !ok || got.Content != "reply" {
+		t.Fatalf("reply draft = %+v, ok=%v", got, ok)
+	}
+	if got, ok := s.Draft("alice", editKey); !ok || got.Content != "edit" {
+		t.Fatalf("edit draft = %+v, ok=%v", got, ok)
+	}
+}
+
 func TestWriteFailureDoesNotPublishUnpersistedState(t *testing.T) {
 	ctx := context.Background()
 	disk := &memoryDisk{}

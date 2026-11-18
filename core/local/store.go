@@ -45,15 +45,18 @@ type Draft struct {
 }
 
 func (d Draft) Empty() bool { return d.Title == "" && d.Content == "" && len(d.Attachments) == 0 }
+
+// DraftKey returns the stable account-local key for a composer. Reply keys
+// retain the historical shape for existing users; edit keys include their
+// operation so editing article 42 cannot overwrite a reply to article 42.
 func DraftKey(board, replyID, editID string) string {
-	suffix := editID
-	if suffix == "" {
-		suffix = replyID
+	if editID != "" {
+		return "composeDraft." + board + ".edit." + editID
 	}
-	if suffix == "" {
-		suffix = "new"
+	if replyID != "" {
+		return "composeDraft." + board + "." + replyID
 	}
-	return "composeDraft." + board + "." + suffix
+	return "composeDraft." + board + ".new"
 }
 
 type History struct {
@@ -113,9 +116,15 @@ func (s *Store) Draft(account, key string) (Draft, bool) {
 	return cloneDraft(v), ok
 }
 func cloneDraft(d Draft) Draft {
-	b, _ := json.Marshal(d)
-	var out Draft
-	_ = json.Unmarshal(b, &out)
+	out := d
+	if d.Attachments == nil {
+		return out
+	}
+	out.Attachments = make(forum.List[forum.Attachment], len(d.Attachments))
+	for i, attachment := range d.Attachments {
+		out.Attachments[i] = attachment
+		out.Attachments[i].Files = append(forum.List[forum.File](nil), attachment.Files...)
+	}
 	return out
 }
 func (s *Store) SaveDraft(ctx context.Context, account, key string, draft Draft) error {

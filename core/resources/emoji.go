@@ -11,7 +11,10 @@ import (
 var Emoji embed.FS
 
 func EmojiNames() []string {
-	entries, _ := fs.ReadDir(Emoji, "em")
+	entries, err := fs.ReadDir(Emoji, "em")
+	if err != nil {
+		return nil
+	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		names = append(names, e.Name())

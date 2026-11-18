@@ -32,7 +32,10 @@ func (c *Client) ExperimentalStatus(ctx context.Context) (json.RawMessage, error
 	if err != nil {
 		return nil, err
 	}
-	verify, _ := base64.StdEncoding.DecodeString(experimentalVerifyKey)
+	verify, err := base64.StdEncoding.DecodeString(experimentalVerifyKey)
+	if err != nil {
+		return nil, errors.New("invalid experimental verification key")
+	}
 	return decryptExperimental(envelope, key, verify)
 }
 func decryptExperimental(e EncryptedData, key *ecdh.PrivateKey, verify ed25519.PublicKey) (json.RawMessage, error) {

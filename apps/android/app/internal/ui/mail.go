@@ -202,7 +202,7 @@ func (a *App) messagesPage(gtx layout.Context) layout.Dimensions {
 
 func (a *App) contactsBody(gtx layout.Context) layout.Dimensions {
 	if len(a.contacts) == 0 {
-		return a.empty(gtx, "还没有私信")
+		return a.emptyOrPending(gtx, "还没有私信")
 	}
 	return material.List(a.theme, &a.auxList).Layout(gtx, len(a.contacts), func(gtx layout.Context, i int) layout.Dimensions {
 		contact := a.contacts[i]
@@ -252,7 +252,7 @@ func (a *App) contactsBody(gtx layout.Context) layout.Dimensions {
 
 func (a *App) mailboxBody(gtx layout.Context) layout.Dimensions {
 	if len(a.mailbox.Mails) == 0 {
-		return a.empty(gtx, "信箱是空的")
+		return a.emptyOrPending(gtx, "信箱是空的")
 	}
 	return material.List(a.theme, &a.auxList).Layout(gtx, len(a.mailbox.Mails), func(gtx layout.Context, i int) layout.Dimensions {
 		m := a.mailbox.Mails[i]
@@ -327,7 +327,7 @@ func (a *App) refersBody(gtx layout.Context) layout.Dimensions {
 		layout.Rigid(header),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if len(a.refers.Articles) == 0 {
-				return a.empty(gtx, "暂无提醒")
+				return a.emptyOrPending(gtx, "暂无提醒")
 			}
 			return material.List(a.theme, &a.auxList).Layout(gtx, len(a.refers.Articles), func(gtx layout.Context, i int) layout.Dimensions {
 				refer := a.refers.Articles[i]
@@ -444,7 +444,7 @@ func (a *App) chatPage(gtx layout.Context) layout.Dimensions {
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if len(a.chat) == 0 {
-				return a.empty(gtx, "还没有会话消息")
+				return a.emptyOrPending(gtx, "还没有会话消息")
 			}
 			return material.List(a.theme, &a.auxList).Layout(gtx, len(a.chat), func(gtx layout.Context, i int) layout.Dimensions {
 				return a.chatBubble(gtx, name, a.chat[i])
@@ -503,6 +503,12 @@ func (a *App) chatBubble(gtx layout.Context, name string, message application.Ch
 
 func (a *App) mailPage(gtx layout.Context) layout.Dimensions {
 	m := a.mail
+	if m.Index == "" && a.busy {
+		return a.pendingPage(gtx, "正在加载站内信…")
+	}
+	if m.Index == "" && a.failed {
+		return a.requestErrorPage(gtx)
+	}
 	box := a.current().Name
 	return material.List(a.theme, &a.auxList).Layout(gtx, 2, func(gtx layout.Context, i int) layout.Dimensions {
 		switch i {

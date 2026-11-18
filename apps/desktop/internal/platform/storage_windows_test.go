@@ -40,3 +40,25 @@ func TestDirectStateSaveKeepsRecoverableBackup(t *testing.T) {
 		t.Fatalf("backup was not recovered: %s", b)
 	}
 }
+
+func TestDirectStateSaveDoesNotOverwriteWhenBackupFails(t *testing.T) {
+	dir := t.TempDir()
+	file := FileState{Path: filepath.Join(dir, "state.json")}
+	old := []byte(`{"version":1}`)
+	if err := os.WriteFile(file.Path, old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(file.Path+".bak", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Save(context.Background(), []byte(`{"version":2}`)); err == nil {
+		t.Fatal("save succeeded despite an unusable backup path")
+	}
+	got, err := os.ReadFile(file.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(old) {
+		t.Fatalf("failed backup overwrote state: got %s", got)
+	}
+}

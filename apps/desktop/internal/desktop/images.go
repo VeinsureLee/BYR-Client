@@ -56,7 +56,11 @@ func (a *App) image(c *ui.Context, raw string, w, h float32, click bool) {
 			if err == nil {
 				source, err = ui.DecodeImage(b)
 				if len(b) > 6 && (string(b[:6]) == "GIF89a" || string(b[:6]) == "GIF87a") {
-					decoder, _ = ui.NewGIFDecoder(b)
+					// A GIF can still be shown as a static image when animation
+					// support is unavailable, so keep the decoder optional.
+					if candidate, decodeErr := ui.NewGIFDecoder(b); decodeErr == nil {
+						decoder = candidate
+					}
 				}
 			}
 			a.update(func() {
@@ -66,8 +70,10 @@ func (a *App) image(c *ui.Context, raw string, w, h float32, click bool) {
 				e.source, e.err, e.loading = source, err, false
 				e.w, e.h = ui.ImageSize(source)
 				if decoder != nil {
-					e.player, _ = ui.NewVideoPlayer(decoder)
-					if e.player != nil {
+					// Falling back to the decoded still image is preferable to
+					// failing the whole attachment if a player cannot be created.
+					if player, playerErr := ui.NewVideoPlayer(decoder); playerErr == nil && player != nil {
+						e.player = player
 						e.player.SetLoop(true)
 					}
 				}

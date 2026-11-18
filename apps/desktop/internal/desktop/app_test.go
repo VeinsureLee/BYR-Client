@@ -341,7 +341,7 @@ func TestLoggedInContentFitsNativeWindowSizes(t *testing.T) {
 				h.view.SetScale(scale)
 				h.login()
 				for _, page := range []string{"home", "top", "compose", "contacts", "self", "settings"} {
-					h.goTo(Route{Page: page})
+					h.goTo(Route{Page: Page(page)})
 					label := h.app.title()
 					if page == "settings" {
 						label = "外观"

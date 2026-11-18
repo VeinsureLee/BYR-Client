@@ -110,6 +110,9 @@ func (a *App) userPage(gtx layout.Context) layout.Dimensions {
 	if u.ID == "" && a.busy {
 		return a.pendingPage(gtx, "正在加载用户资料…")
 	}
+	if u.ID == "" && a.failed {
+		return a.requestErrorPage(gtx)
+	}
 	return material.List(a.theme, &a.auxList).Layout(gtx, 2, func(gtx layout.Context, i int) layout.Dimensions {
 		switch i {
 		case 0:
@@ -546,6 +549,9 @@ func (a *App) votePage(gtx layout.Context) layout.Dimensions {
 	if v.ID == "" && a.busy {
 		return a.pendingPage(gtx, "正在加载投票…")
 	}
+	if v.ID == "" && a.failed {
+		return a.requestErrorPage(gtx)
+	}
 	return material.List(a.theme, &a.auxList).Layout(gtx, 2, func(gtx layout.Context, i int) layout.Dimensions {
 		switch i {
 		case 0:
@@ -629,6 +635,9 @@ func (a *App) betPage(gtx layout.Context) layout.Dimensions {
 	v := a.bet
 	if v.ID == "" && a.busy {
 		return a.pendingPage(gtx, "正在加载竞猜…")
+	}
+	if v.ID == "" && a.failed {
+		return a.requestErrorPage(gtx)
 	}
 	return material.List(a.theme, &a.auxList).Layout(gtx, 2, func(gtx layout.Context, i int) layout.Dimensions {
 		switch i {
