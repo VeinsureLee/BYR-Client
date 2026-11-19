@@ -16,6 +16,110 @@ import (
 	"github.com/VeinsureLee/BYR-Client/core/resources/fonts"
 )
 
+func userProfileFields(u forum.User) []profileField {
+	fields := []profileField{
+		{label: "在线状态", value: profileFlag(bool(u.IsOnline), "在线", "离线")},
+		{label: "注册状态", value: profileFlag(bool(u.IsRegister), "已注册", "未注册")},
+		{label: "生命力", value: string(u.Life)},
+		{label: "性别", value: u.Gender},
+		{label: "星座", value: u.Astro},
+		{label: "主页", value: u.HomePage},
+		{label: "QQ", value: string(u.QQ)},
+		{label: "MSN", value: u.MSN},
+	}
+	if !bool(u.IsHide) {
+		fields = append(fields,
+			profileField{label: "上次登录时间", value: formatTime(u.LastLoginTime)},
+			profileField{label: "最后登录 IP", value: u.LastLoginIP},
+		)
+	}
+	fields = append(fields,
+		profileField{label: "关注数", value: fmt.Sprintf("%d", u.FollowNum)},
+		profileField{label: "粉丝数", value: fmt.Sprintf("%d", u.FansNum)},
+		profileField{label: "是否已关注", value: profileFlag(bool(u.IsFollow), "是", "否")},
+		profileField{label: "是否为粉丝", value: profileFlag(bool(u.IsFan), "是", "否")},
+		profileField{label: "发帖数", value: fmt.Sprintf("%d", u.PostCount)},
+		profileField{label: "积分", value: fmt.Sprintf("%d", u.Score)},
+		profileField{label: "等级", value: string(u.Level)},
+	)
+	return fields
+}
+
+type profileField struct {
+	label string
+	value string
+}
+
+func profileFlag(value bool, yes, no string) string {
+	if value {
+		return yes
+	}
+	return no
+}
+
+func (a *App) profileRow(gtx layout.Context, label, value string) layout.Dimensions {
+	if strings.TrimSpace(label) == "" || strings.TrimSpace(value) == "" {
+		return layout.Dimensions{}
+	}
+	return layout.Inset{Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Start}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				l := material.Caption(a.theme, label)
+				l.Color = colorMuted
+				return l.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				l := material.Body2(a.theme, value)
+				return l.Layout(gtx)
+			}),
+		)
+	})
+}
+
+func (a *App) profileLinkRow(gtx layout.Context, field profileField) layout.Dimensions {
+	if strings.TrimSpace(field.value) == "" {
+		return layout.Dimensions{}
+	}
+	btn := a.click("user-home")
+	clicked := btn.Clicked(gtx)
+	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return a.profileRow(gtx, field.label, field.value)
+	})
+	if clicked && !a.busy {
+		a.copyText(gtx, field.value)
+		if !a.failed {
+			a.message = "主页链接已复制"
+		}
+	}
+	return dims
+}
+
+func (a *App) profileDetails(gtx layout.Context, u forum.User) layout.Dimensions {
+	fields := userProfileFields(u)
+	children := make([]layout.FlexChild, 0, len(fields))
+	visible := false
+	for _, field := range fields {
+		field := field
+		if strings.TrimSpace(field.value) == "" {
+			continue
+		}
+		visible = true
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if field.label == "主页" {
+				return a.profileLinkRow(gtx, field)
+			}
+			return a.profileRow(gtx, field.label, field.value)
+		}))
+	}
+	if !visible {
+		l := material.Label(a.theme, unit.Sp(12), "这个用户还没有填写更多资料。")
+		l.Color = colorMuted
+		return l.Layout(gtx)
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
 func (a *App) openUser(name string) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -80,6 +184,8 @@ func (a *App) openVote(id string) {
 
 func (a *App) loadVote() {
 	id := a.current().ID
+	a.choice = ""
+	a.vote = forum.Vote{}
 	a.run("加载投票", func(ctx context.Context) (func(), error) {
 		v, err := a.core.Forum.Vote(ctx, id)
 		return func() { a.vote = v }, err
@@ -99,6 +205,8 @@ func (a *App) openBet(id string) {
 
 func (a *App) loadBet() {
 	id := a.current().ID
+	a.choice = ""
+	a.bet = forum.Bet{}
 	a.run("加载竞猜", func(ctx context.Context) (func(), error) {
 		v, err := a.core.Forum.Bet(ctx, id)
 		return func() { a.bet = v }, err
@@ -136,15 +244,6 @@ func (a *App) userPage(gtx layout.Context) layout.Dimensions {
 										if u.ID != "" {
 											meta = append(meta, "ID "+string(u.ID))
 										}
-										if u.Gender != "" {
-											meta = append(meta, u.Gender)
-										}
-										if u.Astro != "" {
-											meta = append(meta, u.Astro)
-										}
-										if t := formatTime(u.LastLoginTime); t != "" {
-											meta = append(meta, "上次登录 "+t)
-										}
 										l := material.Label(a.theme, unit.Sp(11), strings.Join(meta, " · "))
 										l.Color = colorMuted
 										return l.Layout(gtx)
@@ -172,6 +271,9 @@ func (a *App) userPage(gtx layout.Context) layout.Dimensions {
 					}),
 					layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if u.Anonymous() || u.ID == "" {
+							return layout.Dimensions{}
+						}
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								dims, clicked := a.filledPill(gtx, "user-mail", "发私信", "send")
@@ -205,22 +307,7 @@ func (a *App) userPage(gtx layout.Context) layout.Dimensions {
 						return l.Layout(gtx)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						detail := []string{}
-						if u.HomePage != "" {
-							detail = append(detail, "主页 "+u.HomePage)
-						}
-						if u.QQ != "" {
-							detail = append(detail, "QQ "+string(u.QQ))
-						}
-						if u.FansNum > 0 || u.FollowNum > 0 {
-							detail = append(detail, fmt.Sprintf("关注 %d · 粉丝 %d", u.FollowNum, u.FansNum))
-						}
-						if len(detail) == 0 {
-							detail = append(detail, "这个用户还没有填写更多资料。")
-						}
-						l := material.Label(a.theme, unit.Sp(12), strings.Join(detail, "\n"))
-						l.Color = colorMuted
-						return l.Layout(gtx)
+						return a.profileDetails(gtx, u)
 					}),
 				)
 			})
@@ -544,6 +631,10 @@ func (a *App) savePreferences(p local.Preferences) {
 	a.window.Invalidate()
 }
 
+func (a *App) voteSubmitEnabled() bool {
+	return a.choice != "" && !a.busy && !bool(a.vote.IsEnd) && !bool(a.vote.IsDeleted)
+}
+
 func (a *App) votePage(gtx layout.Context) layout.Dimensions {
 	v := a.vote
 	if v.ID == "" && a.busy {
@@ -607,8 +698,9 @@ func (a *App) votePage(gtx layout.Context) layout.Dimensions {
 								if a.choice == "" {
 									label = "请选择选项"
 								}
-								dims, clicked := a.primaryButton(gtx, "vote-submit", label)
-								if clicked && a.choice != "" && !a.busy && !bool(v.IsEnd) {
+								enabled := a.voteSubmitEnabled()
+								dims, clicked := a.primaryButtonState(gtx, "vote-submit", label, enabled)
+								if clicked && enabled {
 									id := a.current().ID
 									choice := a.choice
 									a.run("提交投票", func(ctx context.Context) (func(), error) {

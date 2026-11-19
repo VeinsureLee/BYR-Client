@@ -85,19 +85,30 @@ func TestThreadLoadFailureRendersRetryInsteadOfEmptyState(t *testing.T) {
 	}
 }
 
-func TestMobileListStateIsolatedByRoute(t *testing.T) {
-	a := startAppForTest(t)
+func TestThreadLoadFailureClearsOldPostsAndActions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"code":"500","msg":"temporary failure"}`, http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	a := interactionApp(t, server.URL)
 	defer a.Close()
-	first := a.mobileList(listKey{Page: PageBoard, Name: "Go", Number: 1})
-	first.Position.First = 7
-	first.Position.Offset = 13
-	second := a.mobileList(listKey{Page: PageThread, Name: "Go", ID: "42", Number: 1})
-	if first == second {
-		t.Fatal("board and thread shared mobile list state")
+	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 3}}
+	a.thread = sampleThread()
+	a.loadThread()
+	waitForIdle(t, a)
+
+	if len(a.thread.Articles) != 0 || a.thread.ID != "" {
+		t.Fatalf("failed thread retained old model: %+v", a.thread)
 	}
-	got := a.mobileList(listKey{Page: PageBoard, Name: "Go", Number: 1})
-	if got.Position.First != 7 || got.Position.Offset != 13 {
-		t.Fatalf("board position = %+v", got.Position)
+	if !a.failed {
+		t.Fatal("thread failure was not exposed")
+	}
+	renderAndroidPage(t, func(gtx layout.Context) layout.Dimensions { return a.threadPage(gtx) })
+	for _, key := range []string{"like:42", "down:42", "reply:42", "copy:42"} {
+		if _, ok := a.clicks[key]; ok {
+			t.Fatalf("failed thread still exposes floor action %q", key)
+		}
 	}
 }
 

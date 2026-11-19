@@ -96,6 +96,133 @@ func TestSearchListResetWaitsForResultApplication(t *testing.T) {
 	}
 }
 
+func TestAndroidUserSearchOpensExactProfile(t *testing.T) {
+	userRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/open/user/query/bob.json" {
+			userRequests++
+			_, _ = io.WriteString(w, `{"id":"bob","user_name":"Bob","level":"用户"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"code":"0000"}`)
+	}))
+	defer server.Close()
+
+	a := interactionApp(t, server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageSearch}}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 820)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	a.click("search-mode:user").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	a.searchEdit.SetText("bob")
+	a.click("search-submit").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	waitForIdle(t, a)
+
+	if got := a.current().Page; got != PageUser {
+		t.Fatalf("user search page = %v, want user", got)
+	}
+	if got := a.current().Name; got != "bob" {
+		t.Fatalf("user search route name = %q, want bob", got)
+	}
+	if got := a.user.ID; got != "bob" {
+		t.Fatalf("user search profile ID = %q, want bob", got)
+	}
+	if userRequests != 1 {
+		t.Fatalf("user search requests = %d, want one", userRequests)
+	}
+}
+
+func TestAndroidEmptyUserSearchDoesNotRequest(t *testing.T) {
+	userRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/open/user/query/bob.json" {
+			userRequests++
+		}
+		_, _ = io.WriteString(w, `{"code":"0000"}`)
+	}))
+	defer server.Close()
+
+	a := interactionApp(t, server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageSearch}}
+	a.searchMode = "user"
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 820)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	a.click("search-submit").Click()
+	ops.Reset()
+	a.Layout(gtx)
+
+	if userRequests != 0 {
+		t.Fatalf("empty user search requests = %d, want zero", userRequests)
+	}
+	if a.current().Page != PageSearch {
+		t.Fatalf("empty user search changed page to %v", a.current().Page)
+	}
+}
+
+func TestAndroidClearSearchResetsStateWithoutRequest(t *testing.T) {
+	s := newInteractionServer(t)
+	a := interactionApp(t, s.server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageSearch, Number: 3}}
+	a.searchMode = "all"
+	a.searchEdit.SetText("搜索")
+	a.searchHasRun = true
+	a.searchResults = []forum.Article{{ID: "42", Title: "搜索主题"}}
+	a.searchPagination = forum.Pagination{TotalPages: 3, CurrentPage: 3, TotalItems: 90}
+	key := listKey{Page: PageSearch, Query: "搜索", Number: 3}
+	a.mobileList(key).Position.First = 7
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 820)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	a.click("search-clear").Click()
+	ops.Reset()
+	a.Layout(gtx)
+
+	if got := a.searchEdit.Text(); got != "" {
+		t.Fatalf("cleared search query = %q", got)
+	}
+	if len(a.searchResults) != 0 || a.searchPagination != (forum.Pagination{}) || a.searchHasRun {
+		t.Fatalf("cleared search state = results=%d pagination=%+v hasRun=%t", len(a.searchResults), a.searchPagination, a.searchHasRun)
+	}
+	if got := a.current().Number; got != 1 {
+		t.Fatalf("cleared search page = %d, want one", got)
+	}
+	if got := a.mobileList(key).Position.First; got != 0 {
+		t.Fatalf("cleared search position = %d, want zero", got)
+	}
+	if len(s.requests) != 0 {
+		t.Fatalf("clear search issued requests: %+v", s.requests)
+	}
+}
+
 func TestSearchReturnKeepsListPosition(t *testing.T) {
 	a := startAppForTest(t)
 	defer a.Close()
@@ -290,6 +417,106 @@ func TestTopTenAndRecommendationsLoad(t *testing.T) {
 	}
 	if dims := a.topPage(gtx); dims.Size.X <= 0 || dims.Size.Y <= 0 {
 		t.Fatalf("top page rendered blank: %+v", dims.Size)
+	}
+}
+
+func TestSectionsTopNavigatesToTopTen(t *testing.T) {
+	topRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open/section.json":
+			_, _ = w.Write([]byte(`{"section":[{"name":"0","description":"校园"}]}`))
+		case "/open/widget/topten.json":
+			topRequests++
+			_, _ = w.Write([]byte(`{"article":[{"id":42,"topic_id":42,"board_name":"Go","title":"十大主题","user":{"id":"alice","user_name":"Alice"},"num":3}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":"0000"}`))
+		}
+	}))
+	defer server.Close()
+
+	a := interactionApp(t, server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageHome}}
+	a.sectionTab = "all"
+	a.loadHome()
+	waitForIdle(t, a)
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	a.click("sections-top").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	waitForIdle(t, a)
+
+	if got := a.current().Page; got != PageTop {
+		t.Fatalf("sections-top page = %v, want top", got)
+	}
+	if a.topTab != "top" {
+		t.Fatalf("sections-top selected tab = %q, want top", a.topTab)
+	}
+	if len(a.articles) != 1 || a.articles[0].Title != "十大主题" {
+		t.Fatalf("sections-top articles = %+v", a.articles)
+	}
+	if topRequests != 1 {
+		t.Fatalf("top ten requests = %d, want one", topRequests)
+	}
+}
+
+func TestRefreshResetsBoardPageAndScroll(t *testing.T) {
+	var requestPage string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/open/board/Go.json" {
+			requestPage = r.URL.Query().Get("page")
+			_, _ = io.WriteString(w, `{"name":"Go","description":"Go board","article":[{"id":1,"board_name":"Go","title":"第一页主题"}],"pagination":{"page_current_count":1,"page_all_count":3}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"code":"0000"}`)
+	}))
+	defer server.Close()
+
+	a := interactionApp(t, server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageHome}, {Page: PageBoard, Name: "Go", Number: 3}}
+	a.board = testBoardWithArticles(1)
+	pageThree := a.mobileList(listKey{Page: PageBoard, Name: "Go", Number: 3})
+	pageThree.Position.First = 8
+	pageThree.Position.Offset = 19
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 820)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.Layout(gtx)
+	a.click("top-refresh").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	waitForIdle(t, a)
+
+	if got := a.current().Number; got != 1 {
+		t.Fatalf("refreshed board page = %d, want 1", got)
+	}
+	pageOne := a.mobileList(listKey{Page: PageBoard, Name: "Go", Number: 1})
+	if pageOne.Position.First != 0 || pageOne.Position.Offset != 0 {
+		t.Fatalf("refreshed board position = %+v, want top", pageOne.Position)
+	}
+	if got := a.message; got != "刷新成功" {
+		t.Fatalf("refresh feedback = %q, want 刷新成功", got)
+	}
+	if requestPage != "1" {
+		t.Fatalf("refresh requested page %q, want 1", requestPage)
 	}
 }
 

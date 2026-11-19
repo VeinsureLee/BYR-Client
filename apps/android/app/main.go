@@ -1,6 +1,7 @@
 package main
 
 import (
+	"image/color"
 	"log"
 	"os"
 
@@ -11,12 +12,16 @@ import (
 	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/ui"
 )
 
-var version = "0.6.1"
+var version = "0.6.2"
 
 func main() {
 	go func() {
 		window := new(app.Window)
 		window.Option(app.Title("BYR Client"))
+		// Keep system bars on the same surfaces as the Gio shell. Insets still
+		// come exclusively from app.NewContext; these options do not add space.
+		window.Option(app.StatusColor(color.NRGBA{R: 0xF4, G: 0xF7, B: 0xFC, A: 0xFF}))
+		window.Option(app.NavigationColor(color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}))
 		// The client is designed for phone screens; keep the activity portrait
 		// so it never renders as a stretched desktop-style landscape page.
 		window.Option(app.PortraitOrientation.Option())

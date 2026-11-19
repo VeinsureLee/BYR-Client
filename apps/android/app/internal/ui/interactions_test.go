@@ -316,13 +316,13 @@ func TestPinnedPostStartsCollapsedAndExpands(t *testing.T) {
 		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
 	}
 	a.Layout(gtx)
-	if a.expandedPosts["42"] {
+	if a.expandedPosts[threadExpansionKey(a.current(), "42")] {
 		t.Fatal("pinned post should start collapsed")
 	}
 	a.click("pin-toggle:42:0").Click()
 	ops.Reset()
 	a.Layout(gtx)
-	if !a.expandedPosts["42"] {
+	if !a.expandedPosts[threadExpansionKey(a.current(), "42")] {
 		t.Fatal("pinned post did not expand")
 	}
 }
@@ -511,5 +511,196 @@ func TestCollectionRemoveUsesBoardQualifiedRequest(t *testing.T) {
 	}
 	if !strings.Contains(requests[0].Form, "board=Go") || !strings.Contains(requests[0].Form, "id=42") {
 		t.Fatalf("uncollect form = %q", requests[0].Form)
+	}
+}
+
+func TestMessageTabsCanonicalizeRouteNames(t *testing.T) {
+	s := newInteractionServer(t)
+	a := interactionApp(t, s.server.URL)
+	defer a.Close()
+
+	for _, tab := range []string{"contacts", "inbox", "outbox"} {
+		a.stack = []Route{{Page: PageMessages, Sub: tab, Name: "reply", Number: 1}}
+		a.busy = false
+		a.selectMessageTab(tab)
+		waitForIdle(t, a)
+		if got := a.current(); got.Page != PageMessages || got.Sub != tab || got.Name != "" {
+			t.Fatalf("tab %q route = %+v, want empty name", tab, got)
+		}
+	}
+
+	a.stack = []Route{{Page: PageMessages, Sub: "contacts", Name: "leaked", Number: 1}}
+	a.selectMessageTab("refers")
+	waitForIdle(t, a)
+	if got := a.current(); got.Sub != "refers" || got.Name != "reply" {
+		t.Fatalf("reply refers route = %+v", got)
+	}
+	a.selectReferKind("at")
+	waitForIdle(t, a)
+	if got := a.current(); got.Sub != "refers" || got.Name != "at" {
+		t.Fatalf("at refers route = %+v", got)
+	}
+	if got := a.referKind(); got != "at" {
+		t.Fatalf("refer kind = %q, want at", got)
+	}
+}
+
+func TestReferReadAllUsesCanonicalEndpointAndReloads(t *testing.T) {
+	s := newInteractionServer(t)
+	a := interactionApp(t, s.server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageMessages, Sub: "refers", Name: "reply", Number: 1}}
+	a.refers = forum.Refers{Articles: []forum.ReferEntry{{Index: "1", Title: "回复提醒"}}}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(320, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.refersBody(gtx)
+	a.click("refer-read-all").Click()
+	ops.Reset()
+	a.refersBody(gtx)
+	waitForIdle(t, a)
+
+	if got := len(s.find("POST", "/open/refer/reply/setRead.json")); got != 1 {
+		t.Fatalf("reply read-all requests = %d, want one: %+v", got, s.requests)
+	}
+	if got := len(s.find("GET", "/open/refer/reply.json")); got != 1 {
+		t.Fatalf("reply reload requests = %d, want one: %+v", got, s.requests)
+	}
+	if got := len(s.find("POST", "/open/refer//setRead.json")); got != 0 {
+		t.Fatalf("empty refer kind requests = %d", got)
+	}
+	if a.message != "已全部读" {
+		t.Fatalf("read-all feedback = %q, want 已全部读", a.message)
+	}
+}
+
+func TestThreadFloorUsesCompactActionsAndCopyFeedback(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	a.thread = sampleThread()
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.threadPage(gtx)
+	for _, key := range []string{"like:42", "down:42", "reply:42", "copy:42"} {
+		if _, ok := a.clicks[key]; !ok {
+			t.Fatalf("compact floor action %q was not registered", key)
+		}
+	}
+
+	a.click("copy:42").Click()
+	ops.Reset()
+	a.Layout(gtx)
+	if a.message != "已复制" {
+		t.Fatalf("copy feedback = %q, want 已复制", a.message)
+	}
+	if a.failed {
+		t.Fatal("copy success was marked as failed")
+	}
+}
+
+func TestCollectionSuccessShowsFeedback(t *testing.T) {
+	s := newInteractionServer(t)
+	a := interactionApp(t, s.server.URL)
+	defer a.Close()
+
+	a.collectThread()
+	waitForIdle(t, a)
+	if got := a.message; got != "已收藏文章" {
+		t.Fatalf("thread collect feedback = %q, want 已收藏文章", got)
+	}
+
+	a.thread.Collect = true
+	a.collectThread()
+	waitForIdle(t, a)
+	if got := a.message; got != "已取消收藏" {
+		t.Fatalf("thread uncollect feedback = %q, want 已取消收藏", got)
+	}
+
+	a.stack = []Route{{Page: PageBoard, Name: "Go", Number: 1}}
+	a.board = forum.Board{Name: "Go"}
+	a.toggleBoardFavorite()
+	waitForIdle(t, a)
+	if got := a.message; got != "已收藏版面" {
+		t.Fatalf("board collect feedback = %q, want 已收藏版面", got)
+	}
+}
+
+func TestBusyFloorClickDoesNotOverwriteSuccessNotice(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	a.thread = sampleThread()
+	a.message = "首次成功"
+	a.busy = true
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.threadPage(gtx)
+	a.click("copy:42").Click()
+	ops.Reset()
+	a.threadPage(gtx)
+	if got := a.message; got != "首次成功" {
+		t.Fatalf("busy copy changed success notice to %q", got)
+	}
+}
+
+func TestPinnedStateIsolatedByThreadAndPage(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	thread := sampleThread()
+	thread.Articles[0].IsTop = true
+
+	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	a.thread = thread
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.threadPage(gtx)
+	a.click("pin-toggle:42:0").Click()
+	ops.Reset()
+	a.threadPage(gtx)
+	first := a.current()
+	if !a.expandedPosts[threadExpansionKey(first, "42")] {
+		t.Fatal("first thread pinned post did not expand")
+	}
+
+	a.stack[len(a.stack)-1] = Route{Page: PageThread, Name: "Go", ID: "43", Number: 1}
+	a.thread = thread
+	ops.Reset()
+	a.threadPage(gtx)
+	if a.expandedPosts[threadExpansionKey(a.current(), "42")] {
+		t.Fatal("pinned state leaked to a different thread")
+	}
+
+	a.stack[len(a.stack)-1].Number = 2
+	ops.Reset()
+	a.threadPage(gtx)
+	if a.expandedPosts[threadExpansionKey(a.current(), "42")] {
+		t.Fatal("pinned state leaked to a different page")
 	}
 }

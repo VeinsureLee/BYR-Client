@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 
+	"gioui.org/io/semantic"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -134,6 +135,69 @@ func (a *App) pill(gtx layout.Context, key, label, icon string, selected, negati
 	return dims, clicked
 }
 
+// compactIconAction keeps frequent floor actions icon-first. The description is
+// emitted as semantic metadata so the compact visual does not remove the
+// accessible action name; counts are shown only when they carry information.
+func (a *App) compactIconAction(gtx layout.Context, key, description, icon, selectedIcon string, count int, selected, negative bool) (layout.Dimensions, bool) {
+	btn := a.click(key)
+	clicked := btn.Clicked(gtx)
+	iconName := icon
+	if selected && selectedIcon != "" {
+		iconName = selectedIcon
+	}
+	fg := pillColor(selected, negative)
+	bg := colorPill
+	if selected {
+		bg = colorAccentSoft
+		if negative {
+			bg = colorDangerSoft
+		}
+	}
+	if btn.Pressed() {
+		bg = pressedSurface(bg)
+	}
+	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		semantic.Button.Add(gtx.Ops)
+		if description != "" {
+			semantic.DescriptionOp(description).Add(gtx.Ops)
+		}
+		m := op.Record(gtx.Ops)
+		inner := layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return a.drawIcon(gtx, iconName, 18, fg)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if count <= 0 {
+						return layout.Dimensions{}
+					}
+					return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if count <= 0 {
+						return layout.Dimensions{}
+					}
+					return a.badgeChip(gtx, itoa(count), bg, fg)
+				}),
+			)
+		})
+		call := m.Stop()
+		paint.FillShape(gtx.Ops, bg, clip.RRect{Rect: image.Rectangle{Max: inner.Size}, NE: 12, NW: 12, SE: 12, SW: 12}.Op(gtx.Ops))
+		call.Add(gtx.Ops)
+		return inner
+	})
+	return dims, clicked
+}
+
+func pressedSurface(bg color.NRGBA) color.NRGBA {
+	return color.NRGBA{
+		R: uint8(int(bg.R) * 82 / 100),
+		G: uint8(int(bg.G) * 82 / 100),
+		B: uint8(int(bg.B) * 82 / 100),
+		A: bg.A,
+	}
+}
+
 func pillColor(selected, negative bool) color.NRGBA {
 	if selected {
 		if negative {
@@ -142,6 +206,13 @@ func pillColor(selected, negative bool) color.NRGBA {
 		return colorAccent
 	}
 	return colorMuted
+}
+
+func moduleTabColors(selected bool) (color.NRGBA, color.NRGBA) {
+	if selected {
+		return colorAccentSoft, colorAccent
+	}
+	return colorPill, colorMuted
 }
 
 func (a *App) filledPill(gtx layout.Context, key, label, icon string) (layout.Dimensions, bool) {

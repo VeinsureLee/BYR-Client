@@ -43,15 +43,35 @@ func (a *App) selectMessageTab(tab string) {
 	if a.busy || a.current().Page != PageMessages {
 		return
 	}
-	if a.current().Sub == tab && (tab != "refers" || a.current().Name == "reply") {
+	route := Route{Page: PageMessages, Sub: tab, Number: 1}
+	if tab == "refers" {
+		route.Name = "reply"
+	}
+	if a.current() == route {
 		return
 	}
-	a.stack[len(a.stack)-1] = Route{Page: PageMessages, Sub: tab, Name: "reply", Number: 1}
+	a.stack[len(a.stack)-1] = route
 	a.loadMessages()
+}
+
+// referKind is the only route-to-endpoint mapping for reminder tabs. A route
+// name on contacts or a mailbox is never allowed to leak into /refer URLs.
+func (a *App) referKind() string {
+	route := a.current()
+	if route.Sub == "refers" && route.Name == "at" {
+		return "at"
+	}
+	return "reply"
 }
 
 func (a *App) selectReferKind(kind string) {
 	if a.busy || a.current().Page != PageMessages || a.current().Sub != "refers" {
+		return
+	}
+	if kind != "at" {
+		kind = "reply"
+	}
+	if a.current().Name == kind && a.current().Number == 1 {
 		return
 	}
 	a.stack[len(a.stack)-1].Name = kind
@@ -63,21 +83,44 @@ func (a *App) loadMessages() {
 	route := a.current()
 	page := max(1, route.Number)
 	tab := route.Sub
-	kind := route.Name
-	if kind == "" {
-		kind = "reply"
+	kind := "reply"
+	if tab == "refers" {
+		kind = a.referKind()
 	}
 	a.run("加载消息", func(ctx context.Context) (func(), error) {
 		switch tab {
 		case "inbox", "outbox":
 			v, err := a.core.Forum.Mailbox(ctx, tab, forum.Page{Number: page, Size: 30})
-			return func() { a.mailbox = v; a.pagination = v.Pagination }, err
+			return func() {
+				if a.current() != route {
+					return
+				}
+				a.mailbox = v
+				a.pagination = v.Pagination
+			}, err
 		case "refers":
 			v, err := a.core.Forum.Refers(ctx, kind, forum.Page{Number: page, Size: 30})
-			return func() { a.refers = v; a.pagination = v.Pagination }, err
+			return func() {
+				if a.current() != route {
+					return
+				}
+				a.refers = v
+				a.pagination = v.Pagination
+				if a.messageAfterLoad != "" {
+					a.message = a.messageAfterLoad
+					a.messageAfterLoad = ""
+					a.failed = false
+				}
+			}, err
 		default:
 			v, err := a.core.Contacts(ctx)
-			return func() { a.contacts = v; a.pagination = forum.Pagination{} }, err
+			return func() {
+				if a.current() != route {
+					return
+				}
+				a.contacts = v
+				a.pagination = forum.Pagination{}
+			}, err
 		}
 	})
 }
@@ -155,11 +198,11 @@ func (a *App) openMailCompose(to, box, id, mode string) {
 }
 
 func (a *App) messagesPage(gtx layout.Context) layout.Dimensions {
-	tabs := []struct{ sub, label, icon string }{
-		{"contacts", "私信会话", "mail"},
-		{"inbox", "收件箱", "mail"},
-		{"outbox", "发件箱", "send"},
-		{"refers", "回复 / @", "clock"},
+	items := []moduleTab{
+		{Key: "contacts", Label: "私信"},
+		{Key: "inbox", Label: "收件箱"},
+		{Key: "outbox", Label: "发件箱"},
+		{Key: "refers", Label: "回复/@"},
 	}
 	if a.current().Sub == "" {
 		a.stack[len(a.stack)-1].Sub = "contacts"
@@ -167,23 +210,9 @@ func (a *App) messagesPage(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						children := make([]layout.FlexChild, 0, len(tabs)*2)
-						for _, tab := range tabs {
-							tab := tab
-							children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								dims, clicked := a.pill(gtx, "msg-tab:"+tab.sub, tab.label, tab.icon, a.current().Sub == tab.sub, false)
-								if clicked {
-									a.selectMessageTab(tab.sub)
-								}
-								return dims
-							}))
-							children = append(children, layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout))
-						}
-						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
-					}),
-				)
+				return a.moduleTabs(gtx, items, a.current().Sub, func(key string) {
+					a.selectMessageTab(key)
+				})
 			})
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -289,38 +318,38 @@ func (a *App) mailboxBody(gtx layout.Context) layout.Dimensions {
 	})
 }
 
+func (a *App) readAllRefers() {
+	if a.busy || a.current().Page != PageMessages || a.current().Sub != "refers" {
+		return
+	}
+	kind := a.referKind()
+	a.run("全部标为已读", func(ctx context.Context) (func(), error) {
+		_, err := a.core.Forum.ReadAllRefers(ctx, kind)
+		return func() {
+			a.refers = forum.Refers{}
+			a.pagination = forum.Pagination{}
+			a.messageAfterLoad = "已全部读"
+			a.loadMessages()
+		}, err
+	})
+}
+
 func (a *App) refersBody(gtx layout.Context) layout.Dimensions {
 	header := func(gtx layout.Context) layout.Dimensions {
+		items := []moduleTab{
+			{Key: "reply", Label: "回复"},
+			{Key: "at", Label: "@ 我的"},
+			{Key: "read-all", Label: "一键已读"},
+		}
 		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					dims, clicked := a.pill(gtx, "refer-kind:reply", "回复我的", "reply", a.current().Name != "at", false)
-					if clicked {
-						a.selectReferKind("reply")
-					}
-					return dims
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					dims, clicked := a.pill(gtx, "refer-kind:at", "@ 我的", "send", a.current().Name == "at", false)
-					if clicked {
-						a.selectReferKind("at")
-					}
-					return dims
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					dims, clicked := a.pill(gtx, "refer-read-all", "全部已读", "check", false, false)
-					if clicked && !a.busy {
-						kind := a.current().Name
-						a.run("全部标为已读", func(ctx context.Context) (func(), error) {
-							_, err := a.core.Forum.ReadAllRefers(ctx, kind)
-							return func() { a.loadMessages() }, err
-						})
-					}
-					return dims
-				}),
-			)
+			return a.moduleTabs(gtx, items, a.referKind(), func(key string) {
+				switch key {
+				case "reply", "at":
+					a.selectReferKind(key)
+				case "read-all":
+					a.readAllRefers()
+				}
+			})
 		})
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -367,7 +396,7 @@ func (a *App) refersBody(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) openRefer(refer forum.ReferEntry) {
-	kind := a.current().Name
+	kind := a.referKind()
 	id := string(refer.GroupID)
 	if id == "" {
 		id = string(refer.ID)

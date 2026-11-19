@@ -65,12 +65,20 @@ type App struct {
 	pagination              forum.Pagination
 	boardFilter             string
 	searchQuery             string
+	searchMode              string
 	searchResults           []forum.Article
 	searchPagination        forum.Pagination
 	searchHasRun            bool
 	advancedSearch          bool
 	pageJump                string
-	expandedPosts           map[string]bool
+	expandedPosts           map[listKey]map[string]bool
+	pinnedExpanded          map[listKey]bool
+	threadVoteAvailable     bool
+	threadBetAvailable      bool
+	threadResourcesBusy     bool
+	threadResourcesDone     bool
+	threadResourceBoard     string
+	threadResourceID        string
 	user                    forum.User
 	blacklist               forum.Blacklist
 	refers                  forum.Refers
@@ -99,7 +107,7 @@ type confirmation struct {
 
 func New(core *application.App, device Device, update func(func())) *App {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &App{Core: core, Version: "开发版", device: device, update: update, ctx: ctx, close: cancel, route: Route{Page: "login"}, remember: true, images: map[string]*imageEntry{}, expandedPosts: map[string]bool{}, listStates: make(map[listKey]*ui.ListState), imageScale: 1, score: "10"}
+	return &App{Core: core, Version: "开发版", device: device, update: update, ctx: ctx, close: cancel, route: Route{Page: "login"}, remember: true, searchMode: "all", images: map[string]*imageEntry{}, expandedPosts: map[listKey]map[string]bool{}, pinnedExpanded: map[listKey]bool{}, listStates: make(map[listKey]*ui.ListState), imageScale: 1, score: "10"}
 }
 
 // Start is explicit so constructing and testing a view never logs in or sends
@@ -225,6 +233,22 @@ func (a *App) navigate(r Route, push bool) {
 	a.imageView = ""
 	a.load()
 }
+func (a *App) showLoadedUser(name string, user forum.User) {
+	if a.busy || !a.saveDraft() {
+		return
+	}
+	a.back = append(a.back, a.route)
+	a.route = Route{Page: "user", Name: name, Number: 1}
+	a.pageJump = ""
+	a.confirm = nil
+	a.message = ""
+	a.pageError = ""
+	a.retryLoad = nil
+	a.imageView = ""
+	a.pageLoading = false
+	a.user = user
+}
+
 func (a *App) goBack() {
 	if a.busy || len(a.back) == 0 {
 		return

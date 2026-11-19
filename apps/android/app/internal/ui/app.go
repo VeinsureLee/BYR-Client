@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gioui.org/app"
 	"gioui.org/font/opentype"
 	"gioui.org/io/clipboard"
 	"gioui.org/io/key"
@@ -79,6 +80,7 @@ type App struct {
 	updates chan func()
 	ctx     context.Context
 	close   context.CancelFunc
+	cancel  context.CancelFunc
 
 	started bool
 	ready   bool
@@ -130,6 +132,7 @@ type App struct {
 	searchHasRun     bool
 	expandedPosts    map[string]bool
 	pinnedExpanded   bool
+	pinnedByRoute    map[string]bool
 	threadMoreOpen   bool
 	threadExtrasBusy bool
 	threadExtrasDone bool
@@ -138,24 +141,30 @@ type App struct {
 
 	listStates                                                                                 map[listKey]*widget.List
 	homeList, sectionList, timelineList, favoriteList, selfList, composeList, topList, auxList widget.List
+	moduleTabList                                                                              widget.List
+	moduleTabsKey, moduleTabsSelected                                                          string
+	messageAfterLoad                                                                           string
 
 	clicks map[string]*widget.Clickable
 
-	favoriteTab string
-	topTab      string
-	compose     composeState
-	lastClip    string
-	images      map[string]*mobileImage
-	closed      atomic.Bool
-	themed      bool
-	dark        bool
-	pageKey     string
-	sectionTab  string
-	renderPanic string
-	startAt     time.Time
-	busySince   time.Time
-	exitArmed   bool
-	exitAt      time.Time
+	favoriteTab    string
+	topTab         string
+	compose        composeState
+	lastClip       string
+	images         map[string]*mobileImage
+	imageViewer    string
+	imageViewerRaw string
+	imageScale     float32
+	closed         atomic.Bool
+	themed         bool
+	dark           bool
+	pageKey        string
+	sectionTab     string
+	renderPanic    string
+	startAt        time.Time
+	busySince      time.Time
+	exitArmed      bool
+	exitAt         time.Time
 }
 
 type composeState struct {
@@ -183,16 +192,17 @@ func New(window invalidator) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{
 		window: window, version: "dev", theme: theme, ctx: ctx, close: cancel,
-		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{}, listStates: make(map[listKey]*widget.List),
-		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai", sectionTab: "favorites",
-		homeList:     widget.List{List: layout.List{Axis: layout.Vertical}},
-		sectionList:  widget.List{List: layout.List{Axis: layout.Vertical}},
-		timelineList: widget.List{List: layout.List{Axis: layout.Vertical}},
-		favoriteList: widget.List{List: layout.List{Axis: layout.Vertical}},
-		selfList:     widget.List{List: layout.List{Axis: layout.Vertical}},
-		composeList:  widget.List{List: layout.List{Axis: layout.Vertical}},
-		topList:      widget.List{List: layout.List{Axis: layout.Vertical}},
-		auxList:      widget.List{List: layout.List{Axis: layout.Vertical}},
+		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{}, pinnedByRoute: map[string]bool{}, listStates: make(map[listKey]*widget.List),
+		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai", sectionTab: "favorites", imageScale: 1,
+		homeList:      widget.List{List: layout.List{Axis: layout.Vertical}},
+		sectionList:   widget.List{List: layout.List{Axis: layout.Vertical}},
+		timelineList:  widget.List{List: layout.List{Axis: layout.Vertical}},
+		favoriteList:  widget.List{List: layout.List{Axis: layout.Vertical}},
+		selfList:      widget.List{List: layout.List{Axis: layout.Vertical}},
+		composeList:   widget.List{List: layout.List{Axis: layout.Vertical}},
+		topList:       widget.List{List: layout.List{Axis: layout.Vertical}},
+		auxList:       widget.List{List: layout.List{Axis: layout.Vertical}},
+		moduleTabList: widget.List{List: layout.List{Axis: layout.Horizontal}},
 	}
 	a.searchEdit.SingleLine = true
 	a.username.SingleLine = true
@@ -210,13 +220,15 @@ func New(window invalidator) (*App, error) {
 		"mail": icons.CommunicationEmail, "self": icons.SocialPerson,
 		"search": icons.ActionSearch, "back": icons.NavigationArrowBack,
 		"refresh": icons.NavigationRefresh, "like": icons.ActionThumbUp,
-		"down": icons.ActionThumbDown, "reply": icons.ContentReply,
+		"like_on": icons.ActionCheckCircle, "down": icons.ActionThumbDown,
+		"down_on": icons.NavigationClose, "reply": icons.ContentReply,
 		"hash": icons.ActionList, "board": icons.ActionList,
 		"link": icons.ContentLink, "copy": icons.ContentContentCopy,
 		"trash": icons.ActionDelete, "clock": icons.ActionSchedule,
 		"plus": icons.ContentAdd, "hot": icons.ActionTrendingUp,
 		"edit": icons.EditorModeEdit, "send": icons.ContentSend,
-		"next": icons.NavigationArrowForward, "check": icons.ActionCheckCircle,
+		"next": icons.NavigationArrowForward, "expand_more": icons.NavigationExpandMore,
+		"expand_less": icons.NavigationExpandLess, "check": icons.ActionCheckCircle,
 		"alert": icons.ActionInfoOutline, "close": icons.NavigationClose,
 		"more": icons.NavigationMoreVert,
 	}
@@ -233,11 +245,23 @@ func New(window invalidator) (*App, error) {
 
 var colorHint = color.NRGBA{R: 0x6C, G: 0x7C, B: 0x93, A: 0xFF}
 
+// layoutWithFrameInsets mirrors the production frame contract for deterministic
+// tests. The Android entry point still owns the real op list and calls
+// app.NewContext directly for every FrameEvent.
+func layoutWithFrameInsets(event app.FrameEvent) layout.Context {
+	var ops op.Ops
+	return app.NewContext(&ops, event)
+}
+
 func (a *App) SetVersion(v string) { a.version = v }
 func (a *App) Close() {
 	if a.closed.Swap(true) {
 		return
 	}
+	a.stopImageAnimations()
+	a.imageViewer = ""
+	a.imageViewerRaw = ""
+	a.imageScale = 1
 	a.saveComposeDraft()
 	a.close()
 }
@@ -249,6 +273,10 @@ func (a *App) Back() bool {
 	if !a.ready || !a.handlesBack() {
 		return false
 	}
+	if a.imageViewer != "" {
+		a.closeImageViewer()
+		return true
+	}
 	if a.busy {
 		return true
 	}
@@ -259,6 +287,9 @@ func (a *App) Back() bool {
 func (a *App) handlesBack() bool {
 	if !a.ready {
 		return false
+	}
+	if a.imageViewer != "" {
+		return true
 	}
 	if a.canBack() {
 		return true
@@ -275,6 +306,10 @@ func (a *App) handlesBack() bool {
 }
 
 func (a *App) navigateBack() {
+	if a.imageViewer != "" {
+		a.closeImageViewer()
+		return
+	}
 	if a.canBack() {
 		a.back()
 		return
@@ -320,6 +355,10 @@ func (a *App) handleSystemBack(gtx layout.Context) {
 		}
 		if a.current().Page == PageCompose && (gtx.Focused(&a.compose.titleEditor) || gtx.Focused(&a.compose.contentEditor)) {
 			gtx.Execute(key.FocusCmd{})
+			continue
+		}
+		if a.imageViewer != "" {
+			a.closeImageViewer()
 			continue
 		}
 		if a.busy {
@@ -401,11 +440,28 @@ func (a *App) start() {
 		a.initErr = ""
 		a.ready = true
 		if core.Session().Token != "" {
-			a.stack = []Route{{Page: PageSearch}}
+			a.showTopRoot()
 		} else {
 			a.resetSessionUI()
 		}
 	})
+}
+
+func (a *App) showHomeRoot() {
+	a.stack = []Route{{Page: PageHome}}
+	a.sectionTab = "favorites"
+	a.favoriteTab = "boards"
+	if a.core != nil {
+		a.loadFavorites()
+	}
+}
+
+func (a *App) showTopRoot() {
+	a.stack = []Route{{Page: PageTop, Number: 1}}
+	a.topTab = "top"
+	if a.core != nil {
+		a.loadTop()
+	}
 }
 
 func (a *App) current() Route {
@@ -418,6 +474,7 @@ func (a *App) current() Route {
 func (a *App) resetSessionUI() {
 	a.ready = true
 	a.busy = false
+	a.cancel = nil
 	a.message = ""
 	a.failed = false
 	a.stack = []Route{{Page: PageLogin}}
@@ -449,9 +506,14 @@ func (a *App) resetSessionUI() {
 	a.forwardIn.SetText("")
 	a.choice = ""
 	a.lastClip = ""
+	a.stopImageAnimations()
 	a.images = map[string]*mobileImage{}
+	a.imageViewer = ""
+	a.imageViewerRaw = ""
+	a.imageScale = 1
 	a.clicks = map[string]*widget.Clickable{}
 	a.expandedPosts = map[string]bool{}
+	a.pinnedByRoute = map[string]bool{}
 	a.pinnedExpanded = false
 	a.threadMoreOpen = false
 	a.threadExtrasBusy = false
@@ -467,6 +529,10 @@ func (a *App) resetSessionUI() {
 	a.composeList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.topList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.moduleTabList = newHorizontalModuleTabList()
+	a.moduleTabsKey = ""
+	a.moduleTabsSelected = ""
+	a.messageAfterLoad = ""
 	a.searchResults = nil
 	a.searchPagination = forum.Pagination{}
 	a.searchHasRun = false
@@ -483,6 +549,7 @@ func (a *App) push(r Route) bool {
 	if a.busy {
 		return false
 	}
+	a.closeImageViewer()
 	a.stack = append(a.stack, r)
 	if r.Page != PageThread {
 		a.threadMoreOpen = false
@@ -495,6 +562,7 @@ func (a *App) back() {
 	if a.busy || !a.canBack() {
 		return
 	}
+	a.closeImageViewer()
 	if a.current().Page == PageCompose {
 		if err := a.saveComposeDraft(); err != nil {
 			a.fail(err)
@@ -518,6 +586,7 @@ func (a *App) setTab(page Page) {
 	if a.busy {
 		return
 	}
+	a.closeImageViewer()
 	a.exitArmed = false
 	if a.current().Page == PageCompose {
 		if err := a.saveComposeDraft(); err != nil {
@@ -529,10 +598,7 @@ func (a *App) setTab(page Page) {
 	case PageSearch:
 		a.stack = []Route{{Page: PageSearch}}
 	case PageHome:
-		a.stack = []Route{{Page: PageHome}}
-		a.sectionTab = "favorites"
-		a.favoriteTab = "boards"
-		a.loadFavorites()
+		a.showHomeRoot()
 	case PageTop:
 		a.stack = []Route{{Page: PageTop}}
 		a.loadTop()
@@ -572,6 +638,8 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 			a.window.Invalidate()
 		}
 	})
+	workCtx, opCancel := context.WithCancel(a.ctx)
+	a.cancel = opCancel
 	go func() {
 		var done func()
 		var err error
@@ -582,13 +650,24 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 					done = nil
 				}
 			}()
-			done, err = work(a.ctx)
+			done, err = work(workCtx)
 		}()
+		opCancel()
 		a.post(func() {
 			a.busy = false
+			a.cancel = nil
 			if err != nil {
 				a.compose.loading = false
 				a.compose.publishing = false
+				if errors.Is(err, context.Canceled) {
+					a.messageAfterLoad = ""
+					a.failed = false
+					if a.message == label {
+						a.message = ""
+					}
+					return
+				}
+				a.messageAfterLoad = ""
 				a.fail(err)
 				return
 			}
@@ -597,6 +676,10 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 			}
 			if done != nil {
 				done()
+			}
+			if a.messageAfterLoad != "" && !a.failed {
+				a.message = a.messageAfterLoad
+				a.messageAfterLoad = ""
 			}
 		})
 	}()
@@ -647,10 +730,23 @@ func (a *App) syncPageState() {
 	key := fmt.Sprintf("%d|%s|%s|%s|%d|%s", r.Page, r.Name, r.ID, r.Sub, r.Number, a.sectionTab)
 	if key != a.pageKey {
 		a.pageKey = key
+		a.closeImageViewer()
 		a.threadMoreOpen = false
 		// Rebuild list state between pages. Resetting a list from inside its own
 		// item callback corrupts layout, so this runs only at frame start.
 		a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
+		a.moduleTabList = newHorizontalModuleTabList()
+		a.moduleTabsKey = ""
+		a.moduleTabsSelected = ""
+		if a.messageAfterLoad != "刷新成功" {
+			a.messageAfterLoad = ""
+		}
+		if r.Page == PageThread {
+			a.resetThreadExpanded(r)
+		}
+		if r.Page == PageBoard {
+			a.resetBoardPinnedExpanded(r)
+		}
 		if r.Page == PageHome {
 			a.homeList = widget.List{List: layout.List{Axis: layout.Vertical}}
 		}
@@ -668,6 +764,7 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 		}
 	}()
 	a.drain()
+	a.beginImageLayoutFrame()
 	a.ensureStarted()
 	a.applyTheme()
 	if a.core != nil {
@@ -695,6 +792,9 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 	}
 	if !a.ready {
 		return a.loadingPage(gtx, "正在启动客户端…")
+	}
+	if a.imageViewer != "" {
+		return a.imageViewerLayout(gtx)
 	}
 	if len(a.stack) == 0 {
 		a.stack = []Route{{Page: PageLogin}}
@@ -1051,7 +1151,24 @@ func (a *App) subtitle() string {
 }
 
 func (a *App) refreshCurrent() {
-	switch a.current().Page {
+	if a.busy || len(a.stack) == 0 {
+		return
+	}
+	route := a.current()
+	route.Number = 1
+	a.stack[len(a.stack)-1].Number = 1
+	a.clearRouteModel(route)
+	if route.Page == PageSearch {
+		a.searchResults = nil
+		a.searchPagination = forum.Pagination{}
+		a.searchHasRun = true
+	}
+	a.resetRoutePosition(route)
+	a.messageAfterLoad = "刷新成功"
+	if route.Page == PageSearch && (a.searchMode != "all" && a.searchMode != "user" || strings.TrimSpace(a.searchEdit.Text()) == "") {
+		a.messageAfterLoad = ""
+	}
+	switch route.Page {
 	case PageHome:
 		a.loadHome()
 	case PageSection:
@@ -1086,6 +1203,8 @@ func (a *App) refreshCurrent() {
 		a.loadBet()
 	case PageCompose:
 		a.loadCompose()
+	default:
+		a.messageAfterLoad = ""
 	}
 }
 
@@ -1143,20 +1262,24 @@ func (a *App) statusBar(gtx layout.Context) layout.Dimensions {
 	)
 }
 
+type mobileNavItem struct {
+	page    Page
+	key     string
+	icon    string
+	label   string
+	compose bool
+}
+
+var mobileNavItems = []mobileNavItem{
+	{page: PageHome, key: "nav-home", icon: "hash", label: "分区"},
+	{page: PageSearch, key: "nav-search", icon: "search", label: "搜索"},
+	{page: PageCompose, key: "nav-compose", icon: "plus", label: "发帖", compose: true},
+	{page: PageMessages, key: "nav-messages", icon: "mail", label: "消息"},
+	{page: PageSelf, key: "nav-self", icon: "self", label: "我的"},
+}
+
 func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
-	tabs := []struct {
-		page    Page
-		key     string
-		icon    string
-		label   string
-		compose bool
-	}{
-		{page: PageSearch, key: "nav-search", icon: "search", label: "搜索"},
-		{page: PageHome, key: "nav-home", icon: "hash", label: "分区"},
-		{page: PageCompose, key: "nav-compose", icon: "plus", label: "发帖", compose: true},
-		{page: PageMessages, key: "nav-messages", icon: "mail", label: "消息"},
-		{page: PageSelf, key: "nav-self", icon: "self", label: "我的"},
-	}
+	tabs := mobileNavItems
 	height := gtx.Dp(unit.Dp(72))
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -1418,19 +1541,27 @@ func (a *App) inputBox(gtx layout.Context, editor *widget.Editor, hint string) l
 // primaryButton is a full-width button whose painted area is exactly its tap
 // area, so it never renders in one place and accepts touches in another.
 func (a *App) primaryButton(gtx layout.Context, key, label string) (layout.Dimensions, bool) {
+	return a.primaryButtonState(gtx, key, label, true)
+}
+
+func (a *App) primaryButtonState(gtx layout.Context, key, label string, enabled bool) (layout.Dimensions, bool) {
 	btn := a.click(key)
 	clicked := btn.Clicked(gtx)
 	size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(48)))
 	bg := a.theme.ContrastBg
-	if btn.Pressed() {
-		bg = color.NRGBA{R: 0x06, G: 0x3A, B: 0x78, A: 0xFF}
+	fg := a.theme.ContrastFg
+	if !enabled {
+		bg = colorBorder
+		fg = colorMuted
+	} else if btn.Pressed() {
+		bg = pressedSurface(bg)
 	}
 	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(size)
 		paint.FillShape(gtx.Ops, bg, clip.RRect{Rect: image.Rectangle{Max: size}, NE: 12, NW: 12, SE: 12, SW: 12}.Op(gtx.Ops))
 		labelMacro := op.Record(gtx.Ops)
 		l := material.Label(a.theme, unit.Sp(15), label)
-		l.Color = a.theme.ContrastFg
+		l.Color = fg
 		l.Alignment = text.Middle
 		labelDims := l.Layout(gtx)
 		labelCall := labelMacro.Stop()
@@ -1450,7 +1581,20 @@ func (a *App) sectionLabel(gtx layout.Context, text string) layout.Dimensions {
 }
 
 func (a *App) copyText(gtx layout.Context, text string) {
+	if a.busy {
+		return
+	}
+	if !gtx.Enabled() {
+		a.failed = true
+		a.message = "复制失败：剪贴板不可用"
+		a.window.Invalidate()
+		return
+	}
 	gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: stringsReader(text)})
+	a.lastClip = text
+	a.message = "已复制"
+	a.failed = false
+	a.window.Invalidate()
 }
 
 func stringsReader(s string) *stringReader { return &stringReader{Reader: strings.NewReader(s)} }

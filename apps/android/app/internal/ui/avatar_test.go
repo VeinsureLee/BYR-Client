@@ -125,3 +125,70 @@ func TestAvatarFallsBackToInitial(t *testing.T) {
 		t.Fatalf("fallback dimensions = %v, want 40x40", dims.Size)
 	}
 }
+
+func TestAvatarLoadsAnimatedGIFFrames(t *testing.T) {
+	gifBytes := testGIF(t, []color.NRGBA{
+		{R: 0xE0, A: 0xFF},
+		{G: 0xE0, A: 0xFF},
+	}, []int{2, 2})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/face/alice.gif" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.URL.Query().Get("oauth_token"); got != "token" {
+			t.Errorf("animated avatar token = %q, want token", got)
+		}
+		w.Header().Set("Content-Type", "image/gif")
+		_, _ = w.Write(gifBytes)
+	}))
+	defer server.Close()
+
+	store, err := local.Open(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := application.New(application.Options{
+		BaseURL:     server.URL,
+		HTTPClient:  server.Client(),
+		Local:       store,
+		Credentials: &testCredentials{session: application.Credential{Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix()}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(noopInvalidator{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	a.core = core
+	entry := a.imageEntry("/face/alice.gif")
+	deadline := time.Now().Add(3 * time.Second)
+	for entry.loading && time.Now().Before(deadline) {
+		a.drain()
+		time.Sleep(5 * time.Millisecond)
+	}
+	a.drain()
+	if entry.loading || entry.err != nil {
+		t.Fatalf("animated avatar did not load: loading=%v err=%v", entry.loading, entry.err)
+	}
+	if len(entry.frames) != 2 {
+		t.Fatalf("animated avatar frames = %d, want 2", len(entry.frames))
+	}
+
+	var router input.Router
+	var ops op.Ops
+	dims := a.avatar(layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Constraints{Max: image.Pt(100, 100)},
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}, forum.User{ID: "alice", UserName: "Alice", FaceURL: "/face/alice.gif"}, 40)
+	if dims.Size != image.Pt(40, 40) {
+		t.Fatalf("animated avatar dimensions = %v, want 40x40", dims.Size)
+	}
+}

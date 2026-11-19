@@ -242,6 +242,28 @@ func TestRealResponseVariants(t *testing.T) {
 		t.Fatalf("reaction with boolean status: %+v", r)
 	}
 }
+func TestUserPreservesAllProfileFields(t *testing.T) {
+	var u User
+	if err := json.Unmarshal([]byte(`{"id":"bob","user_name":"Bob","face_url":"/face/bob.gif","face_width":96,"face_height":96,"gender":"男","astro":"双子座","life":"学生","qq":"12345","msn":"bob@example","home_page":"https://example.test/bob","level":"用户","is_online":1,"post_count":"12","last_login_time":"1700000000","last_login_ip":"127.0.0.1","is_hide":0,"is_register":1,"score":"88","follow_num":3,"fans_num":4,"is_follow":1,"is_fan":0}`), &u); err != nil {
+		t.Fatal(err)
+	}
+	if u.ID != "bob" || u.UserName != "Bob" || u.FaceURL != "/face/bob.gif" || u.FaceWidth != 96 || u.FaceHeight != 96 {
+		t.Fatalf("identity/media fields = %+v", u)
+	}
+	if u.Gender != "男" || u.Astro != "双子座" || u.Life != "学生" || u.QQ != "12345" || u.MSN != "bob@example" || u.HomePage != "https://example.test/bob" || u.Level != "用户" {
+		t.Fatalf("contact/profile fields = %+v", u)
+	}
+	if !bool(u.IsOnline) || u.PostCount != 12 || u.LastLoginTime != "1700000000" || u.LastLoginIP != "127.0.0.1" || bool(u.IsHide) || !bool(u.IsRegister) || u.Score != 88 {
+		t.Fatalf("status/stat fields = %+v", u)
+	}
+	if u.FollowNum != 3 || u.FansNum != 4 || !bool(u.IsFollow) || bool(u.IsFan) {
+		t.Fatalf("relationship fields = %+v", u)
+	}
+	if got := u.DisplayName(); got != "Bob" {
+		t.Fatalf("DisplayName() = %q, want Bob", got)
+	}
+}
+
 func TestAssetCredentialOrigin(t *testing.T) {
 	c, _ := New(Options{Token: func(context.Context) (string, error) { return "private", nil }})
 	for _, tc := range []struct {

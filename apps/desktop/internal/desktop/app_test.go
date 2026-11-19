@@ -56,10 +56,10 @@ func (s *testCredentials) Clear(context.Context) error {
 	return nil
 }
 
-type testDevice struct{ copied string }
+type testDevice struct{ copied, opened string }
 
 func (d *testDevice) Copy(v string) error { d.copied = v; return nil }
-func (*testDevice) Open(string) error     { return nil }
+func (d *testDevice) Open(v string) error { d.opened = v; return nil }
 func (*testDevice) Pick(context.Context) (string, []byte, error) {
 	return "test.txt", []byte("file content"), nil
 }
@@ -309,6 +309,41 @@ func TestConstructingUIIsOffline(t *testing.T) {
 	}
 }
 
+func TestDesktopUserProfileShowsAllFieldsAndOpensHomepage(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.app.route = Route{Page: "user", Name: "bob"}
+	h.app.user = forum.User{
+		ID: "bob", UserName: "Bob", Gender: "男", Astro: "双子座", Life: "学生",
+		QQ: "12345", MSN: "bob@example", HomePage: "https://example.test/bob", Level: "用户",
+		IsOnline: true, PostCount: 12, LastLoginTime: "1700000000", LastLoginIP: "127.0.0.1",
+		IsRegister: true, Score: 88, FollowNum: 3, FansNum: 4, IsFollow: true,
+	}
+	h.view.Frame()
+	for _, label := range []string{"在线状态", "注册状态", "生命力", "性别", "星座", "主页", "QQ", "MSN", "上次登录时间", "最后登录 IP", "关注数", "粉丝数", "是否已关注", "是否为粉丝", "发帖数", "积分", "等级"} {
+		h.has(label)
+	}
+	for _, value := range []string{"学生", "12345", "bob@example", "https://example.test/bob"} {
+		h.has(value)
+	}
+	h.click("个人主页")
+	if h.device.opened != "https://example.test/bob" {
+		t.Fatalf("homepage opened %q, want %q", h.device.opened, "https://example.test/bob")
+	}
+
+	h.app.user.IsHide = true
+	h.view.Frame()
+	if h.view.HasText("上次登录时间") || h.view.HasText("最后登录 IP") {
+		t.Fatalf("private login fields leaked: %q", h.view.Texts())
+	}
+
+	h.app.user = forum.User{ID: "IWhisper#93", UserName: "匿名", HomePage: "https://example.test/anonymous"}
+	h.view.Frame()
+	if h.view.HasText("发私信") || h.view.HasText("加入黑名单") {
+		t.Fatalf("anonymous user exposed private controls: %q", h.view.Texts())
+	}
+}
+
 func TestDesktopThreadHasSingleBoardEntryAndNoDuplicateRootActions(t *testing.T) {
 	h := newHarness(t)
 	h.login()
@@ -467,6 +502,81 @@ func TestSearchReturnKeepsQueryAndListState(t *testing.T) {
 	first, _ = got.Visible()
 	if first != 2 {
 		t.Fatalf("search list first row after navigation = %d, want 2", first)
+	}
+}
+
+func TestDesktopUserSearchOpensExactProfile(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.goTo(Route{Page: "search"})
+	h.typeIn("搜索关键词", "bob")
+	h.click("人物")
+	h.click("开始搜索")
+
+	if h.app.route.Page != "user" {
+		t.Fatalf("user search page = %q, want user", h.app.route.Page)
+	}
+	if h.app.route.Name != "bob" {
+		t.Fatalf("user search route name = %q, want bob", h.app.route.Name)
+	}
+	if h.app.user.ID != "bob" {
+		t.Fatalf("user search profile ID = %q, want bob", h.app.user.ID)
+	}
+	if got := h.count("GET /open/user/query/bob.json"); got != 1 {
+		t.Fatalf("user search requests = %d, want one", got)
+	}
+}
+
+func TestDesktopEmptyUserSearchDoesNotRequest(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.goTo(Route{Page: "search"})
+	h.click("人物")
+	h.click("开始搜索")
+
+	if got := h.count("GET /open/user/query/bob.json"); got != 0 {
+		t.Fatalf("empty user search requests = %d, want zero", got)
+	}
+	if h.app.route.Page != "search" {
+		t.Fatalf("empty user search changed page to %q", h.app.route.Page)
+	}
+}
+
+func TestDesktopClearSearchResetsStateWithoutRequest(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.view.SetSize(1200, 260)
+	h.app.route = Route{Page: "search", Number: 3}
+	h.app.searchQuery = "搜索"
+	h.app.searchHasRun = true
+	h.app.searchResults = []forum.Article{
+		{ID: "40", Board: "Go", Title: "搜索主题一"},
+		{ID: "41", Board: "Go", Title: "搜索主题二"},
+		{ID: "42", Board: "Go", Title: "搜索主题三"},
+	}
+	h.app.searchPagination = forum.Pagination{TotalPages: 3, CurrentPage: 3, TotalItems: 90}
+	h.view.Frame()
+
+	key := listKey{Page: "search", Query: "搜索", Number: 3}
+	state := h.app.desktopListState(key)
+	state.ScrollTo(2, ui.Start)
+	h.view.Frame()
+	if first, _ := state.Visible(); first != 2 {
+		t.Fatalf("search list first row before clear = %d, want 2", first)
+	}
+
+	h.click("清空搜索")
+	if h.app.searchQuery != "" || len(h.app.searchResults) != 0 || h.app.searchPagination != (forum.Pagination{}) || h.app.searchHasRun {
+		t.Fatalf("cleared search state = query=%q results=%d pagination=%+v hasRun=%t", h.app.searchQuery, len(h.app.searchResults), h.app.searchPagination, h.app.searchHasRun)
+	}
+	if h.app.route.Number != 1 {
+		t.Fatalf("cleared search page = %d, want one", h.app.route.Number)
+	}
+	if first, _ := state.Visible(); first != 0 {
+		t.Fatalf("cleared search position = %d, want zero", first)
+	}
+	if got := h.count("GET /open/search/article.json"); got != 0 {
+		t.Fatalf("clear search issued article requests = %d", got)
 	}
 }
 
@@ -815,5 +925,94 @@ func TestUploadMarkerRenumbering(t *testing.T) {
 		if strings.Count(body, "[upload=") != 2 || strings.Contains(body, "[upload=3]") {
 			t.Fatal(fmt.Sprint(n, body))
 		}
+	}
+}
+
+func TestDesktopBoardPinnedTopicsCollapseByDefault(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.app.route = Route{Page: "board", Name: "Go", Number: 1}
+	h.app.board = forum.Board{Name: "Go", Articles: []forum.Article{
+		{ID: "pin-1", Board: "Go", Title: "置顶主题一", IsTop: true},
+		{ID: "pin-2", Board: "Go", Title: "置顶主题二", IsTop: true},
+		{ID: "normal-1", Board: "Go", Title: "普通主题一"},
+		{ID: "normal-2", Board: "Go", Title: "普通主题二"},
+	}}
+	h.view.Frame()
+	if countText(h.view.Texts(), "置顶主题 · 2") != 1 {
+		t.Fatalf("pinned summary count = %d, texts=%q", countText(h.view.Texts(), "置顶主题 · 2"), h.view.Texts())
+	}
+	if h.view.HasText("置顶主题一") || h.view.HasText("置顶主题二") {
+		t.Fatalf("pinned topics were visible before expansion: %q", h.view.Texts())
+	}
+	h.has("普通主题一")
+	h.has("普通主题二")
+
+	h.click("置顶主题 · 2")
+	h.has("置顶主题一")
+	h.has("置顶主题二")
+}
+
+func TestDesktopPinnedStateIsolatedByThreadAndPage(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	root := forum.Article{ID: "42", Board: "Go", Title: "置顶根楼", IsTop: true, Content: "置顶正文"}
+	h.app.route = Route{Page: "thread", Name: "Go", ID: "42", Number: 1}
+	h.app.thread = forum.Thread{ID: "42", Board: "Go", Title: "主题", Articles: []forum.Article{root}}
+	h.view.Frame()
+	if h.view.HasText("置顶正文") {
+		t.Fatalf("pinned thread body was visible before expansion: %q", h.view.Texts())
+	}
+	h.click("展开置顶内容")
+	h.has("置顶正文")
+
+	h.app.route.Number = 2
+	h.view.Frame()
+	if h.view.HasText("置顶正文") {
+		t.Fatalf("page 2 reused expanded floor state: %q", h.view.Texts())
+	}
+	h.app.route.Number = 1
+	h.view.Frame()
+	h.has("置顶正文")
+}
+
+func TestDesktopThreadResourcePreflightRequiresMatchingArticle(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.mu.Lock()
+	h.overrides = map[string]string{
+		"/open/vote/42.json": `{"vid":7,"aid":42,"title":"投票","options":[{"viid":1,"label":"选项","num":1}]}`,
+		"/open/bet/42.json":  `{"code":"404","msg":"not found"}`,
+	}
+	h.mu.Unlock()
+	h.goTo(Route{Page: "thread", Name: "Go", ID: "42", Number: 1})
+	h.idle()
+	h.view.Frame()
+	h.idle()
+	h.view.Frame()
+	h.has("查看投票")
+	if h.view.HasText("查看竞猜") {
+		t.Fatalf("not-found bet entry was visible: %q", h.view.Texts())
+	}
+	if got := h.count("GET /open/vote/42.json"); got != 1 {
+		t.Fatalf("vote preflight requests = %d, want one", got)
+	}
+	if got := h.count("GET /open/bet/42.json"); got != 1 {
+		t.Fatalf("bet preflight requests = %d, want one", got)
+	}
+
+	h.mu.Lock()
+	h.overrides["/open/vote/42.json"] = `{"vid":7,"aid":43,"title":"其他主题投票","options":[{"viid":1,"label":"选项","num":1}]}`
+	h.mu.Unlock()
+	h.click("刷新")
+	h.idle()
+	h.view.Frame()
+	h.idle()
+	h.view.Frame()
+	if h.view.HasText("查看投票") || h.view.HasText("查看竞猜") {
+		t.Fatalf("mismatched resources exposed: %q", h.view.Texts())
+	}
+	if got := h.count("GET /open/vote/42.json"); got != 2 {
+		t.Fatalf("vote refresh preflight requests = %d, want two", got)
 	}
 }

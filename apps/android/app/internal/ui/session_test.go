@@ -145,7 +145,7 @@ func TestLogoutThenNewAppStartsAtLogin(t *testing.T) {
 	}
 }
 
-func TestRestartWithRememberedSessionRendersSearch(t *testing.T) {
+func TestRestartWithRememberedSessionRendersTodayTop(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -170,8 +170,11 @@ func TestRestartWithRememberedSessionRendersSearch(t *testing.T) {
 	a := startAppForTest(t)
 	defer a.Close()
 	waitForIdle(t, a)
-	if got := a.current().Page; got != PageSearch {
-		t.Fatalf("restart page = %v, want search", got)
+	if got := a.current().Page; got != PageTop {
+		t.Fatalf("restart page = %v, want top", got)
+	}
+	if a.topTab != "top" {
+		t.Fatalf("restart top tab = %q, want top", a.topTab)
 	}
 	assertFrameRenders(t, a)
 	a.setTab(PageHome)

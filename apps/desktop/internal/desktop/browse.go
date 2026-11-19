@@ -285,15 +285,133 @@ func (a *App) boardView(c *ui.Context) {
 	a.articleList(c, a.board.Articles)
 	a.pager(c, a.board.Pagination, a.pageNumber)
 }
-func (a *App) articleList(c *ui.Context, articles []forum.Article) {
+func (a *App) boardArticleList(c *ui.Context, articles []forum.Article) {
 	if len(articles) == 0 {
 		emptyState(c, "message", "暂无主题", "这里还没有可显示的主题，稍后刷新试试。")
 		return
 	}
-	key := listKey{Page: a.route.Page, Name: a.route.Name, Sub: a.route.Sub, Number: a.route.Number}
-	if a.route.Page == "search" {
-		key.Query = strings.TrimSpace(a.searchQuery)
+	pinned := make([]forum.Article, 0, len(articles))
+	normal := make([]forum.Article, 0, len(articles))
+	for _, article := range articles {
+		if bool(article.IsTop) {
+			pinned = append(pinned, article)
+		} else {
+			normal = append(normal, article)
+		}
 	}
+
+	key := a.articleListKey()
+	expanded := a.isPinnedExpanded(key)
+	rows := len(normal)
+	if len(pinned) > 0 {
+		rows++
+		if expanded {
+			rows += len(pinned)
+		}
+	}
+	state := a.desktopListState(key)
+	state.Key = func(i int) any {
+		if len(pinned) > 0 {
+			if i == 0 {
+				return "pinned-summary"
+			}
+			i--
+			if expanded {
+				if i < len(pinned) {
+					v := pinned[i]
+					return string(v.Board) + "\x00" + string(v.ID)
+				}
+				i -= len(pinned)
+			}
+		}
+		if i >= 0 && i < len(normal) {
+			v := normal[i]
+			return string(v.Board) + "\x00" + string(v.ID)
+		}
+		return i
+	}
+	ui.List(c.Key("articles-"+string(a.route.Page)+a.route.Name+strconv.Itoa(a.route.Number)), state, rows, func(i int) {
+		if len(pinned) > 0 {
+			if i == 0 {
+				a.pinnedSummary(c, key, len(pinned))
+				return
+			}
+			i--
+			if expanded {
+				if i < len(pinned) {
+					a.articleRow(c, pinned[i])
+					return
+				}
+				i -= len(pinned)
+			}
+		}
+		a.articleRow(c, normal[i])
+	}).Grow(1).FillWidth().Gap(8)
+}
+
+func (a *App) pinnedSummary(c *ui.Context, key listKey, count int) {
+	expanded := a.isPinnedExpanded(key)
+	icon, tone := "pin", quiet
+	if expanded {
+		icon, tone = "down", selected
+	}
+	label := fmt.Sprintf("置顶主题 · %d", count)
+	e := control(c, label, icon, tone).Disabled(a.busy)
+	if e.Clicked() {
+		a.setPinnedExpanded(key, !expanded)
+		c.Invalidate()
+	}
+}
+
+func (a *App) articleRow(c *ui.Context, v forum.Article) {
+	ui.Column(c.Key(string(v.ID)+v.Board)).FillWidth().Padding(12, 14).Gap(6).
+		Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(12).Children(func() {
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
+			a.avatar(c, v.Author, 32)
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+				ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+					if bool(v.IsTop) {
+						badge(c, "置顶", c.Theme().Warning)
+					}
+					title := v.Title
+					if title == "" {
+						title = "无标题"
+					}
+					textLink(c, title, func() { a.openArticle(v) }, a.busy)
+				})
+				meta := []string{}
+				if v.Author.DisplayName() != "" {
+					meta = append(meta, v.Author.DisplayName())
+				}
+				if v.Board != "" {
+					meta = append(meta, v.Board)
+				}
+				if v.ReplyCount > 0 {
+					meta = append(meta, fmt.Sprintf("%d 回复", v.ReplyCount))
+				}
+				if t := formatTime(v.PostTime); t != "" {
+					meta = append(meta, t)
+				}
+				if len(meta) > 0 {
+					ui.Text(c, strings.Join(meta, " · ")).FontSize(12).
+						TextColor(c.Theme().TextMuted).MaxLines(1).Ellipsis("…")
+				}
+			})
+			ui.Icon(c, icons["next"]).Size(15, 15).TextColor(c.Theme().TextMuted).Shrink(0)
+		})
+	})
+}
+
+func (a *App) articleList(c *ui.Context, articles []forum.Article) {
+	if a.route.Page == "board" {
+		a.boardArticleList(c, articles)
+		return
+	}
+	if len(articles) == 0 {
+		emptyState(c, "message", "暂无主题", "这里还没有可显示的主题，稍后刷新试试。")
+		return
+	}
+	key := a.articleListKey()
 	state := a.desktopListState(key)
 	state.Key = func(i int) any {
 		if i >= 0 && i < len(articles) {
@@ -303,43 +421,7 @@ func (a *App) articleList(c *ui.Context, articles []forum.Article) {
 		return i
 	}
 	ui.List(c.Key("articles-"+string(a.route.Page)+a.route.Name+strconv.Itoa(a.route.Number)), state, len(articles), func(i int) {
-		v := articles[i]
-		ui.Column(c.Key(string(v.ID)+v.Board)).FillWidth().Padding(12, 14).Gap(6).
-			Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(12).Children(func() {
-			ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
-				a.avatar(c, v.Author, 32)
-				ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-					ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
-						if bool(v.IsTop) {
-							badge(c, "置顶", c.Theme().Warning)
-						}
-						title := v.Title
-						if title == "" {
-							title = "无标题"
-						}
-						textLink(c, title, func() { a.openArticle(v) }, a.busy)
-					})
-					meta := []string{}
-					if v.Author.DisplayName() != "" {
-						meta = append(meta, v.Author.DisplayName())
-					}
-					if v.Board != "" {
-						meta = append(meta, v.Board)
-					}
-					if v.ReplyCount > 0 {
-						meta = append(meta, fmt.Sprintf("%d 回复", v.ReplyCount))
-					}
-					if t := formatTime(v.PostTime); t != "" {
-						meta = append(meta, t)
-					}
-					if len(meta) > 0 {
-						ui.Text(c, strings.Join(meta, " · ")).FontSize(12).
-							TextColor(c.Theme().TextMuted).MaxLines(1).Ellipsis("…")
-					}
-				})
-				ui.Icon(c, icons["next"]).Size(15, 15).TextColor(c.Theme().TextMuted).Shrink(0)
-			})
-		})
+		a.articleRow(c, articles[i])
 	}).Grow(1).FillWidth().Gap(8)
 }
 func (a *App) timelineView(c *ui.Context) {

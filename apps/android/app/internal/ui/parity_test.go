@@ -14,6 +14,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+	"gioui.org/widget"
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
@@ -37,7 +38,7 @@ func parityServer(t *testing.T) *httptest.Server {
 		case path == "/open/section/1.json":
 			_, _ = w.Write([]byte(`{"name":"1","description":"院系","board":[{"name":"Study","description":"学习","threads_today_count":2,"post_today_count":4,"user_online_count":5}]}`))
 		case path == "/open/user/query/bob.json":
-			_, _ = w.Write([]byte(`{"id":"bob","user_name":"Bob","post_count":3,"score":10,"face_url":""}`))
+			_, _ = w.Write([]byte(`{"id":"bob","user_name":"Bob","face_url":"/face/bob.gif","face_width":96,"face_height":96,"gender":"男","astro":"双子座","life":"学生","qq":"12345","msn":"bob@example","home_page":"https://example.test/bob","level":"用户","is_online":1,"post_count":"12","last_login_time":"1700000000","last_login_ip":"127.0.0.1","is_hide":0,"is_register":1,"score":"88","follow_num":3,"fans_num":4,"is_follow":1,"is_fan":0}`))
 		case path == "/open/blacklist/list.json":
 			_, _ = w.Write([]byte(`{"user":[{"id":"bob","user_name":"Bob"}]}`))
 		case path == "/open/mail/inbox.json":
@@ -179,6 +180,83 @@ func TestFavoriteBoardsShowLiveStats(t *testing.T) {
 	renderParityPage(t, a, a.favoritesPage)
 }
 
+func TestUserProfileShowsAllProfileFields(t *testing.T) {
+	server := parityServer(t)
+	a := parityApp(t, server.URL)
+	defer a.Close()
+
+	a.openUser("bob")
+	waitForIdle(t, a)
+	if got := a.user.DisplayName(); got != "Bob" {
+		t.Fatalf("user display name = %q, want Bob", got)
+	}
+
+	fields := userProfileFields(a.user)
+	labels := make([]string, 0, len(fields))
+	for _, field := range fields {
+		labels = append(labels, field.label)
+	}
+	want := []string{"在线状态", "注册状态", "生命力", "性别", "星座", "主页", "QQ", "MSN", "上次登录时间", "最后登录 IP", "关注数", "粉丝数", "是否已关注", "是否为粉丝", "发帖数", "积分", "等级"}
+	if got := strings.Join(labels, "|"); got != strings.Join(want, "|") {
+		t.Fatalf("profile labels = %q, want %q", got, strings.Join(want, "|"))
+	}
+	for _, value := range []string{"学生", "12345", "bob@example", "https://example.test/bob"} {
+		found := false
+		for _, field := range fields {
+			if field.value == value {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("profile value %q was not rendered by the field contract: %+v", value, fields)
+		}
+	}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Constraints{Max: image.Pt(420, 700)},
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	if got := a.profileRow(gtx, "空字段", ""); got.Size != (image.Point{}) {
+		t.Fatalf("empty profile row = %+v, want zero dimensions", got.Size)
+	}
+	if got := a.profileRow(gtx, "生命力", "学生"); got.Size.X <= 0 || got.Size.Y <= 0 {
+		t.Fatalf("non-empty profile row has no dimensions: %+v", got.Size)
+	}
+
+	a.click("user-home").Click()
+	ops.Reset()
+	gtx.Ops = &ops
+	a.userPage(gtx)
+	if a.lastClip != a.user.HomePage {
+		t.Fatalf("homepage action copied %q, want %q", a.lastClip, a.user.HomePage)
+	}
+
+	hidden := a.user
+	hidden.IsHide = true
+	for _, field := range userProfileFields(hidden) {
+		if field.label == "上次登录时间" || field.label == "最后登录 IP" {
+			t.Fatalf("private login field leaked when IsHide=true: %+v", field)
+		}
+	}
+
+	a.clicks = map[string]*widget.Clickable{}
+	a.user = forum.User{ID: "IWhisper#93", UserName: "匿名"}
+	ops.Reset()
+	gtx.Ops = &ops
+	a.userPage(gtx)
+	if _, ok := a.clicks["user-mail"]; ok {
+		t.Fatal("anonymous user exposed private mail action")
+	}
+	if _, ok := a.clicks["user-block"]; ok {
+		t.Fatal("anonymous user exposed private blacklist action")
+	}
+}
+
 func TestAccountParityPages(t *testing.T) {
 	server := parityServer(t)
 	a := parityApp(t, server.URL)
@@ -314,4 +392,123 @@ func TestVoteAndBetSubmit(t *testing.T) {
 		t.Fatalf("bet = %+v", a.bet)
 	}
 	renderParityPage(t, a, a.betPage)
+}
+
+func TestModuleTabsFitNarrowScreens(t *testing.T) {
+	groups := []struct {
+		name  string
+		items []moduleTab
+	}{
+		{name: "section", items: []moduleTab{
+			{Key: "all", Label: "全部分区"},
+			{Key: "favorites", Label: "收藏版面"},
+			{Key: "timeline", Label: "时间线"},
+			{Key: "top", Label: "今日十大"},
+		}},
+		{name: "search", items: []moduleTab{
+			{Key: "ai", Label: "AI 搜索"},
+			{Key: "all", Label: "全站搜索"},
+			{Key: "user", Label: "用户"},
+		}},
+		{name: "messages", items: []moduleTab{
+			{Key: "contacts", Label: "私信"},
+			{Key: "inbox", Label: "收件箱"},
+			{Key: "outbox", Label: "发件箱"},
+			{Key: "refers", Label: "回复/@"},
+		}},
+		{name: "refers", items: []moduleTab{
+			{Key: "reply", Label: "回复"},
+			{Key: "at", Label: "@ 我的"},
+			{Key: "read-all", Label: "一键已读"},
+		}},
+	}
+	for _, group := range groups {
+		for _, sp := range []float32{1, 1.15} {
+			t.Run(group.name+"/scale-"+itoa(int(sp*100)), func(t *testing.T) {
+				a := previewApp(t)
+				defer a.Close()
+				var router input.Router
+				var ops op.Ops
+				gtx := layout.Context{
+					Ops:         &ops,
+					Source:      router.Source(),
+					Constraints: layout.Exact(image.Pt(320, 760)),
+					Metric:      unit.Metric{PxPerDp: 1, PxPerSp: sp},
+				}
+				var dims layout.Dimensions
+				var panicValue any
+				func() {
+					defer func() { panicValue = recover() }()
+					dims = a.moduleTabs(gtx, group.items, group.items[len(group.items)-1].Key, func(string) {})
+				}()
+				if panicValue != nil {
+					t.Fatalf("module strip panicked: %v", panicValue)
+				}
+				if dims.Size.X > gtx.Constraints.Max.X {
+					t.Fatalf("module strip overflow: got %v, max %v", dims.Size, gtx.Constraints.Max)
+				}
+				if dims.Size.Y <= 0 || dims.Size.Y > gtx.Constraints.Max.Y {
+					t.Fatalf("module strip height=%d, constraints=%v", dims.Size.Y, gtx.Constraints.Max)
+				}
+			})
+		}
+	}
+}
+
+func TestDeletedVoteSubmitIsDisabled(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = w.Write([]byte(`{"vid":7,"aid":42,"title":"已删除投票","is_deleted":true,"options":[{"viid":1,"label":"选项"}]}`))
+	}))
+	defer server.Close()
+
+	a := parityApp(t, server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageHome}, {Page: PageVote, ID: "42"}}
+	a.vote = forum.Vote{
+		ID: "7", ArticleID: "42", Title: "已删除投票", IsDeleted: true,
+		Options: []forum.VoteOption{{ID: "1", Label: "选项"}},
+	}
+	a.choice = "1"
+	if a.voteSubmitEnabled() {
+		t.Fatal("deleted vote submit was reported as enabled")
+	}
+	renderParityPage(t, a, a.votePage)
+	a.click("vote-submit").Click()
+	renderParityPage(t, a, a.votePage)
+	if requests != 0 {
+		t.Fatalf("deleted vote submitted %d requests", requests)
+	}
+}
+
+func TestBoardPinnedStateIsolatedByRoute(t *testing.T) {
+	a := parityApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.board = forum.Board{Name: "Go", Articles: []forum.Article{{ID: "1", Title: "置顶", IsTop: true}}}
+	a.stack = []Route{{Page: PageHome}, {Page: PageBoard, Name: "Go", Number: 1}}
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Source:      router.Source(),
+		Constraints: layout.Exact(image.Pt(420, 760)),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	}
+	a.boardPage(gtx)
+	a.click("board-pinned-toggle").Click()
+	ops.Reset()
+	a.boardPage(gtx)
+	if !a.boardPinnedExpanded(a.current()) {
+		t.Fatal("board pinned topics did not expand")
+	}
+
+	a.stack[len(a.stack)-1] = Route{Page: PageBoard, Name: "Other", Number: 1}
+	a.board = forum.Board{Name: "Other", Articles: []forum.Article{{ID: "1", Title: "置顶", IsTop: true}}}
+	ops.Reset()
+	a.boardPage(gtx)
+	if a.boardPinnedExpanded(a.current()) {
+		t.Fatal("board pinned state leaked to another board")
+	}
 }

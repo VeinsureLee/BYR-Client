@@ -11,6 +11,57 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+type profileField struct {
+	label string
+	value string
+}
+
+func userProfileFields(u forum.User) []profileField {
+	fields := []profileField{
+		{label: "在线状态", value: profileFlag(bool(u.IsOnline), "在线", "离线")},
+		{label: "注册状态", value: profileFlag(bool(u.IsRegister), "已注册", "未注册")},
+		{label: "生命力", value: string(u.Life)},
+		{label: "性别", value: u.Gender},
+		{label: "星座", value: u.Astro},
+		{label: "主页", value: u.HomePage},
+		{label: "QQ", value: string(u.QQ)},
+		{label: "MSN", value: u.MSN},
+	}
+	if !bool(u.IsHide) {
+		fields = append(fields,
+			profileField{label: "上次登录时间", value: formatTime(u.LastLoginTime)},
+			profileField{label: "最后登录 IP", value: u.LastLoginIP},
+		)
+	}
+	fields = append(fields,
+		profileField{label: "关注数", value: fmt.Sprintf("%d", u.FollowNum)},
+		profileField{label: "粉丝数", value: fmt.Sprintf("%d", u.FansNum)},
+		profileField{label: "是否已关注", value: profileFlag(bool(u.IsFollow), "是", "否")},
+		profileField{label: "是否为粉丝", value: profileFlag(bool(u.IsFan), "是", "否")},
+		profileField{label: "发帖数", value: fmt.Sprintf("%d", u.PostCount)},
+		profileField{label: "积分", value: fmt.Sprintf("%d", u.Score)},
+		profileField{label: "等级", value: string(u.Level)},
+	)
+	return fields
+}
+
+func profileFlag(value bool, yes, no string) string {
+	if value {
+		return yes
+	}
+	return no
+}
+
+func profileRow(c *ui.Context, field profileField) {
+	if strings.TrimSpace(field.label) == "" || strings.TrimSpace(field.value) == "" {
+		return
+	}
+	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
+		ui.Text(c, field.label).FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, field.value).Grow(1).MinWidth(0).MaxLines(3).Ellipsis("…")
+	})
+}
+
 func (a *App) userView(c *ui.Context) {
 	u := a.user
 	ui.Scroll(c).FillWidth().Grow(1).Children(func() {
@@ -24,12 +75,6 @@ func (a *App) userView(c *ui.Context) {
 						meta := []string{}
 						if u.ID != "" {
 							meta = append(meta, "ID "+string(u.ID))
-						}
-						if u.Gender != "" {
-							meta = append(meta, u.Gender)
-						}
-						if u.Astro != "" {
-							meta = append(meta, u.Astro)
 						}
 						if len(meta) > 0 {
 							ui.Text(c, strings.Join(meta, " · ")).FontSize(12).TextColor(c.Theme().TextMuted)
@@ -48,8 +93,8 @@ func (a *App) userView(c *ui.Context) {
 						})
 					})
 				})
-				if t := formatTime(u.LastLoginTime); t != "" {
-					ui.Text(c, "上次登录 "+t).FontSize(12).TextColor(c.Theme().TextMuted)
+				for _, field := range userProfileFields(u) {
+					profileRow(c, field)
 				}
 				ui.Divider(c)
 				ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {

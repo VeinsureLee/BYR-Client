@@ -15,6 +15,7 @@ import (
 func (a *App) loadThread() {
 	r := a.route
 	a.thread = forum.Thread{}
+	a.resetThreadResourcePreflight()
 	account := a.Core.Session().Username
 	a.loadData("加载主题", func(ctx context.Context) (func(), error) {
 		v, err := a.Core.Forum.Thread(ctx, r.Name, r.ID, forum.Page{Number: r.Number})
@@ -34,6 +35,54 @@ func (a *App) loadThread() {
 			if historyErr != nil {
 				a.fail(historyErr)
 			}
+			if !a.failed {
+				a.ensureThreadResourcePreflight()
+			}
+		}, nil
+	})
+}
+
+func (a *App) resetThreadResourcePreflight() {
+	a.threadVoteAvailable = false
+	a.threadBetAvailable = false
+	a.threadResourcesBusy = false
+	a.threadResourcesDone = false
+	a.threadResourceBoard = ""
+	a.threadResourceID = ""
+}
+
+func (a *App) ensureThreadResourcePreflight() {
+	if a.Core == nil || a.route.Page != "thread" || a.thread.ID == "" || a.failed {
+		return
+	}
+	board, id := a.threadBoard(), a.route.ID
+	if strings.TrimSpace(board) == "" || strings.TrimSpace(id) == "" {
+		return
+	}
+	if a.threadResourcesBusy && a.threadResourceBoard == board && a.threadResourceID == id {
+		return
+	}
+	if a.threadResourcesDone && a.threadResourceBoard == board && a.threadResourceID == id {
+		return
+	}
+	if a.busy {
+		return
+	}
+	a.threadResourcesBusy = true
+	a.threadResourcesDone = false
+	a.threadResourceBoard = board
+	a.threadResourceID = id
+	a.run("检查主题附加功能", func(ctx context.Context) (func(), error) {
+		vote, voteErr := a.Core.Forum.Vote(ctx, id)
+		bet, betErr := a.Core.Forum.Bet(ctx, id)
+		return func() {
+			if a.route.Page != "thread" || a.threadResourceBoard != board || a.threadResourceID != id {
+				return
+			}
+			a.threadResourcesBusy = false
+			a.threadVoteAvailable = voteErr == nil && vote.ID != "" && vote.ArticleID != "" && string(vote.ArticleID) == id
+			a.threadBetAvailable = betErr == nil && bet.ID != "" && bet.ArticleID != "" && string(bet.ArticleID) == id
+			a.threadResourcesDone = true
 		}, nil
 	})
 }
@@ -45,7 +94,7 @@ func (a *App) threadView(c *ui.Context) {
 		emptyState(c, "message", "暂无帖子内容", "这个主题可能正在加载，或已被删除。")
 		return
 	}
-	key := listKey{Page: a.route.Page, Name: a.route.Name, ID: a.route.ID, Number: a.route.Number}
+	key := a.threadListKey()
 	state := a.desktopListState(key)
 	state.Key = func(i int) any {
 		if i >= 0 && i < len(a.thread.Articles) {
@@ -126,12 +175,16 @@ func (a *App) threadToolbar(c *ui.Context) {
 				return func() { a.notice("帖子链接已复制") }, err
 			})
 		})
-		a.action(c, "查看投票", "poll", quiet, func() {
-			a.navigate(Route{Page: "vote", ID: a.route.ID}, true)
-		})
-		a.action(c, "查看竞猜", "bet", quiet, func() {
-			a.navigate(Route{Page: "bet", ID: a.route.ID}, true)
-		})
+		if a.threadVoteAvailable {
+			a.action(c, "查看投票", "poll", quiet, func() {
+				a.navigate(Route{Page: "vote", ID: a.route.ID}, true)
+			})
+		}
+		if a.threadBetAvailable {
+			a.action(c, "查看竞猜", "bet", quiet, func() {
+				a.navigate(Route{Page: "bet", ID: a.route.ID}, true)
+			})
+		}
 	})
 }
 
@@ -179,6 +232,10 @@ func (a *App) collect() {
 func (a *App) postView(c *ui.Context, index int, v forum.Article) {
 	manage := bool(v.IsAdmin) || strings.EqualFold(string(v.Author.ID), a.Core.Session().Username)
 	targetPosition, targetAuthor := a.replyTarget(v)
+	postState := a.expandedPostState(a.threadListKey())
+	pinned := bool(v.IsTop)
+	expanded := postState[string(v.ID)]
+	collapsed := pinned && !expanded
 	ui.Column(c.Key("post-"+string(v.ID))).FillWidth().Padding(16).Gap(10).
 		Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
 		ui.Row(c).FillWidth().Gap(11).AlignItems(ui.Start).Children(func() {
@@ -208,6 +265,19 @@ func (a *App) postView(c *ui.Context, index int, v forum.Article) {
 					TextColor(c.Theme().TextMuted).MaxLines(1).Ellipsis("…")
 			})
 		})
+		if pinned {
+			if collapsed {
+				a.action(c, "展开置顶内容", "next", quiet, func() {
+					postState[string(v.ID)] = true
+					c.Invalidate()
+				})
+				return
+			}
+			a.action(c, "收起置顶内容", "down", selected, func() {
+				postState[string(v.ID)] = false
+				c.Invalidate()
+			})
+		}
 		if bool(v.HiddenByVotedown) {
 			ui.Row(c).Gap(6).Children(func() {
 				badge(c, "此楼被踩折叠", c.Theme().Danger)

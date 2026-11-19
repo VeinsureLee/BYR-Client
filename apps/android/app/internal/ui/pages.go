@@ -632,6 +632,17 @@ func (a *App) sectionActions(gtx layout.Context) layout.Dimensions {
 				}
 				return dims
 			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				dims, clicked := a.pill(gtx, "sections-top", "今日十大", "hot", a.current().Page == PageTop, false)
+				if clicked && !a.busy {
+					a.topTab = "top"
+					if a.push(Route{Page: PageTop, Number: 1}) {
+						a.loadTop()
+					}
+				}
+				return dims
+			}),
 		)
 	})
 }
@@ -699,7 +710,7 @@ func (a *App) openBoard(name string) {
 		return
 	}
 	a.board = forum.Board{Name: name}
-	a.pinnedExpanded = false
+	a.resetBoardPinnedExpanded(a.current())
 	a.loadBoard()
 }
 
@@ -731,7 +742,7 @@ func (a *App) boardPage(gtx layout.Context) layout.Dimensions {
 	rows := make([]layout.Widget, 0, len(a.board.Articles)+1)
 	if len(pinned) > 0 {
 		rows = append(rows, a.pinnedGroupCard(len(pinned)))
-		if a.pinnedExpanded {
+		if a.boardPinnedExpanded(a.current()) {
 			for _, article := range pinned {
 				article := article
 				rows = append(rows, func(gtx layout.Context) layout.Dimensions {
@@ -785,7 +796,7 @@ func (a *App) pinnedGroupCard(count int) layout.Widget {
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									label := "默认折叠，点击展开"
-									if a.pinnedExpanded {
+									if a.boardPinnedExpanded(a.current()) {
 										label = "点击收起置顶主题"
 									}
 									l := material.Label(a.theme, unit.Sp(11), label)
@@ -795,9 +806,9 @@ func (a *App) pinnedGroupCard(count int) layout.Widget {
 							)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							icon := "next"
-							if a.pinnedExpanded {
-								icon = "down"
+							icon := "expand_more"
+							if a.boardPinnedExpanded(a.current()) {
+								icon = "expand_less"
 							}
 							return a.drawIcon(gtx, icon, 16, colorMuted)
 						}),
@@ -806,7 +817,8 @@ func (a *App) pinnedGroupCard(count int) layout.Widget {
 			})
 		})
 		if clicked {
-			a.pinnedExpanded = !a.pinnedExpanded
+			route := a.current()
+			a.setBoardPinnedExpanded(route, !a.boardPinnedExpanded(route))
 			a.window.Invalidate()
 		}
 		return dims
@@ -864,6 +876,9 @@ func (a *App) boardHeader(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) toggleBoardFavorite() {
+	if a.busy {
+		return
+	}
 	b := a.board
 	a.run("更新版面收藏", func(ctx context.Context) (func(), error) {
 		var err error
@@ -872,7 +887,14 @@ func (a *App) toggleBoardFavorite() {
 		} else {
 			_, err = a.core.Forum.AddFavorite(ctx, b.Name, "0")
 		}
-		return func() { a.board.IsFavorite = forum.Flag(!bool(b.IsFavorite)) }, err
+		return func() {
+			a.board.IsFavorite = forum.Flag(!bool(b.IsFavorite))
+			a.message = "已收藏版面"
+			if bool(b.IsFavorite) {
+				a.message = "已取消收藏版面"
+			}
+			a.failed = false
+		}, err
 	})
 }
 
@@ -888,6 +910,7 @@ func (a *App) openThread(board, id string) {
 		return
 	}
 	a.thread = forum.Thread{}
+	a.resetThreadExpanded(a.current())
 	a.threadMoreOpen = false
 	a.threadExtrasBusy = false
 	a.threadExtrasDone = false
@@ -897,7 +920,17 @@ func (a *App) openThread(board, id string) {
 }
 
 func (a *App) loadThread() {
+	if a.busy {
+		return
+	}
 	r := a.current()
+	a.thread = forum.Thread{}
+	a.resetThreadExpanded(a.current())
+	a.threadMoreOpen = false
+	a.threadExtrasBusy = false
+	a.threadExtrasDone = false
+	a.threadVote = nil
+	a.threadBet = nil
 	a.run("加载主题", func(ctx context.Context) (func(), error) {
 		v, err := a.core.Forum.Thread(ctx, r.Name, r.ID, forum.Page{Number: max(1, r.Number), Size: 30})
 		if err != nil {
@@ -1017,7 +1050,8 @@ func (a *App) isThreadAuthor(v forum.Article) bool {
 func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Dimensions {
 	author := v.Author.DisplayName()
 	pinned := bool(v.IsTop)
-	expanded := a.expandedPosts[string(v.ID)]
+	postKey := threadExpansionKey(a.current(), string(v.ID))
+	expanded := a.expandedPosts[postKey]
 	collapsed := pinned && !expanded
 	body := strings.TrimSpace(content.Plain(v.Content))
 	if body == "" {
@@ -1105,12 +1139,14 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								label := "展开置顶内容"
+								icon := "expand_more"
 								if !collapsed {
 									label = "收起置顶内容"
+									icon = "expand_less"
 								}
-								dims, clicked := a.pill(gtx, fmt.Sprintf("pin-toggle:%s:%d", v.ID, index), label, "next", false, false)
+								dims, clicked := a.pill(gtx, fmt.Sprintf("pin-toggle:%s:%d", v.ID, index), label, icon, false, false)
 								if clicked {
-									a.expandedPosts[string(v.ID)] = collapsed
+									a.expandedPosts[postKey] = collapsed
 									a.window.Invalidate()
 								}
 								return dims
@@ -1148,42 +1184,42 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 					}
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							label := fmt.Sprintf("赞 %d", v.LikeSum)
 							selected := bool(v.IsLiked)
+							description := "赞"
 							if selected {
-								label = fmt.Sprintf("已赞 %d", v.LikeSum)
+								description = "已赞"
 							}
-							dims, clicked := a.pill(gtx, fmt.Sprintf("like:%s", v.ID), label, "like", selected, false)
-							if clicked {
+							dims, clicked := a.compactIconAction(gtx, fmt.Sprintf("like:%s", v.ID), description, "like", "like_on", int(v.LikeSum), selected, false)
+							if clicked && !a.busy {
 								a.react(index, v, application.Like)
 							}
 							return dims
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							label := fmt.Sprintf("踩 %d", v.VotedownSum)
 							selected := bool(v.IsVotedown)
+							description := "踩"
 							if selected {
-								label = fmt.Sprintf("已踩 %d", v.VotedownSum)
+								description = "已踩"
 							}
-							dims, clicked := a.pill(gtx, fmt.Sprintf("down:%s", v.ID), label, "down", selected, true)
-							if clicked {
+							dims, clicked := a.compactIconAction(gtx, fmt.Sprintf("down:%s", v.ID), description, "down", "down_on", int(v.VotedownSum), selected, true)
+							if clicked && !a.busy {
 								a.react(index, v, application.Downvote)
 							}
 							return dims
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, fmt.Sprintf("reply:%s", v.ID), "回复", "reply", false, false)
-							if clicked {
+							dims, clicked := a.compactIconAction(gtx, fmt.Sprintf("reply:%s", v.ID), "回复", "reply", "", 0, false, false)
+							if clicked && !a.busy {
 								a.openCompose(a.threadBoard(), string(v.ID), "reply")
 							}
 							return dims
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, fmt.Sprintf("copy:%s", v.ID), "复制", "copy", false, false)
-							if clicked {
+							dims, clicked := a.compactIconAction(gtx, fmt.Sprintf("copy:%s", v.ID), "复制", "copy", "", 0, false, false)
+							if clicked && !a.busy {
 								a.copyText(gtx, body)
 							}
 							return dims
@@ -1208,6 +1244,9 @@ func (a *App) threadBoard() string {
 }
 
 func (a *App) likeThread() {
+	if a.busy {
+		return
+	}
 	root, ok := a.threadRoot()
 	if !ok || root.ID == "" {
 		a.fail(errors.New("主题还在加载，请稍候再点赞"))
@@ -1241,6 +1280,9 @@ func (a *App) threadRoot() (forum.Article, bool) {
 }
 
 func (a *App) react(index int, v forum.Article, kind application.ReactionKind) {
+	if a.busy {
+		return
+	}
 	if v.ID == "" {
 		a.fail(errors.New("帖子还在加载，请稍候再评价"))
 		return
@@ -1271,6 +1313,9 @@ func (a *App) react(index int, v forum.Article, kind application.ReactionKind) {
 }
 
 func (a *App) collectThread() {
+	if a.busy {
+		return
+	}
 	if a.thread.ID == "" {
 		a.fail(errors.New("主题还在加载，请稍候再收藏"))
 		return
@@ -1279,7 +1324,15 @@ func (a *App) collectThread() {
 	board, id := a.threadBoard(), a.current().ID
 	a.run("更新文章收藏", func(ctx context.Context) (func(), error) {
 		_, err := a.core.SetCollected(ctx, board, id, !was)
-		return func() { a.thread.Collect = forum.Flag(!was) }, err
+		return func() {
+			a.thread.Collect = forum.Flag(!was)
+			if was {
+				a.message = "已取消收藏"
+			} else {
+				a.message = "已收藏文章"
+			}
+			a.failed = false
+		}, err
 	})
 }
 
@@ -1785,8 +1838,14 @@ func (a *App) pager(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) changePage(n int) {
+	if n < 1 {
+		n = 1
+	}
 	a.stack[len(a.stack)-1].Number = n
-	switch a.current().Page {
+	route := a.current()
+	a.clearRouteModel(route)
+	a.resetRoutePosition(route)
+	switch route.Page {
 	case PageBoard:
 		a.loadBoard()
 	case PageThread:
