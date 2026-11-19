@@ -46,6 +46,7 @@ type App struct {
 	closed, busy, restoring bool
 	route                   Route
 	back                    []Route
+	listStates              map[listKey]*ui.ListState
 	message                 string
 	failed                  bool
 	pageLoading             bool
@@ -98,7 +99,7 @@ type confirmation struct {
 
 func New(core *application.App, device Device, update func(func())) *App {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &App{Core: core, Version: "开发版", device: device, update: update, ctx: ctx, close: cancel, route: Route{Page: "login"}, remember: true, images: map[string]*imageEntry{}, expandedPosts: map[string]bool{}, imageScale: 1, score: "10"}
+	return &App{Core: core, Version: "开发版", device: device, update: update, ctx: ctx, close: cancel, route: Route{Page: "login"}, remember: true, images: map[string]*imageEntry{}, expandedPosts: map[string]bool{}, listStates: make(map[listKey]*ui.ListState), imageScale: 1, score: "10"}
 }
 
 // Start is explicit so constructing and testing a view never logs in or sends

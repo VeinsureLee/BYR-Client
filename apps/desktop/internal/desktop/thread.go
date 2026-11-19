@@ -45,24 +45,33 @@ func (a *App) threadView(c *ui.Context) {
 		emptyState(c, "message", "暂无帖子内容", "这个主题可能正在加载，或已被删除。")
 		return
 	}
-	ui.List(c.Key(fmt.Sprintf("thread-%s-%s-%d", a.route.Name, a.route.ID, a.route.Number)), nil, len(a.thread.Articles), func(i int) {
+	key := listKey{Page: a.route.Page, Name: a.route.Name, ID: a.route.ID, Number: a.route.Number}
+	state := a.desktopListState(key)
+	state.Key = func(i int) any {
+		if i >= 0 && i < len(a.thread.Articles) {
+			return string(a.thread.Articles[i].ID)
+		}
+		return i
+	}
+	ui.List(c.Key(fmt.Sprintf("thread-%s-%s-%d", a.route.Name, a.route.ID, a.route.Number)), state, len(a.thread.Articles), func(i int) {
 		a.postView(c, i, a.thread.Articles[i])
 	}).FillWidth().Grow(1).Gap(12)
 	a.pager(c, a.thread.Pagination, a.pageNumber)
 }
 
 func (a *App) threadHeader(c *ui.Context) {
+	canonicalBoard := a.threadBoard()
 	board := strings.TrimSpace(a.thread.BoardDescription)
 	if board == "" {
-		board = a.route.Name
+		board = canonicalBoard
 	}
-	if a.thread.Board != "" && a.thread.Board != a.route.Name {
-		board = board + " · " + a.thread.Board
+	if canonicalBoard != "" && canonicalBoard != board {
+		board = board + " · " + canonicalBoard
 	}
 	ui.Column(c).FillWidth().Gap(7).Children(func() {
 		ui.Row(c).FillWidth().Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 			if control(c, "版面："+board, "board", quiet).Clicked() {
-				a.navigate(Route{Page: "board", Name: a.route.Name}, true)
+				a.navigate(Route{Page: "board", Name: a.threadBoard()}, true)
 			}
 			if bool(a.thread.IsTop) {
 				badge(c, "置顶", c.Theme().Warning)
@@ -94,7 +103,6 @@ func (a *App) threadTitle() string {
 }
 
 func (a *App) threadToolbar(c *ui.Context) {
-	root, hasRoot := a.threadRoot()
 	collected := bool(a.thread.Collect)
 	collectLabel := "收藏文章"
 	if collected {
@@ -103,28 +111,13 @@ func (a *App) threadToolbar(c *ui.Context) {
 	ui.Row(c).FillWidth().Wrap().Gap(6).Padding(9, 10).
 		Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(12).
 		AlignItems(ui.Center).Children(func() {
-		a.action(c, "回复主题", "reply", filled, func() {
-			a.navigate(Route{Page: "compose", Name: a.route.Name, ID: a.route.ID, Sub: "reply"}, true)
-		})
-		if hasRoot {
-			likeLabel := "点赞"
-			if bool(root.IsLiked) {
-				likeLabel = "已点赞"
-			}
-			if root.LikeSum > 0 {
-				likeLabel = fmt.Sprintf("%s %d", likeLabel, root.LikeSum)
-			}
-			a.reactionDisabled(c, likeLabel, "like", bool(root.IsLiked), false, a.busy, func() {
-				a.reactThread(root, application.Like)
-			})
-		}
 		collectTone := quiet
 		if collected {
 			collectTone = selected
 		}
 		a.action(c, collectLabel, "star", collectTone, a.collect)
 		a.action(c, "复制链接", "link", quiet, func() {
-			link := a.Core.Forum.ThreadURL(a.route.Name, a.route.ID)
+			link := a.Core.Forum.ThreadURL(a.threadBoard(), a.route.ID)
 			a.run("复制链接", func(ctx context.Context) (func(), error) {
 				if a.device == nil {
 					return nil, nil
@@ -132,9 +125,6 @@ func (a *App) threadToolbar(c *ui.Context) {
 				err := a.device.Copy(link)
 				return func() { a.notice("帖子链接已复制") }, err
 			})
-		})
-		a.action(c, "进入版面", "board", quiet, func() {
-			a.navigate(Route{Page: "board", Name: a.route.Name}, true)
 		})
 		a.action(c, "查看投票", "poll", quiet, func() {
 			a.navigate(Route{Page: "vote", ID: a.route.ID}, true)
@@ -171,7 +161,7 @@ func (a *App) threadBoard() string {
 }
 
 func (a *App) collect() {
-	board, id := a.route.Name, a.route.ID
+	board, id := a.threadBoard(), a.route.ID
 	was := bool(a.thread.Collect)
 	a.run("更新文章收藏", func(ctx context.Context) (func(), error) {
 		_, err := a.Core.SetCollected(ctx, board, id, !was)
@@ -234,15 +224,15 @@ func (a *App) postView(c *ui.Context, index int, v forum.Article) {
 				a.react(index, v, application.Downvote)
 			})
 			a.action(c, "回复此楼", "reply", quiet, func() {
-				a.navigate(Route{Page: "compose", Name: a.route.Name, ID: string(v.ID), Sub: "reply"}, true)
+				a.navigate(Route{Page: "compose", Name: a.threadBoard(), ID: string(v.ID), Sub: "reply"}, true)
 			})
 			a.action(c, "复制正文", "copy", quiet, func() { a.copyPost(v) })
 			if manage {
 				a.action(c, "编辑", "edit", quiet, func() {
-					a.navigate(Route{Page: "compose", Name: a.route.Name, ID: string(v.ID), Sub: "edit"}, true)
+					a.navigate(Route{Page: "compose", Name: a.threadBoard(), ID: string(v.ID), Sub: "edit"}, true)
 				})
 				a.action(c, "删除", "trash", destructive, func() {
-					board, id := a.route.Name, string(v.ID)
+					board, id := a.threadBoard(), string(v.ID)
 					a.confirm = &confirmation{text: "确定删除这篇帖子？此操作无法撤销。", run: func() {
 						a.run("删除帖子", func(ctx context.Context) (func(), error) {
 							_, err := a.Core.Forum.DeleteArticle(ctx, board, id)

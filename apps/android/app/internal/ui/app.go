@@ -130,8 +130,14 @@ type App struct {
 	searchHasRun     bool
 	expandedPosts    map[string]bool
 	pinnedExpanded   bool
+	threadMoreOpen   bool
+	threadExtrasBusy bool
+	threadExtrasDone bool
+	threadVote       *forum.Vote
+	threadBet        *forum.Bet
 
-	homeList, sectionList, boardList, threadList, timelineList, favoriteList, selfList, composeList, topList, auxList, searchList widget.List
+	listStates                                                                                 map[listKey]*widget.List
+	homeList, sectionList, timelineList, favoriteList, selfList, composeList, topList, auxList widget.List
 
 	clicks map[string]*widget.Clickable
 
@@ -177,19 +183,16 @@ func New(window invalidator) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{
 		window: window, version: "dev", theme: theme, ctx: ctx, close: cancel,
-		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{},
+		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{}, listStates: make(map[listKey]*widget.List),
 		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai", sectionTab: "favorites",
 		homeList:     widget.List{List: layout.List{Axis: layout.Vertical}},
 		sectionList:  widget.List{List: layout.List{Axis: layout.Vertical}},
-		boardList:    widget.List{List: layout.List{Axis: layout.Vertical}},
-		threadList:   widget.List{List: layout.List{Axis: layout.Vertical}},
 		timelineList: widget.List{List: layout.List{Axis: layout.Vertical}},
 		favoriteList: widget.List{List: layout.List{Axis: layout.Vertical}},
 		selfList:     widget.List{List: layout.List{Axis: layout.Vertical}},
 		composeList:  widget.List{List: layout.List{Axis: layout.Vertical}},
 		topList:      widget.List{List: layout.List{Axis: layout.Vertical}},
 		auxList:      widget.List{List: layout.List{Axis: layout.Vertical}},
-		searchList:   widget.List{List: layout.List{Axis: layout.Vertical}},
 	}
 	a.searchEdit.SingleLine = true
 	a.username.SingleLine = true
@@ -215,6 +218,7 @@ func New(window invalidator) (*App, error) {
 		"edit": icons.EditorModeEdit, "send": icons.ContentSend,
 		"next": icons.NavigationArrowForward, "check": icons.ActionCheckCircle,
 		"alert": icons.ActionInfoOutline, "close": icons.NavigationClose,
+		"more": icons.NavigationMoreVert,
 	}
 	a.icons = make(map[string]*widget.Icon, len(iconData))
 	for name, data := range iconData {
@@ -449,17 +453,20 @@ func (a *App) resetSessionUI() {
 	a.clicks = map[string]*widget.Clickable{}
 	a.expandedPosts = map[string]bool{}
 	a.pinnedExpanded = false
+	a.threadMoreOpen = false
+	a.threadExtrasBusy = false
+	a.threadExtrasDone = false
+	a.threadVote = nil
+	a.threadBet = nil
+	a.listStates = make(map[listKey]*widget.List)
 	a.homeList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.sectionList = widget.List{List: layout.List{Axis: layout.Vertical}}
-	a.boardList = widget.List{List: layout.List{Axis: layout.Vertical}}
-	a.threadList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.timelineList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.favoriteList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.selfList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.composeList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.topList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
-	a.searchList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.searchResults = nil
 	a.searchPagination = forum.Pagination{}
 	a.searchHasRun = false
@@ -477,6 +484,9 @@ func (a *App) push(r Route) bool {
 		return false
 	}
 	a.stack = append(a.stack, r)
+	if r.Page != PageThread {
+		a.threadMoreOpen = false
+	}
 	a.window.Invalidate()
 	return true
 }
@@ -637,6 +647,7 @@ func (a *App) syncPageState() {
 	key := fmt.Sprintf("%d|%s|%s|%s|%d|%s", r.Page, r.Name, r.ID, r.Sub, r.Number, a.sectionTab)
 	if key != a.pageKey {
 		a.pageKey = key
+		a.threadMoreOpen = false
 		// Rebuild list state between pages. Resetting a list from inside its own
 		// item callback corrupts layout, so this runs only at frame start.
 		a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
@@ -702,7 +713,8 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				page := a.current()
-				if page.Page == PageLogin || page.Page == PageCompose || page.Page == PageSection && page.Sub == "pick" {
+				if page.Page == PageLogin || page.Page == PageCompose ||
+					page.Page == PageThread || page.Page == PageSection && page.Sub == "pick" {
 					return layout.Dimensions{}
 				}
 				return a.bottomNav(gtx)
@@ -945,6 +957,9 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						page := a.current().Page
+						if page == PageThread {
+							return a.threadTopActions(gtx)
+						}
 						if page == PageLogin || page == PageSearch || page == PageCompose && a.compose.editID == "" {
 							return layout.Dimensions{}
 						}
@@ -1275,9 +1290,6 @@ func (a *App) title() string {
 		}
 		return a.current().Name
 	case PageThread:
-		if a.thread.Title != "" {
-			return a.thread.Title
-		}
 		return "帖子"
 	case PageTimeline:
 		return "时间线"

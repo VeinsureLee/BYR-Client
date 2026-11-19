@@ -1,9 +1,6 @@
 package ui
 
 import (
-	"gioui.org/layout"
-	"gioui.org/widget"
-
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 )
 
@@ -59,10 +56,12 @@ func (a *App) clearRouteModel(route Route) {
 		a.pagination = forum.Pagination{}
 	case PageBoard:
 		a.board = forum.Board{Name: route.Name}
-		a.boardList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	case PageThread:
 		a.thread = forum.Thread{}
-		a.threadList = widget.List{List: layout.List{Axis: layout.Vertical}}
+		a.threadExtrasBusy = false
+		a.threadExtrasDone = false
+		a.threadVote = nil
+		a.threadBet = nil
 	case PageTop, PageTimeline:
 		a.articles = nil
 		a.pagination = forum.Pagination{}

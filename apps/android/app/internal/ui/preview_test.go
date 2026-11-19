@@ -166,6 +166,33 @@ func TestPreviewScreens(t *testing.T) {
 	thread.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	capture("thread", thread)
 
+	longTitle := previewApp(t)
+	longThread := sampleThread()
+	longThread.Title = "这是一个用于验证主题详情首屏折行与省略行为的超长主题标题：Go、Gio 与跨平台阅读位置"
+	longTitle.thread = longThread
+	longTitle.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	capture("thread-long-title", longTitle)
+
+	manyPosts := previewApp(t)
+	manyThread := sampleThread()
+	for i := 3; i <= 10; i++ {
+		manyThread.Articles = append(manyThread.Articles, forum.Article{
+			ID: forum.Scalar(itoa(40 + i)), Position: forum.Number(i), ReplyID: "42",
+			Author:  forum.User{ID: forum.Scalar("user-" + itoa(i)), UserName: "User" + itoa(i)},
+			Content: "更多楼层内容，用于确认统一滚动流可以继续承载主题回复。",
+		})
+	}
+	manyThread.ReplyCount = forum.Number(len(manyThread.Articles) - 1)
+	manyPosts.thread = manyThread
+	manyPosts.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	capture("thread-many-posts", manyPosts)
+
+	scrolled := previewApp(t)
+	scrolled.thread = manyThread
+	scrolled.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	scrolled.mobileList(listKey{Page: PageThread, Name: "Go", ID: "42", Number: 1}).Position.First = 4
+	capture("thread-scrolled", scrolled)
+
 	pinned := previewApp(t)
 	pinnedThread := sampleThread()
 	pinnedThread.Articles[0].IsTop = true
@@ -217,6 +244,11 @@ func TestPreviewScreens(t *testing.T) {
 
 	setPalette(true)
 	colorHint = colorMuted
+	darkThread := previewApp(t)
+	darkThread.thread = sampleThread()
+	darkThread.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	capture("thread-dark", darkThread)
+
 	darkHome := previewApp(t)
 	darkHome.sections = home.sections
 	darkHome.sectionTab = "all"

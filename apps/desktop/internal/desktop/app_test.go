@@ -234,6 +234,18 @@ func (h *harness) has(text string) {
 		h.t.Fatalf("missing %q: %q", text, h.view.Texts())
 	}
 }
+
+func countText(texts []string, query string) int {
+	n := 0
+	for _, text := range texts {
+		if strings.Contains(text, query) {
+			n++
+		}
+	}
+	// MyGo reports a control's accessible label and its rendered text.
+	return (n + 1) / 2
+}
+
 func (h *harness) count(methodPath string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -294,6 +306,167 @@ func TestConstructingUIIsOffline(t *testing.T) {
 	defer h.mu.Unlock()
 	if len(h.requests) != 0 {
 		t.Fatal(h.requests)
+	}
+}
+
+func TestDesktopThreadHasSingleBoardEntryAndNoDuplicateRootActions(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.app.route = Route{Page: "thread", Name: "Go", ID: "42", Number: 1}
+	h.app.thread = forum.Thread{ID: "42", Board: "Go", BoardDescription: "Go 讨论", Title: "主题", Articles: []forum.Article{
+		{ID: "42", GroupID: "42", Board: "Go", Title: "主题", Author: forum.User{ID: "alice"}, LikeSum: 2},
+		{ID: "44", GroupID: "42", Board: "Go", Author: forum.User{ID: "bob"}},
+	}}
+	h.view.Frame()
+	texts := h.view.Texts()
+	if countText(texts, "进入版面") != 0 {
+		t.Fatalf("duplicate board action remains: %q", texts)
+	}
+	if countText(texts, "版面：") != 1 {
+		t.Fatalf("board breadcrumb count = %d, texts=%q", countText(texts, "版面："), texts)
+	}
+	if countText(texts, "回复主题") != 0 {
+		t.Fatalf("duplicate root reply action remains: %q", texts)
+	}
+	if countText(texts, "点赞") != 0 {
+		t.Fatalf("duplicate root like action remains: %q", texts)
+	}
+	if countText(texts, "回复此楼") != 2 {
+		t.Fatalf("floor reply actions = %d, texts=%q", countText(texts, "回复此楼"), texts)
+	}
+}
+
+func TestDesktopThreadUsesCanonicalBoardForLinkAndOneBoardEntry(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.app.route = Route{Page: "thread", Name: "悄悄话", ID: "42", Number: 1}
+	h.app.thread = forum.Thread{ID: "42", Board: "IWhisper", BoardDescription: "悄悄话", Articles: []forum.Article{
+		{ID: "42", Board: "IWhisper", Author: forum.User{ID: "alice"}},
+	}}
+	h.view.Frame()
+	h.click("版面：悄悄话 · IWhisper")
+	if h.app.route.Page != "board" || h.app.route.Name != "IWhisper" {
+		t.Fatalf("board route = %+v", h.app.route)
+	}
+
+	h.app.route = Route{Page: "thread", Name: "悄悄话", ID: "42", Number: 1}
+	h.app.thread = forum.Thread{ID: "42", Board: "IWhisper", BoardDescription: "悄悄话", Articles: []forum.Article{
+		{ID: "42", Board: "IWhisper", Author: forum.User{ID: "alice"}},
+	}}
+	h.view.Frame()
+	h.click("复制链接")
+	if !strings.Contains(h.device.copied, "/article/IWhisper/42") || strings.Contains(h.device.copied, "/article/悄悄话/42") {
+		t.Fatalf("copied link = %q", h.device.copied)
+	}
+}
+
+func TestDesktopListStateIsolatedByRouteAndPage(t *testing.T) {
+	a := newHarness(t).app
+	first := a.desktopListState(listKey{Page: "board", Name: "Go", Number: 1})
+	first.Key = func(int) any { return "first" }
+	second := a.desktopListState(listKey{Page: "board", Name: "Go", Number: 2})
+	if first == second {
+		t.Fatal("different pages shared desktop list state")
+	}
+	if got := a.desktopListState(listKey{Page: "board", Name: "Go", Number: 1}); got != first {
+		t.Fatal("returning to page 1 did not reuse desktop list state")
+	}
+}
+
+func TestBoardReturnRestoresListState(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.view.SetSize(1200, 260)
+	articles := []forum.Article{
+		{ID: "1", Board: "Go", Title: "第一主题"},
+		{ID: "2", Board: "Go", Title: "第二主题"},
+		{ID: "42", Board: "Go", Title: "第三主题"},
+	}
+	h.mu.Lock()
+	h.overrides = map[string]string{
+		"/open/board/Go.json": `{"name":"Go","description":"Go 讨论","article":[{"id":1,"title":"第一主题","board_name":"Go"},{"id":2,"title":"第二主题","board_name":"Go"},{"id":42,"title":"第三主题","board_name":"Go"}],"pagination":{"page_all_count":1,"page_current_count":1,"item_all_count":3}}`,
+	}
+	h.mu.Unlock()
+	h.app.board = forum.Board{
+		Name: "Go", Description: "Go 讨论", Articles: articles,
+		Pagination: forum.Pagination{TotalPages: 1, CurrentPage: 1, TotalItems: 3},
+	}
+	h.app.route = Route{Page: "board", Name: "Go", Number: 1}
+	h.view.Frame()
+
+	key := listKey{Page: "board", Name: "Go", Number: 1}
+	state := h.app.desktopListState(key)
+	state.ScrollTo(2, ui.Start)
+	h.view.Frame()
+	first, _ := state.Visible()
+	if first != 2 {
+		t.Fatalf("board list first row before navigation = %d, want 2", first)
+	}
+
+	h.app.openArticle(articles[2])
+	h.idle()
+	h.app.goBack()
+	h.idle()
+	h.view.Frame()
+	if h.app.route.Page != "board" || h.app.route.Name != "Go" || h.app.route.Number != 1 {
+		t.Fatalf("route after board back = %+v", h.app.route)
+	}
+	got := h.app.desktopListState(key)
+	if got != state {
+		t.Fatal("board list state was replaced")
+	}
+	first, _ = got.Visible()
+	if first != 2 {
+		t.Fatalf("board list first row after navigation = %d, want 2", first)
+	}
+}
+
+func TestSearchReturnKeepsQueryAndListState(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.view.SetSize(1200, 260)
+	results := []forum.Article{
+		{ID: "10", Board: "Go", Title: "搜索第一主题"},
+		{ID: "11", Board: "Go", Title: "搜索第二主题"},
+		{ID: "42", Board: "Go", Title: "搜索第三主题"},
+	}
+	h.app.route = Route{Page: "search", Number: 1}
+	h.app.searchQuery = "搜索"
+	h.app.searchHasRun = true
+	h.app.searchResults = results
+	h.app.searchPagination = forum.Pagination{TotalPages: 1, CurrentPage: 1, TotalItems: 3}
+	h.view.Frame()
+
+	key := listKey{Page: "search", Query: "搜索", Number: 1}
+	state := h.app.desktopListState(key)
+	state.ScrollTo(2, ui.Start)
+	h.view.Frame()
+	first, _ := state.Visible()
+	if first != 2 {
+		t.Fatalf("search list first row before navigation = %d, want 2", first)
+	}
+	if h.app.desktopListState(listKey{Page: "search", Query: "搜索", Number: 2}) == state {
+		t.Fatal("search pages shared list state")
+	}
+	if h.app.desktopListState(listKey{Page: "search", Query: "另一个", Number: 1}) == state {
+		t.Fatal("search queries shared list state")
+	}
+
+	h.app.openArticle(results[2])
+	h.idle()
+	h.app.goBack()
+	h.idle()
+	h.view.Frame()
+	if h.app.route.Page != "search" || h.app.route.Number != 1 || h.app.searchQuery != "搜索" || len(h.app.searchResults) != 3 {
+		t.Fatalf("search state after back: route=%+v query=%q results=%d", h.app.route, h.app.searchQuery, len(h.app.searchResults))
+	}
+	got := h.app.desktopListState(key)
+	if got != state {
+		t.Fatal("search list state was replaced")
+	}
+	first, _ = got.Visible()
+	if first != 2 {
+		t.Fatalf("search list first row after navigation = %d, want 2", first)
 	}
 }
 
@@ -367,7 +540,7 @@ func TestLoginBrowseReplyAndDraftLifecycle(t *testing.T) {
 	if !strings.Contains(h.device.copied, "/article/Go/42") {
 		t.Fatal("share link missing")
 	}
-	h.click("回复主题")
+	h.click("回复此楼")
 	if h.app.editor.ReplyID != "42" {
 		t.Fatal("reply target lost")
 	}
@@ -430,7 +603,7 @@ func TestThreadReactionsCollectionAndQuoteMatchReference(t *testing.T) {
 	h.has("赞 2")
 	h.click("赞 2")
 	h.has("赞 3")
-	h.has("已点赞 3")
+	h.has("赞 3")
 	h.click("赞 3")
 	if n := h.count("GET /open/article/Go/like/42.json"); n != 1 {
 		t.Fatalf("like request count = %d", n)

@@ -8,12 +8,15 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/unit"
-	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 )
+
+func searchListKey(route Route, query string) listKey {
+	return listKey{Page: PageSearch, Query: strings.TrimSpace(query), Number: max(1, route.Number)}
+}
 
 func (a *App) loadSearch() {
 	if a.searchMode != "all" {
@@ -29,6 +32,7 @@ func (a *App) loadSearch() {
 	}
 	route := a.current()
 	page := max(1, route.Number)
+	key := searchListKey(route, query)
 	a.searchHasRun = true
 	a.searchResults = nil
 	a.searchPagination = forum.Pagination{}
@@ -42,7 +46,7 @@ func (a *App) loadSearch() {
 			if a.current() != route {
 				return
 			}
-			a.searchList = widget.List{List: layout.List{Axis: layout.Vertical}}
+			a.mobileList(key).Position = layout.Position{}
 			a.searchResults = result.Articles
 			a.searchPagination = result.Pagination
 		}, err
@@ -50,6 +54,8 @@ func (a *App) loadSearch() {
 }
 
 func (a *App) searchPage(gtx layout.Context) layout.Dimensions {
+	route := a.current()
+	state := a.mobileList(searchListKey(route, a.searchEdit.Text()))
 	all := a.searchMode == "all"
 	title := "AI 搜索"
 	detail := "AI 搜索需要额外的模型服务，当前尚未配置"
@@ -189,7 +195,7 @@ func (a *App) searchPage(gtx layout.Context) layout.Dimensions {
 			rows = append(rows, a.pager)
 		}
 	}
-	return material.List(a.theme, &a.searchList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
+	return material.List(a.theme, state).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
 		return rows[i](gtx)
 	})
 }

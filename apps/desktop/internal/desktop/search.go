@@ -17,6 +17,7 @@ func (a *App) loadSearch() {
 		return
 	}
 	page := max(1, a.route.Number)
+	a.route.Number = page
 	a.searchHasRun = true
 	a.searchResults = nil
 	a.searchPagination = forum.Pagination{}
@@ -27,7 +28,7 @@ func (a *App) loadSearch() {
 			Size:    30,
 		})
 		return func() {
-			if a.route.Page != "search" {
+			if a.route.Page != "search" || a.route.Number != page || strings.TrimSpace(a.searchQuery) != query {
 				return
 			}
 			a.searchResults = result.Articles

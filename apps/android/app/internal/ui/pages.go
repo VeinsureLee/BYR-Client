@@ -700,7 +700,6 @@ func (a *App) openBoard(name string) {
 	}
 	a.board = forum.Board{Name: name}
 	a.pinnedExpanded = false
-	a.boardList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.loadBoard()
 }
 
@@ -747,6 +746,8 @@ func (a *App) boardPage(gtx layout.Context) layout.Dimensions {
 			return a.articleCard(gtx, "board:"+a.current().Name, article, a.current().Name)
 		})
 	}
+	route := a.current()
+	state := a.mobileList(listKey{Page: PageBoard, Name: route.Name, Sub: route.Sub, Number: max(1, route.Number)})
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return a.boardHeader(gtx)
@@ -755,7 +756,7 @@ func (a *App) boardPage(gtx layout.Context) layout.Dimensions {
 			if len(rows) == 0 {
 				return a.emptyOrPending(gtx, "暂无主题")
 			}
-			return material.List(a.theme, &a.boardList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
+			return material.List(a.theme, state).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
 				return rows[i](gtx)
 			})
 		}),
@@ -887,7 +888,11 @@ func (a *App) openThread(board, id string) {
 		return
 	}
 	a.thread = forum.Thread{}
-	a.threadList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.threadMoreOpen = false
+	a.threadExtrasBusy = false
+	a.threadExtrasDone = false
+	a.threadVote = nil
+	a.threadBet = nil
 	a.loadThread()
 }
 
@@ -922,30 +927,29 @@ func (a *App) threadPage(gtx layout.Context) layout.Dimensions {
 	if a.thread.ID == "" && a.busy {
 		return a.pendingPage(gtx, "正在加载主题…")
 	}
+	route := a.current()
+	state := a.mobileList(listKey{Page: PageThread, Name: route.Name, ID: route.ID, Number: max(1, route.Number)})
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return a.threadHeader(gtx)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return a.threadToolbar(gtx)
+			return a.threadMoreMenu(gtx)
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if len(a.thread.Articles) == 0 {
 				return a.emptyOrPending(gtx, "暂无帖子内容")
 			}
-			return material.List(a.theme, &a.threadList).Layout(gtx, len(a.thread.Articles), func(gtx layout.Context, i int) layout.Dimensions {
-				return a.postCard(gtx, i, a.thread.Articles[i])
+			rows := 1 + len(a.thread.Articles)
+			return material.List(a.theme, state).Layout(gtx, rows, func(gtx layout.Context, i int) layout.Dimensions {
+				if i == 0 {
+					return a.compactThreadHeader(gtx)
+				}
+				return a.postCard(gtx, i-1, a.thread.Articles[i-1])
 			})
 		}),
 		layout.Rigid(a.pager),
 	)
 }
 
-func (a *App) threadHeader(gtx layout.Context) layout.Dimensions {
-	title := a.thread.Title
-	if title == "" {
-		title = "帖子"
-	}
+func (a *App) compactThreadHeader(gtx layout.Context) layout.Dimensions {
 	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -954,30 +958,47 @@ func (a *App) threadHeader(gtx layout.Context) layout.Dimensions {
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							label := a.thread.BoardDescription
 							if label == "" {
-								label = a.current().Name
+								label = a.threadBoard()
+							}
+							if label == "" {
+								label = "未知版面"
 							}
 							dims, clicked := a.pill(gtx, "thread-board", label, "board", false, false)
 							if clicked {
-								a.openBoard(a.current().Name)
+								a.openBoard(a.threadBoard())
 							}
 							return dims
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							meta := make([]string, 0, 2)
 							if a.thread.ReplyCount > 0 {
-								l := material.Label(a.theme, unit.Sp(11), fmt.Sprintf("%d 回复", a.thread.ReplyCount))
-								l.Color = colorMuted
-								return l.Layout(gtx)
+								meta = append(meta, fmt.Sprintf("%d 回复", a.thread.ReplyCount))
 							}
-							return layout.Dimensions{}
+							if t := formatTime(a.thread.LastReplyTime); t != "" {
+								meta = append(meta, "最后回复 "+t)
+							}
+							if len(meta) == 0 {
+								return layout.Dimensions{}
+							}
+							l := material.Label(a.theme, unit.Sp(11), strings.Join(meta, " · "))
+							l.Color = colorMuted
+							l.MaxLines = 1
+							l.Truncator = "…"
+							return l.Layout(gtx)
 						}),
 					)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					l := material.Label(a.theme, unit.Sp(19), title)
+					title := a.thread.Title
+					if title == "" {
+						title = "帖子"
+					}
+					l := material.Label(a.theme, unit.Sp(18), title)
 					l.Font.Weight = 700
-					l.MaxLines = 3
+					l.MaxLines = 2
+					l.Truncator = "…"
 					return l.Layout(gtx)
 				}),
 			)
@@ -991,88 +1012,6 @@ func (a *App) isThreadAuthor(v forum.Article) bool {
 		root = a.thread.Articles[0].Author
 	}
 	return root.ID != "" && v.Author.ID == root.ID
-}
-
-func (a *App) threadToolbar(gtx layout.Context) layout.Dimensions {
-	collected := bool(a.thread.Collect)
-	collectLabel := "收藏文章"
-	if collected {
-		collectLabel = "已收藏"
-	}
-	liked := bool(a.thread.IsLiked)
-	likeLabel := fmt.Sprintf("赞 %d", a.thread.LikeSum)
-	if liked {
-		likeLabel = fmt.Sprintf("已赞 %d", a.thread.LikeSum)
-	}
-	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.filledPill(gtx, "thread-reply", "回复主题", "reply")
-							if clicked {
-								a.openCompose(a.threadBoard(), a.current().ID, "reply")
-							}
-							return dims
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "thread-collect", collectLabel, "star", collected, false)
-							if clicked {
-								a.collectThread()
-							}
-							return dims
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "thread-like", likeLabel, "like", liked, false)
-							if clicked {
-								a.likeThread()
-							}
-							return dims
-						}),
-					)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "thread-share", "复制链接", "link", false, false)
-							if clicked {
-								a.copyText(gtx, a.core.Forum.ThreadURL(a.current().Name, a.current().ID))
-							}
-							return dims
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "thread-open-board", "进入版面", "board", false, false)
-							if clicked {
-								a.openBoard(a.threadBoard())
-							}
-							return dims
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "thread-vote", "投票", "check", false, false)
-							if clicked {
-								a.openVote(a.current().ID)
-							}
-							return dims
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							dims, clicked := a.pill(gtx, "thread-bet", "竞猜", "hot", false, false)
-							if clicked {
-								a.openBet(a.current().ID)
-							}
-							return dims
-						}),
-					)
-				}),
-			)
-		})
-	})
 }
 
 func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Dimensions {
