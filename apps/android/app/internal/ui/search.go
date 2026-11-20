@@ -19,6 +19,29 @@ func searchListKey(route Route, query string) listKey {
 	return listKey{Page: PageSearch, Query: strings.TrimSpace(query), Number: max(1, route.Number)}
 }
 
+func searchActionWidth(available, accessory int, hasAccessory bool) int {
+	if hasAccessory {
+		available -= accessory
+	}
+	return max(0, available)
+}
+
+func (a *App) searchSubmitButton(gtx layout.Context, key, label string, reserveClear bool) (layout.Dimensions, bool) {
+	if !reserveClear {
+		return a.primaryButton(gtx, key, label)
+	}
+	buttonWidth := searchActionWidth(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(46)), true)
+	clicked := false
+	dims := layout.Inset{Right: unit.Dp(46)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = buttonWidth
+		gtx.Constraints.Max.X = buttonWidth
+		var button layout.Dimensions
+		button, clicked = a.primaryButton(gtx, key, label)
+		return button
+	})
+	return dims, clicked
+}
+
 func (a *App) loadSearch() {
 	if a.searchMode != "all" && a.searchMode != "user" {
 		a.notice("AI 搜索尚未配置，当前仅支持全站搜索和人物搜索")
@@ -166,7 +189,7 @@ func (a *App) searchPage(gtx layout.Context) layout.Dimensions {
 				} else if user {
 					label = "查找人物"
 				}
-				dims, clicked := a.primaryButton(gtx, "search-submit", label)
+				dims, clicked := a.searchSubmitButton(gtx, "search-submit", label, a.searchEdit.Text() != "")
 				if clicked {
 					a.loadSearch()
 				}

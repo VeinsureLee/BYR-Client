@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"image/color"
 	"log"
 	"os"
@@ -9,15 +10,20 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/platform"
 	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/ui"
 )
 
-var version = "0.6.2"
+var version = "0.6.3"
 
 type appWindow struct{ *app.Window }
 
 func (w appWindow) SetSystemBarColor(c color.NRGBA) {
 	w.Option(app.StatusColor(c), app.NavigationColor(c))
+}
+
+func (appWindow) SaveImage(ctx context.Context, name string, data []byte) (string, error) {
+	return platform.SaveImage(ctx, name, data)
 }
 
 func main() {

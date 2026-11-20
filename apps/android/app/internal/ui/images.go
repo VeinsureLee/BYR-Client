@@ -36,6 +36,7 @@ const (
 type mobileImage struct {
 	loading bool
 	err     error
+	raw     []byte
 	img     image.Image
 	frames  []image.Image
 	delays  []time.Duration
@@ -211,11 +212,15 @@ func (a *App) imageEntry(raw string) *mobileImage {
 		var decoded *mobileImage
 		if err == nil {
 			decoded, err = decodeMobileImage(b)
+			if decoded != nil {
+				decoded.raw = append([]byte(nil), b...)
+			}
 		}
 		a.post(func() {
 			e.loading = false
 			e.err = err
 			if decoded != nil {
+				e.raw = decoded.raw
 				e.img = decoded.img
 				e.frames = decoded.frames
 				e.delays = decoded.delays

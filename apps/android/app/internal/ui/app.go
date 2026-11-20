@@ -56,6 +56,7 @@ const (
 	PageHistory
 	PageBlacklist
 	PageSettings
+	PageAccounts
 	PageVote
 	PageBet
 	PageCompose
@@ -107,6 +108,7 @@ type App struct {
 	collect        forum.Collection
 	pagination     forum.Pagination
 	user           forum.User
+	savedAccounts  []application.SavedAccount
 	history        []local.History
 	blacklist      forum.Blacklist
 	vote           forum.Vote
@@ -143,33 +145,38 @@ type App struct {
 	threadVote       *forum.Vote
 	threadBet        *forum.Bet
 
-	listStates                                                                                 map[listKey]*widget.List
-	homeList, sectionList, timelineList, favoriteList, selfList, composeList, topList, auxList widget.List
-	moduleTabList                                                                              widget.List
-	moduleTabsKey, moduleTabsSelected                                                          string
-	messageAfterLoad                                                                           string
+	listStates                                                                                                map[listKey]*widget.List
+	homeList, sectionList, timelineList, favoriteList, selfList, composeList, topList, recommendList, auxList widget.List
+	moduleTabList                                                                                             widget.List
+	moduleTabsKey, moduleTabsSelected                                                                         string
+	messageAfterLoad                                                                                          string
 
 	clicks       map[string]*widget.Clickable
 	actionPulses map[string]time.Time
 
-	favoriteTab    string
-	topTab         string
-	compose        composeState
-	lastClip       string
-	images         map[string]*mobileImage
-	imageViewer    string
-	imageViewerRaw string
-	imageScale     float32
-	closed         atomic.Bool
-	themed         bool
-	dark           bool
-	pageKey        string
-	sectionTab     string
-	renderPanic    string
-	startAt        time.Time
-	busySince      time.Time
-	exitArmed      bool
-	exitAt         time.Time
+	favoriteTab     string
+	topTab          string
+	compose         composeState
+	lastClip        string
+	images          map[string]*mobileImage
+	imageViewer     string
+	imageViewerRaw  string
+	imageScale      float32
+	imagePan        image.Point
+	imageViewerTag  struct{ marker byte }
+	imageGesture    imageGestureState
+	closed          atomic.Bool
+	themed          bool
+	dark            bool
+	pageKey         string
+	sectionTab      string
+	renderPanic     string
+	startAt         time.Time
+	busySince       time.Time
+	exitArmed       bool
+	exitAt          time.Time
+	sectionSwipeTag struct{ marker byte }
+	sectionSwipe    sectionSwipeState
 }
 
 type composeState struct {
@@ -206,6 +213,7 @@ func New(window invalidator) (*App, error) {
 		selfList:      widget.List{List: layout.List{Axis: layout.Vertical}},
 		composeList:   widget.List{List: layout.List{Axis: layout.Vertical}},
 		topList:       widget.List{List: layout.List{Axis: layout.Vertical}},
+		recommendList: widget.List{List: layout.List{Axis: layout.Vertical}},
 		auxList:       widget.List{List: layout.List{Axis: layout.Vertical}},
 		moduleTabList: widget.List{List: layout.List{Axis: layout.Horizontal}},
 	}
@@ -496,6 +504,7 @@ func (a *App) resetSessionUI() {
 	a.collect = forum.Collection{}
 	a.pagination = forum.Pagination{}
 	a.user = forum.User{}
+	a.savedAccounts = nil
 	a.history = nil
 	a.favoriteTab = "boards"
 	a.compose = composeState{}
@@ -518,6 +527,8 @@ func (a *App) resetSessionUI() {
 	a.imageViewer = ""
 	a.imageViewerRaw = ""
 	a.imageScale = 1
+	a.imagePan = image.Point{}
+	a.imageGesture.reset()
 	a.clicks = map[string]*widget.Clickable{}
 	a.actionPulses = map[string]time.Time{}
 	a.expandedPosts = map[string]bool{}
@@ -537,6 +548,7 @@ func (a *App) resetSessionUI() {
 	a.selfList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.composeList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.topList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.recommendList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.moduleTabList = newHorizontalModuleTabList()
 	a.moduleTabsKey = ""
@@ -852,12 +864,15 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 				return a.statusBar(gtx)
 			}),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, a.page)
+				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return a.sectionSwipeLayout(gtx, a.page)
+				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				page := a.current()
 				if page.Page == PageLogin || page.Page == PageCompose ||
-					page.Page == PageThread || page.Page == PageSection && page.Sub == "pick" {
+					page.Page == PageThread || page.Page == PageSection && page.Sub == "pick" ||
+					page.Page == PageAccounts && (a.core == nil || a.core.Session().Token == "") {
 					return layout.Dimensions{}
 				}
 				return a.bottomNav(gtx)
@@ -1130,7 +1145,7 @@ func (a *App) subtitle() string {
 		}
 		return "子分区与版面"
 	case PageTop:
-		if a.topTab == "recommend" {
+		if a.current().Name == "recommend" {
 			return "版面推荐"
 		}
 		return "全站热门讨论"
@@ -1185,6 +1200,8 @@ func (a *App) subtitle() string {
 		return "黑名单"
 	case PageSettings:
 		return "设置"
+	case PageAccounts:
+		return "账号管理"
 	case PageVote:
 		return "投票"
 	case PageBet:
@@ -1244,6 +1261,8 @@ func (a *App) refreshCurrent() {
 		a.loadUser(a.current().Name)
 	case PageBlacklist:
 		a.loadBlacklist()
+	case PageAccounts:
+		a.loadAccounts()
 	case PageVote:
 		a.loadVote()
 	case PageBet:
@@ -1427,7 +1446,7 @@ func (a *App) navPage(page Page) Page {
 		return PageHome
 	case PageChat, PageMail, PageMailbox, PageMailCompose, PageRefers:
 		return PageMessages
-	case PageUser, PageHistory, PageBlacklist, PageSettings, PageFavorites:
+	case PageUser, PageHistory, PageBlacklist, PageSettings, PageAccounts, PageFavorites:
 		return PageSelf
 	case PageSearch:
 		return PageSearch
@@ -1450,7 +1469,7 @@ func (a *App) title() string {
 		}
 		return a.current().Name
 	case PageTop:
-		if a.topTab == "recommend" {
+		if a.current().Name == "recommend" {
 			return "版面推荐"
 		}
 		return "今日十大"
@@ -1484,6 +1503,8 @@ func (a *App) title() string {
 		return "黑名单"
 	case PageSettings:
 		return "设置"
+	case PageAccounts:
+		return "账号管理"
 	case PageVote:
 		return "投票"
 	case PageBet:
@@ -1536,6 +1557,8 @@ func (a *App) page(gtx layout.Context) layout.Dimensions {
 		return a.blacklistPage(gtx)
 	case PageSettings:
 		return a.settingsPage(gtx)
+	case PageAccounts:
+		return a.accountsPage(gtx)
 	case PageVote:
 		return a.votePage(gtx)
 	case PageBet:

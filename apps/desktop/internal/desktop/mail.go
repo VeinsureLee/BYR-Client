@@ -26,7 +26,7 @@ func (a *App) messageTabs(c *ui.Context) {
 		for _, tab := range []struct{ key, label, icon string }{
 			{"reply", "回复提醒", "reply"},
 			{"at", "@ 提醒", "at"},
-			{"mail", "站内信", "mail"},
+			{"mail", "私信", "mail"},
 		} {
 			tab := tab
 			tone := quiet
@@ -58,31 +58,6 @@ func (a *App) messageTabs(c *ui.Context) {
 			})
 		}
 	})
-	if a.route.Page == "contacts" || a.route.Page == "mailbox" || a.route.Page == "chat" {
-		selectedMailTab := "contacts"
-		if a.route.Page == "mailbox" {
-			selectedMailTab = a.route.Name
-		} else if a.route.Page == "chat" {
-			selectedMailTab = "contacts"
-		}
-		ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
-			for _, tab := range []struct {
-				page        Page
-				name, label string
-			}{
-				{"contacts", "", "私信"},
-				{"mailbox", "inbox", "收件箱"},
-				{"mailbox", "outbox", "发件箱"},
-			} {
-				tab := tab
-				tone := quiet
-				if selectedMailTab == "contacts" && tab.page == "contacts" || selectedMailTab == tab.name && tab.page == "mailbox" {
-					tone = selected
-				}
-				a.action(c, tab.label, "mail", tone, func() { a.navigate(Route{Page: tab.page, Name: tab.name}, false) })
-			}
-		})
-	}
 }
 func (a *App) contactsView(c *ui.Context) {
 	a.messageTabs(c)
@@ -265,7 +240,7 @@ func (a *App) mailView(c *ui.Context) {
 				a.confirm = &confirmation{text: "确定删除这封站内信？", run: func() {
 					a.run("删除信件", func(ctx context.Context) (func(), error) {
 						_, err := a.Core.Forum.DeleteMail(ctx, r.Name, r.ID)
-						return func() { a.navigate(Route{Page: "mailbox", Name: r.Name}, false) }, err
+						return func() { a.navigate(Route{Page: "contacts"}, false) }, err
 					})
 				}}
 			})

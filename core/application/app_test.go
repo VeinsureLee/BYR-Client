@@ -38,7 +38,7 @@ type failingDisk struct{}
 
 func (failingDisk) Load(context.Context) ([]byte, error) { return nil, nil }
 func (failingDisk) Save(context.Context, []byte) error   { return errors.New("disk full") }
-func appFor(t *testing.T, handler http.HandlerFunc, store *local.Store, creds *credentials) *App {
+func appFor(t *testing.T, handler http.HandlerFunc, store *local.Store, creds CredentialStore) *App {
 	t.Helper()
 	s := httptest.NewServer(handler)
 	t.Cleanup(s.Close)

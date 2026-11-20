@@ -4,6 +4,8 @@ import (
 	"image"
 	"image/color"
 
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -32,6 +34,8 @@ func (a *App) openImage(raw, fullURL string) {
 	a.imageViewerRaw = raw
 	a.imageViewer = fullURL
 	a.imageScale = 1
+	a.imagePan = image.Point{}
+	a.imageGesture.reset()
 	if a.window != nil {
 		a.window.Invalidate()
 	}
@@ -42,6 +46,8 @@ func (a *App) closeImageViewer() {
 	a.imageViewer = ""
 	a.imageViewerRaw = ""
 	a.imageScale = 1
+	a.imagePan = image.Point{}
+	a.imageGesture.reset()
 	// The viewer replaces the page for a frame, so no image should keep an
 	// animation timer alive merely because it was visible before opening it.
 	a.stopImageAnimations()
@@ -58,11 +64,9 @@ func (a *App) zoomImage(factor float32) {
 		a.imageScale = 1
 	}
 	a.imageScale *= factor
-	if a.imageScale < minImageScale {
-		a.imageScale = minImageScale
-	}
-	if a.imageScale > maxImageScale {
-		a.imageScale = maxImageScale
+	a.imageScale = clampImageScale(a.imageScale)
+	if a.imageScale <= 1 {
+		a.imagePan = image.Point{}
 	}
 	if a.window != nil {
 		a.window.Invalidate()
@@ -110,7 +114,20 @@ func (a *App) imageViewerToolbar(gtx layout.Context) layout.Dimensions {
 				return l.Layout(gtx)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return a.imageViewerAction(gtx, "image-viewer-zoom-out", "−", 0.8)
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						btn := a.click("image-viewer-save")
+						clicked := btn.Clicked(gtx)
+						dims := material.Button(a.theme, btn, "保存").Layout(gtx)
+						if clicked {
+							a.saveImageViewer()
+						}
+						return dims
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return a.imageViewerAction(gtx, "image-viewer-zoom-out", "−", 0.8)
+					}),
+				)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return a.imageViewerAction(gtx, "image-viewer-zoom-in", "+", 1.25)
@@ -175,18 +192,40 @@ func (a *App) imageViewerCanvas(gtx layout.Context) layout.Dimensions {
 	}
 	a.markImageVisible(entry)
 	available := gtx.Constraints.Max
+	a.imageViewerPointers(gtx, available)
 	size := viewerImageSize(entry, available, a.imageScale)
+	a.imagePan = clampImagePan(a.imagePan, size, available)
 	if size.X <= 0 || size.Y <= 0 {
 		return layout.Dimensions{Size: available}
 	}
 	viewport := clip.Rect(image.Rectangle{Max: available}).Push(gtx.Ops)
 	defer viewport.Pop()
-	offset := op.Offset(image.Pt((available.X-size.X)/2, (available.Y-size.Y)/2)).Push(gtx.Ops)
+	offset := op.Offset(image.Pt((available.X-size.X)/2+a.imagePan.X, (available.Y-size.Y)/2+a.imagePan.Y)).Push(gtx.Ops)
 	defer offset.Pop()
 	imageContext := gtx
 	imageContext.Constraints = layout.Exact(size)
 	widget.Image{Src: paint.NewImageOp(img), Fit: widget.Contain, Position: layout.Center}.Layout(imageContext)
 	return layout.Dimensions{Size: available}
+}
+
+func (a *App) imageViewerPointers(gtx layout.Context, viewport image.Point) {
+	area := clip.Rect(image.Rectangle{Max: viewport}).Push(gtx.Ops)
+	event.Op(gtx.Ops, &a.imageViewerTag)
+	area.Pop()
+	for {
+		e, ok := gtx.Source.Event(pointer.Filter{
+			Target: &a.imageViewerTag,
+			Kinds:  pointer.Press | pointer.Drag | pointer.Move | pointer.Release | pointer.Cancel,
+		})
+		if !ok {
+			return
+		}
+		pe, ok := e.(pointer.Event)
+		if !ok {
+			continue
+		}
+		a.imageScale, a.imagePan = a.imageGesture.apply(pe, a.imageScale, a.imagePan)
+	}
 }
 
 func viewerImageSize(entry *mobileImage, available image.Point, scale float32) image.Point {

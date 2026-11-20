@@ -86,10 +86,24 @@ func (a *App) Restore(ctx context.Context) error {
 		return err
 	}
 	if s.Token == "" {
+		a.mu.Lock()
+		a.session = Credential{}
+		a.collections = nil
+		a.mu.Unlock()
 		return nil
 	}
 	if s.ExpiresAt > 0 && s.ExpiresAt <= time.Now().Unix() {
-		return a.credentials.Clear(ctx)
+		var clearErr error
+		if accounts, ok := a.credentials.(AccountCredentialStore); ok {
+			clearErr = accounts.DeleteAccount(ctx, s.Username)
+		} else {
+			clearErr = a.credentials.Clear(ctx)
+		}
+		a.mu.Lock()
+		a.session = Credential{}
+		a.collections = nil
+		a.mu.Unlock()
+		return clearErr
 	}
 	a.mu.Lock()
 	a.session = s
@@ -108,6 +122,10 @@ func (a *App) Login(ctx context.Context, username, password string, remember boo
 	if a.credentials != nil {
 		if remember {
 			err = a.credentials.Save(ctx, s)
+		} else if accounts, ok := a.credentials.(AccountCredentialStore); ok {
+			// A non-remembered login clears only the persisted active selection;
+			// other saved accounts remain available in the account manager.
+			err = accounts.SetActive(ctx, "")
 		} else {
 			err = a.credentials.Clear(ctx)
 			if errors.Is(err, errors.ErrUnsupported) {
@@ -127,7 +145,13 @@ func (a *App) Login(ctx context.Context, username, password string, remember boo
 }
 func (a *App) Logout(ctx context.Context) error {
 	if a.credentials != nil {
-		if err := a.credentials.Clear(ctx); err != nil && !errors.Is(err, errors.ErrUnsupported) {
+		var err error
+		if accounts, ok := a.credentials.(AccountCredentialStore); ok {
+			err = accounts.SetActive(ctx, "")
+		} else {
+			err = a.credentials.Clear(ctx)
+		}
+		if err != nil && !errors.Is(err, errors.ErrUnsupported) {
 			return err
 		}
 	}

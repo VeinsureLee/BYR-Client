@@ -21,6 +21,13 @@ type imageEntry struct {
 	w, h    float32
 }
 
+func imageViewerURL(raw string, fullURLs ...string) string {
+	if len(fullURLs) > 0 && fullURLs[0] != "" {
+		return fullURLs[0]
+	}
+	return raw
+}
+
 func (a *App) clearImages() {
 	for _, e := range a.images {
 		if e.player != nil {
@@ -29,7 +36,7 @@ func (a *App) clearImages() {
 	}
 	a.images = map[string]*imageEntry{}
 }
-func (a *App) image(c *ui.Context, raw string, w, h float32, click bool) {
+func (a *App) image(c *ui.Context, raw string, w, h float32, click bool, fullURLs ...string) {
 	e := a.images[raw]
 	if e == nil {
 		if len(a.images) > 160 {
@@ -105,7 +112,7 @@ func (a *App) image(c *ui.Context, raw string, w, h float32, click bool) {
 		element = ui.Image(c, e.source).Size(w, h)
 	}
 	if click && element.Clicked() {
-		a.imageView = raw
+		a.imageView = imageViewerURL(raw, fullURLs...)
 		a.imageScale = 1
 	}
 }
@@ -134,14 +141,8 @@ func (a *App) bodyView(c *ui.Context, body string, attachments []forum.Attachmen
 			a.image(c, "emoji:"+p.URL, 24, 24, false)
 		case content.Image:
 			flush()
-			a.image(c, p.URL, 520, 0, true)
-			full := p.FullURL
-			if full == "" {
-				full = p.URL
-			}
-			if full != p.URL {
-				a.button(c, "查看原图", func() { a.imageView = full; a.imageScale = 1 })
-			}
+			a.image(c, p.URL, 520, 0, true, p.FullURL)
+
 		case content.File:
 			flush()
 			full := p.FullURL

@@ -24,7 +24,7 @@ import (
 
 type recordingSystemBarWindow struct{ colors []color.NRGBA }
 
-func (*recordingSystemBarWindow) Invalidate() {}
+func (*recordingSystemBarWindow) Invalidate()                       {}
 func (w *recordingSystemBarWindow) SetSystemBarColor(c color.NRGBA) { w.colors = append(w.colors, c) }
 
 func TestSystemBarsFollowLightAndDarkTheme(t *testing.T) {
@@ -327,8 +327,8 @@ func TestMessageParityPages(t *testing.T) {
 
 	a.openMessages("inbox")
 	waitForIdle(t, a)
-	if len(a.mailbox.Mails) != 1 {
-		t.Fatalf("mailbox = %+v", a.mailbox)
+	if len(a.contacts) != 1 || a.contacts[0].User.ID != "bob" {
+		t.Fatalf("private-message contacts = %+v", a.contacts)
 	}
 	renderParityPage(t, a, a.messagesPage)
 
@@ -438,6 +438,7 @@ func TestModuleTabsFitNarrowScreens(t *testing.T) {
 			{Key: "favorites", Label: "收藏版面"},
 			{Key: "timeline", Label: "时间线"},
 			{Key: "top", Label: "今日十大"},
+			{Key: "recommend", Label: "版面推荐"},
 		}},
 		{name: "search", items: []moduleTab{
 			{Key: "ai", Label: "AI 搜索"},
@@ -445,10 +446,9 @@ func TestModuleTabsFitNarrowScreens(t *testing.T) {
 			{Key: "user", Label: "用户"},
 		}},
 		{name: "messages", items: []moduleTab{
-			{Key: "contacts", Label: "私信"},
-			{Key: "inbox", Label: "收件箱"},
-			{Key: "outbox", Label: "发件箱"},
-			{Key: "refers", Label: "回复/@"},
+			{Key: "reply", Label: "回复提醒"},
+			{Key: "at", Label: "@ 提醒"},
+			{Key: "mail", Label: "私信"},
 		}},
 		{name: "refers", items: []moduleTab{
 			{Key: "reply", Label: "回复"},

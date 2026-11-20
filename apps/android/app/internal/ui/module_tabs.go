@@ -118,7 +118,7 @@ func (a *App) moduleTab(gtx layout.Context, group, key, label string, selected b
 // remain valid during the shared-strip migration.
 func legacyModuleTabClickKey(group, key string) string {
 	switch group {
-	case "all\x00favorites\x00timeline\x00top":
+	case "all\x00favorites\x00timeline\x00top", "all\x00favorites\x00timeline\x00top\x00recommend":
 		return "sections-" + key
 	case "ai\x00all\x00user":
 		return "search-mode:" + key

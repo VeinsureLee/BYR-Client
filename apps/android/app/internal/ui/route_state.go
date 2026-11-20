@@ -88,14 +88,18 @@ func (a *App) resetRoutePosition(route Route) {
 	case PageSection:
 		a.sectionList.Position = position
 	case PageTop:
-		a.topList.Position = position
+		if route.Name == "recommend" {
+			a.recommendList.Position = position
+		} else {
+			a.topList.Position = position
+		}
 	case PageTimeline:
 		a.timelineList.Position = position
 	case PageFavorites:
 		a.favoriteList.Position = position
 	case PageSelf:
 		a.selfList.Position = position
-	case PageMessages, PageChat, PageMailbox, PageMail, PageMailCompose, PageRefers, PageUser, PageHistory, PageBlacklist, PageSettings, PageVote, PageBet, PageCompose:
+	case PageMessages, PageChat, PageMailbox, PageMail, PageMailCompose, PageRefers, PageUser, PageHistory, PageBlacklist, PageSettings, PageAccounts, PageVote, PageBet, PageCompose:
 		a.auxList.Position = position
 	}
 }
@@ -133,6 +137,8 @@ func (a *App) restoreRoute(route Route) {
 		a.loadBlacklist()
 	case PageSelf:
 		a.loadSelf()
+	case PageAccounts:
+		a.loadAccounts()
 	case PageVote:
 		a.loadVote()
 	case PageBet:
@@ -179,6 +185,8 @@ func (a *App) clearRouteModel(route Route) {
 		a.mail = forum.Mail{}
 	case PageUser, PageSelf:
 		a.user = forum.User{}
+	case PageAccounts:
+		a.savedAccounts = nil
 	case PageBlacklist:
 		a.blacklist = forum.Blacklist{}
 		a.pagination = forum.Pagination{}

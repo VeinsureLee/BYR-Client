@@ -3,7 +3,7 @@
   "slug": "byr-client",
   "identifier": "cn.byr.bbs.byrclient",
   "icon": "resources/icon.png",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "main": ".",
   "out": "../../dist/desktop",
   "linux": {

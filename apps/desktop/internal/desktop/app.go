@@ -83,6 +83,7 @@ type App struct {
 	threadResourceBoard     string
 	threadResourceID        string
 	user                    forum.User
+	savedAccounts           []application.SavedAccount
 	blacklist               forum.Blacklist
 	refers                  forum.Refers
 	mailbox                 forum.Mailbox
@@ -391,6 +392,8 @@ func (a *App) pageErrorView(c *ui.Context) {
 }
 func (a *App) title() string {
 	switch a.route.Page {
+	case "login":
+		return "添加账号"
 	case "home":
 		return "分区与版面"
 	case "board":
@@ -435,6 +438,8 @@ func (a *App) title() string {
 		return "黑名单"
 	case "settings":
 		return "设置"
+	case "accounts":
+		return "账号管理"
 	case "vote":
 		return "投票"
 	case "bet":
@@ -444,6 +449,8 @@ func (a *App) title() string {
 }
 func (a *App) page(c *ui.Context) {
 	switch a.route.Page {
+	case "login":
+		a.loginView(c)
 	case "home":
 		a.homeView(c)
 	case "board":
@@ -480,6 +487,8 @@ func (a *App) page(c *ui.Context) {
 		a.blacklistView(c)
 	case "settings":
 		a.settingsView(c)
+	case "accounts":
+		a.accountsView(c)
 	case "vote":
 		a.voteView(c)
 	case "bet":
@@ -596,6 +605,11 @@ func (a *App) load() {
 			}
 			return func() { a.user = v }, err
 		})
+	case "accounts":
+		a.loadData("加载账号列表", func(ctx context.Context) (func(), error) {
+			accounts, err := a.Core.SavedAccounts(ctx)
+			return func() { a.savedAccounts = accounts }, err
+		})
 	case "blacklist":
 		a.loadData("加载黑名单", func(ctx context.Context) (func(), error) {
 			v, err := f.Blacklist(ctx, r.Number)
@@ -689,6 +703,9 @@ func (a *App) loginView(c *ui.Context) {
 						a.notice(fmt.Sprintf("网页登录：成功=%t，ajax_code=%s。/open 接口仍需要 OAuth 登录。", v.OK(), v.Code))
 					}, err
 				})
+			}
+			if ui.Button(c, "管理已保存账号").Disabled(a.busy).Clicked() {
+				a.navigate(Route{Page: "accounts"}, true)
 			}
 			if a.message != "" && a.device != nil {
 				if ui.Button(c, "复制诊断信息").Clicked() {

@@ -22,7 +22,7 @@ func navigationGroup(page Page) Page {
 		return "home"
 	case "contacts", "chat", "mailbox", "mail", "mail-compose", "refers":
 		return "contacts"
-	case "user", "self", "history", "blacklist":
+	case "user", "self", "history", "blacklist", "accounts", "settings":
 		return "self"
 	}
 	return page
@@ -32,7 +32,11 @@ func (a *App) shell(c *ui.Context) {
 	if a.Core.Session().Token == "" {
 		ui.Column(c).Fill().Children(func() {
 			a.statusView(c)
-			a.loginView(c)
+			if a.route.Page == "accounts" {
+				a.accountsView(c)
+			} else {
+				a.loginView(c)
+			}
 		})
 		return
 	}

@@ -124,8 +124,8 @@ func (e Engine) BuildAndroidProduction(ctx context.Context) (string, error) {
 }
 
 const (
-	defaultAndroidVersion     = "0.6.2"
-	defaultAndroidVersionCode = 60200
+	defaultAndroidVersion     = "0.6.3"
+	defaultAndroidVersionCode = 60300
 )
 
 // androidReleaseVersion lets CI stamp the release tag into the APK without

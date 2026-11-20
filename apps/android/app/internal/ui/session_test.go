@@ -130,8 +130,14 @@ func TestLogoutThenNewAppStartsAtLogin(t *testing.T) {
 		t.Fatalf("logout retained account-scoped message state: mailbox=%+v mail=%+v refers=%+v contacts=%+v chat=%+v blacklist=%+v vote=%+v bet=%+v",
 			first.mailbox, first.mail, first.refers, first.contacts, first.chat, first.blacklist, first.vote, first.bet)
 	}
-	if _, err := os.Stat(credentials.Path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("logout retained credential file: %v", err)
+	if _, err := os.Stat(credentials.Path); err != nil {
+		t.Fatalf("logout deleted the saved-account store: %v", err)
+	}
+	if active, err := credentials.Load(context.Background()); err != nil || active.Token != "" {
+		t.Fatalf("logout retained an active session: %+v, %v", active, err)
+	}
+	if accounts, err := credentials.Accounts(context.Background()); err != nil || len(accounts) != 1 || accounts[0].Username != "alice" {
+		t.Fatalf("logout should retain remembered accounts: %+v, %v", accounts, err)
 	}
 	first.Close()
 

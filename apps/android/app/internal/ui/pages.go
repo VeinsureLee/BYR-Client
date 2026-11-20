@@ -116,6 +116,14 @@ func (a *App) loginPage(gtx layout.Context) layout.Dimensions {
 			}),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				dims, clicked := a.secondaryButton(gtx, "login-account-manager", "管理已保存账号")
+				if clicked {
+					a.openAccountManager()
+				}
+				return dims
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					l := material.Caption(a.theme, fmt.Sprintf("版本 %s · 屏幕 %.0f×%.0fdp · 共享 Go 核心", a.version, float32(screen.X)/scale, float32(screen.Y)/scale))
 					l.Color = colorHint
@@ -604,11 +612,15 @@ func (a *App) homeOverview(gtx layout.Context) layout.Dimensions {
 
 func (a *App) sectionActions(gtx layout.Context) layout.Dimensions {
 	selected := "favorites"
-	if a.current().Page == PageTop {
+	route := a.current()
+	if route.Page == PageTop {
 		selected = "top"
-	} else if a.current().Page == PageTimeline {
+		if route.Name == "recommend" {
+			selected = "recommend"
+		}
+	} else if route.Page == PageTimeline {
 		selected = "timeline"
-	} else if a.current().Page == PageSection || a.current().Page == PageHome && a.sectionTab == "all" {
+	} else if route.Page == PageSection || route.Page == PageHome && a.sectionTab == "all" {
 		selected = "all"
 	}
 	items := []moduleTab{
@@ -616,23 +628,10 @@ func (a *App) sectionActions(gtx layout.Context) layout.Dimensions {
 		{Key: "favorites", Label: "收藏版面"},
 		{Key: "timeline", Label: "时间线"},
 		{Key: "top", Label: "今日十大"},
+		{Key: "recommend", Label: "版面推荐"},
 	}
 	return a.moduleTabs(gtx, items, selected, func(key string) {
-		switch key {
-		case "all":
-			a.showAllSections()
-		case "favorites":
-			a.showFavoriteBoards()
-		case "timeline":
-			if a.push(Route{Page: PageTimeline, Number: 1}) {
-				a.loadTimeline()
-			}
-		case "top":
-			a.topTab = "top"
-			if a.push(Route{Page: PageTop, Number: 1}) {
-				a.loadTop()
-			}
-		}
+		a.navigateSectionModule(key)
 	})
 }
 
@@ -1649,8 +1648,13 @@ func (a *App) selfPage(gtx layout.Context) layout.Dimensions {
 						})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return a.selfRow(gtx, "self-messages", "mail", "私信与站内信", "会话、收件箱与回复提醒", func() {
+						return a.selfRow(gtx, "self-messages", "mail", "私信", "私信会话与回复提醒", func() {
 							a.openMessages("contacts")
+						})
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return a.selfRow(gtx, "self-accounts", "self", "账号管理", "添加、切换或移除保存的账号", func() {
+							a.openAccountManager()
 						})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {

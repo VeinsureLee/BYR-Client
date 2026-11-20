@@ -28,13 +28,6 @@ type mailEditor struct {
 }
 
 func (a *App) openMessages(tab string) {
-	if tab == "" || tab == "contacts" || tab == "inbox" || tab == "outbox" {
-		if tab == "" {
-			tab = "contacts"
-		}
-		a.openMessageRoute(Route{Page: PageMessages, Sub: "mail", Name: tab, Number: 1})
-		return
-	}
 	if tab == "at" || tab == "reply" || tab == "refers" {
 		kind := tab
 		if kind == "refers" {
@@ -43,6 +36,8 @@ func (a *App) openMessages(tab string) {
 		a.openMessageRoute(Route{Page: PageMessages, Sub: kind, Number: 1})
 		return
 	}
+	// “站内信” is the combined private-message conversation list. Inbox and
+	// outbox remain protocol details, not separate navigation destinations.
 	a.openMessageRoute(Route{Page: PageMessages, Sub: "mail", Name: "contacts", Number: 1})
 }
 
@@ -64,10 +59,8 @@ func (a *App) selectMessageTab(tab string) {
 			tab = "reply"
 		}
 		route = Route{Page: PageMessages, Sub: tab, Number: 1}
-	case "mail":
+	case "mail", "contacts", "inbox", "outbox":
 		route = Route{Page: PageMessages, Sub: "mail", Name: "contacts", Number: 1}
-	case "contacts", "inbox", "outbox":
-		route = Route{Page: PageMessages, Sub: "mail", Name: tab, Number: 1}
 	default:
 		return
 	}
@@ -95,6 +88,9 @@ func (a *App) selectReferKind(kind string) {
 }
 
 func (a *App) loadMessages() {
+	if a.current().Page == PageMessages {
+		a.canonicalizeMessageRoute()
+	}
 	route := a.current()
 	page := max(1, route.Number)
 	tab := route.Sub
@@ -230,11 +226,7 @@ func (a *App) canonicalizeMessageRoute() {
 	route := a.current()
 	switch route.Sub {
 	case "", "contacts", "inbox", "outbox":
-		mailTab := route.Sub
-		if mailTab == "" {
-			mailTab = "contacts"
-		}
-		route.Sub, route.Name = "mail", mailTab
+		route.Sub, route.Name = "mail", "contacts"
 	case "refers":
 		if route.Name == "at" {
 			route.Sub = "at"
@@ -266,7 +258,7 @@ func (a *App) messagesPage(gtx layout.Context) layout.Dimensions {
 	mainTabs := []moduleTab{
 		{Key: "reply", Label: "回复提醒"},
 		{Key: "at", Label: "@ 提醒"},
-		{Key: "mail", Label: "站内信"},
+		{Key: "mail", Label: "私信"},
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -274,38 +266,17 @@ func (a *App) messagesPage(gtx layout.Context) layout.Dimensions {
 				return a.moduleTabs(gtx, mainTabs, route.Sub, a.selectMessageTab)
 			})
 		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if route.Sub != "mail" {
-				return layout.Dimensions{}
-			}
-			mailTabs := []moduleTab{
-				{Key: "contacts", Label: "私信"},
-				{Key: "inbox", Label: "收件箱"},
-				{Key: "outbox", Label: "发件箱"},
-			}
-			return layout.Inset{Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return a.moduleTabs(gtx, mailTabs, route.Name, a.selectMessageTab)
-			})
-		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			switch route.Sub {
 			case "reply", "at", "refers":
 				return a.refersBody(gtx)
 			case "mail":
-				switch route.Name {
-				case "inbox", "outbox":
-					return a.mailboxBody(gtx)
-				default:
-					return a.contactsBody(gtx)
-				}
+				return a.contactsBody(gtx)
 			default:
 				return a.empty(gtx, "选择消息模块")
 			}
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if route.Sub == "mail" && (route.Name == "inbox" || route.Name == "outbox") {
-				return a.pager(gtx)
-			}
 			if route.Sub == "reply" || route.Sub == "at" || route.Sub == "refers" {
 				return a.pager(gtx)
 			}
@@ -423,7 +394,11 @@ func (a *App) readAllRefers() {
 
 func (a *App) refersBody(gtx layout.Context) layout.Dimensions {
 	if len(a.refers.Articles) == 0 {
-		return a.emptyOrPending(gtx, "暂无提醒")
+		if a.busy || a.failed {
+			return a.emptyOrPending(gtx, "暂未提醒")
+		}
+		gtx.Constraints.Min = gtx.Constraints.Max
+		return a.empty(gtx, "暂未提醒")
 	}
 	return material.List(a.theme, &a.auxList).Layout(gtx, len(a.refers.Articles), func(gtx layout.Context, i int) layout.Dimensions {
 		refer := a.refers.Articles[i]

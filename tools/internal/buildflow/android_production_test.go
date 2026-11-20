@@ -23,7 +23,7 @@ func TestSelectedGioProductionBuildPackagesStableAPK(t *testing.T) {
 		command := strings.Join(args, " ")
 		if !strings.Contains(command, "tool gogio -target android -arch arm64") ||
 			!strings.Contains(command, "cn.byr.bbs.byrclient") ||
-			!strings.Contains(command, "-version 0.6.2.60200") ||
+			!strings.Contains(command, "-version 0.6.3.60300") ||
 			!strings.Contains(command, "-icon resources/icon.png") {
 			t.Fatal(command)
 		}
@@ -70,7 +70,7 @@ func TestSelectedGioProductionBuildPackagesStableAPK(t *testing.T) {
 	if manifest["production"] != true || manifest["stage"] != "android-preview" || manifest["signing"] != "debug" || manifest["framework"] != "gio" {
 		t.Fatalf("unexpected manifest: %s", data)
 	}
-	if manifest["version"] != "0.6.2" || manifest["versionCode"] != float64(60200) {
+	if manifest["version"] != "0.6.3" || manifest["versionCode"] != float64(60300) {
 		t.Fatalf("manifest version drifted from the app: %s", data)
 	}
 	if _, err := os.Stat(filepath.Join(output, "BYR-Client-android-arm64.apk")); err != nil {

@@ -456,8 +456,11 @@ func TestTopTenAndRecommendationsLoad(t *testing.T) {
 		t.Fatalf("top ten articles = %+v", a.articles)
 	}
 
-	a.selectTopTab("recommend")
+	a.navigateSectionModule("recommend")
 	waitForIdle(t, a)
+	if got := a.current(); got.Page != PageTop || got.Name != "recommend" {
+		t.Fatalf("recommendation destination = %+v, want a distinct route", got)
+	}
 	if len(a.articles) != 1 || a.articles[0].Title != "推荐主题" {
 		t.Fatalf("recommendation articles = %+v", a.articles)
 	}

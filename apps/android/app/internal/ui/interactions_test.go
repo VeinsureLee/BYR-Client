@@ -619,8 +619,8 @@ func TestMessageTabsCanonicalizeRouteNames(t *testing.T) {
 		a.busy = false
 		a.selectMessageTab(tab)
 		waitForIdle(t, a)
-		if got := a.current(); got.Page != PageMessages || got.Sub != "mail" || got.Name != tab {
-			t.Fatalf("mail tab %q route = %+v, want mail/%s", tab, got, tab)
+		if got := a.current(); got.Page != PageMessages || got.Sub != "mail" || got.Name != "contacts" {
+			t.Fatalf("mail destination %q route = %+v, want aggregated mail/contacts", tab, got)
 		}
 	}
 

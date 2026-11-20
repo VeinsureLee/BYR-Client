@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
@@ -135,38 +138,205 @@ func (f FileState) saveOnce(b []byte) error {
 	return os.Rename(name, f.Path)
 }
 
-type Credentials struct{}
+type credentialSecretStore interface {
+	Get(string) ([]byte, error)
+	Set(string, []byte) error
+	Delete(string) error
+}
 
-func (Credentials) Load(ctx context.Context) (application.Credential, error) {
-	var c application.Credential
-	if err := ctx.Err(); err != nil {
-		return c, err
+type Credentials struct{ store credentialSecretStore }
+
+func (s Credentials) secretStore() credentialSecretStore {
+	if s.store != nil {
+		return s.store
 	}
-	b, err := mygo.Secrets.Get("forum-session")
+	return mygo.Secrets
+}
+
+type desktopCredentialDocument struct {
+	Version  int                               `json:"version"`
+	Active   string                            `json:"active,omitempty"`
+	Accounts map[string]application.Credential `json:"accounts"`
+}
+
+const desktopCredentialVersion = 1
+
+var desktopCredentialMu sync.Mutex
+
+func desktopCredentialKey(username string) string {
+	return strings.ToLower(strings.TrimSpace(username))
+}
+
+func (s Credentials) loadDocument(ctx context.Context) (desktopCredentialDocument, bool, error) {
+	doc := desktopCredentialDocument{Version: desktopCredentialVersion, Accounts: map[string]application.Credential{}}
+	if err := ctx.Err(); err != nil {
+		return doc, false, err
+	}
+	b, err := s.secretStore().Get("forum-accounts")
 	if errors.Is(err, mygo.ErrSecretNotFound) {
-		return c, nil
+		legacy, legacyErr := s.secretStore().Get("forum-session")
+		if errors.Is(legacyErr, mygo.ErrSecretNotFound) {
+			return doc, false, nil
+		}
+		if legacyErr != nil {
+			return doc, false, legacyErr
+		}
+		var credential application.Credential
+		if err := json.Unmarshal(legacy, &credential); err != nil {
+			return doc, false, err
+		}
+		key := desktopCredentialKey(credential.Username)
+		if key == "" || credential.Token == "" {
+			return doc, false, errors.New("旧版账号凭据无效")
+		}
+		doc.Active = key
+		doc.Accounts[key] = credential
+		return doc, true, nil
 	}
 	if err != nil {
-		return c, err
+		return doc, false, err
 	}
-	err = json.Unmarshal(b, &c)
-	return c, err
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return doc, false, err
+	}
+	if doc.Version != desktopCredentialVersion {
+		return doc, false, errors.New("不支持的账号凭据版本")
+	}
+	if doc.Accounts == nil {
+		doc.Accounts = map[string]application.Credential{}
+	}
+	return doc, false, nil
 }
-func (Credentials) Save(ctx context.Context, c application.Credential) error {
+
+func (s Credentials) saveDocument(ctx context.Context, doc desktopCredentialDocument) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	b, err := json.Marshal(c)
+	doc.Version = desktopCredentialVersion
+	if doc.Accounts == nil {
+		doc.Accounts = map[string]application.Credential{}
+	}
+	b, err := json.Marshal(doc)
 	if err != nil {
 		return err
 	}
-	return mygo.Secrets.Set("forum-session", b)
+	return s.secretStore().Set("forum-accounts", b)
 }
-func (Credentials) Clear(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
+
+func (s Credentials) migrate(ctx context.Context, doc desktopCredentialDocument, legacy bool) error {
+	if !legacy {
+		return nil
+	}
+	if err := s.saveDocument(ctx, doc); err != nil {
 		return err
 	}
-	return mygo.Secrets.Delete("forum-session")
+	_ = s.secretStore().Delete("forum-session")
+	return nil
+}
+
+func (s Credentials) Load(ctx context.Context) (application.Credential, error) {
+	desktopCredentialMu.Lock()
+	defer desktopCredentialMu.Unlock()
+	doc, legacy, err := s.loadDocument(ctx)
+	if err != nil {
+		return application.Credential{}, err
+	}
+	if err := s.migrate(ctx, doc, legacy); err != nil {
+		return application.Credential{}, err
+	}
+	return doc.Accounts[desktopCredentialKey(doc.Active)], nil
+}
+
+func (s Credentials) Save(ctx context.Context, credential application.Credential) error {
+	desktopCredentialMu.Lock()
+	defer desktopCredentialMu.Unlock()
+	key := desktopCredentialKey(credential.Username)
+	if key == "" || credential.Token == "" {
+		return errors.New("账号凭据无效")
+	}
+	doc, _, err := s.loadDocument(ctx)
+	if err != nil {
+		return err
+	}
+	doc.Accounts[key] = credential
+	doc.Active = key
+	return s.saveDocument(ctx, doc)
+}
+
+func (s Credentials) Clear(ctx context.Context) error { return s.SetActive(ctx, "") }
+
+func (s Credentials) Accounts(ctx context.Context) ([]application.Credential, error) {
+	desktopCredentialMu.Lock()
+	defer desktopCredentialMu.Unlock()
+	doc, legacy, err := s.loadDocument(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.migrate(ctx, doc, legacy); err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(doc.Accounts))
+	for key := range doc.Accounts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]application.Credential, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, doc.Accounts[key])
+	}
+	return out, nil
+}
+
+func (s Credentials) LoadAccount(ctx context.Context, username string) (application.Credential, error) {
+	desktopCredentialMu.Lock()
+	defer desktopCredentialMu.Unlock()
+	doc, legacy, err := s.loadDocument(ctx)
+	if err != nil {
+		return application.Credential{}, err
+	}
+	if err := s.migrate(ctx, doc, legacy); err != nil {
+		return application.Credential{}, err
+	}
+	credential, ok := doc.Accounts[desktopCredentialKey(username)]
+	if !ok {
+		return application.Credential{}, application.ErrSavedAccountNotFound
+	}
+	return credential, nil
+}
+
+func (s Credentials) SetActive(ctx context.Context, username string) error {
+	desktopCredentialMu.Lock()
+	defer desktopCredentialMu.Unlock()
+	doc, _, err := s.loadDocument(ctx)
+	if err != nil {
+		return err
+	}
+	key := desktopCredentialKey(username)
+	if key != "" {
+		if _, ok := doc.Accounts[key]; !ok {
+			return application.ErrSavedAccountNotFound
+		}
+	}
+	doc.Active = key
+	return s.saveDocument(ctx, doc)
+}
+
+func (s Credentials) DeleteAccount(ctx context.Context, username string) error {
+	desktopCredentialMu.Lock()
+	defer desktopCredentialMu.Unlock()
+	doc, _, err := s.loadDocument(ctx)
+	if err != nil {
+		return err
+	}
+	key := desktopCredentialKey(username)
+	if _, ok := doc.Accounts[key]; !ok {
+		return application.ErrSavedAccountNotFound
+	}
+	delete(doc.Accounts, key)
+	if doc.Active == key {
+		doc.Active = ""
+	}
+	return s.saveDocument(ctx, doc)
 }
 func DataDir() (string, error) {
 	if p := os.Getenv("BYR_DATA_DIR"); p != "" {

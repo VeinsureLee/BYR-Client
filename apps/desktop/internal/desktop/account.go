@@ -106,7 +106,8 @@ func (a *App) userView(c *ui.Context) {
 							{"favorites", "我的收藏", "star"},
 							{"history", "阅读历史", "clock"},
 							{"blacklist", "黑名单", "user"},
-							{"mailbox", "我的信箱", "mail"},
+							{"accounts", "账号管理", "user"},
+							{"contacts", "私信", "mail"},
 							{"settings", "设置", "settings"},
 						} {
 							item := item
@@ -145,26 +146,7 @@ func (a *App) logout() {
 	a.confirm = &confirmation{text: "退出当前账号？已保存的草稿和历史会保留。", run: func() {
 		a.run("退出登录", func(ctx context.Context) (func(), error) {
 			err := a.Core.Logout(ctx)
-			return func() {
-				a.clearImages()
-				a.username, a.password = "", ""
-				a.editor = editor{}
-				a.mailEditor = mailEditor{}
-				a.sections = nil
-				a.section = forum.Section{}
-				a.board = forum.Board{}
-				a.thread = forum.Thread{}
-				a.articles = nil
-				a.searchQuery = ""
-				a.searchResults = nil
-				a.searchPagination = forum.Pagination{}
-				a.searchHasRun = false
-				a.boards = nil
-				a.contacts = nil
-				a.chat = nil
-				a.back = nil
-				a.route = Route{Page: "login"}
-			}, err
+			return func() { a.resetAccountUI() }, err
 		})
 	}}
 }
