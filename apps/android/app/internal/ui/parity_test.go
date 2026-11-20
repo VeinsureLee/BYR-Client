@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"image"
+	"image/color"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,39 @@ import (
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/local"
 )
+
+type recordingSystemBarWindow struct{ colors []color.NRGBA }
+
+func (*recordingSystemBarWindow) Invalidate() {}
+func (w *recordingSystemBarWindow) SetSystemBarColor(c color.NRGBA) { w.colors = append(w.colors, c) }
+
+func TestSystemBarsFollowLightAndDarkTheme(t *testing.T) {
+	a := previewAppWithCore(t)
+	defer a.Close()
+	defer func() {
+		setPalette(false)
+		a.dark, a.themed = false, false
+	}()
+	window := &recordingSystemBarWindow{}
+	a.window = window
+	prefs := a.core.Local.Preferences()
+	prefs.Theme = 2
+	if err := a.core.Local.SetPreferences(context.Background(), prefs); err != nil {
+		t.Fatal(err)
+	}
+	a.applyTheme()
+	if len(window.colors) != 1 || window.colors[0] != colorBg {
+		t.Fatalf("dark system bar colors = %+v, want dark surface %v", window.colors, colorBg)
+	}
+	prefs.Theme = 1
+	if err := a.core.Local.SetPreferences(context.Background(), prefs); err != nil {
+		t.Fatal(err)
+	}
+	a.applyTheme()
+	if len(window.colors) != 2 || window.colors[1] != colorBg {
+		t.Fatalf("light system bar colors = %+v, want light surface %v", window.colors, colorBg)
+	}
+}
 
 func parityServer(t *testing.T) *httptest.Server {
 	t.Helper()

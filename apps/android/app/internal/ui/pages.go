@@ -137,7 +137,7 @@ func (a *App) login() {
 		err := a.core.Login(ctx, u, p, a.remember.Value)
 		return func() {
 			a.password.SetText("")
-			a.stack = []Route{{Page: PageSearch}}
+			a.showTopRoot()
 		}, err
 	})
 }
@@ -603,47 +603,36 @@ func (a *App) homeOverview(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) sectionActions(gtx layout.Context) layout.Dimensions {
-	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				selected := a.current().Page == PageSection || a.current().Page == PageHome && a.sectionTab == "all"
-				dims, clicked := a.pill(gtx, "sections-all", "全部分区", "hash", selected, false)
-				if clicked {
-					a.showAllSections()
-				}
-				return dims
-			}),
-			layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				selected := a.current().Page == PageHome && a.sectionTab == "favorites"
-				dims, clicked := a.pill(gtx, "sections-favorites", "收藏版面", "star", selected, false)
-				if clicked {
-					a.showFavoriteBoards()
-				}
-				return dims
-			}),
-			layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				dims, clicked := a.pill(gtx, "sections-timeline", "时间线", "clock", false, false)
-				if clicked && !a.busy {
-					if a.push(Route{Page: PageTimeline, Number: 1}) {
-						a.loadTimeline()
-					}
-				}
-				return dims
-			}),
-			layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				dims, clicked := a.pill(gtx, "sections-top", "今日十大", "hot", a.current().Page == PageTop, false)
-				if clicked && !a.busy {
-					a.topTab = "top"
-					if a.push(Route{Page: PageTop, Number: 1}) {
-						a.loadTop()
-					}
-				}
-				return dims
-			}),
-		)
+	selected := "favorites"
+	if a.current().Page == PageTop {
+		selected = "top"
+	} else if a.current().Page == PageTimeline {
+		selected = "timeline"
+	} else if a.current().Page == PageSection || a.current().Page == PageHome && a.sectionTab == "all" {
+		selected = "all"
+	}
+	items := []moduleTab{
+		{Key: "all", Label: "全部分区"},
+		{Key: "favorites", Label: "收藏版面"},
+		{Key: "timeline", Label: "时间线"},
+		{Key: "top", Label: "今日十大"},
+	}
+	return a.moduleTabs(gtx, items, selected, func(key string) {
+		switch key {
+		case "all":
+			a.showAllSections()
+		case "favorites":
+			a.showFavoriteBoards()
+		case "timeline":
+			if a.push(Route{Page: PageTimeline, Number: 1}) {
+				a.loadTimeline()
+			}
+		case "top":
+			a.topTab = "top"
+			if a.push(Route{Page: PageTop, Number: 1}) {
+				a.loadTop()
+			}
+		}
 	})
 }
 
@@ -889,11 +878,11 @@ func (a *App) toggleBoardFavorite() {
 		}
 		return func() {
 			a.board.IsFavorite = forum.Flag(!bool(b.IsFavorite))
-			a.message = "已收藏版面"
 			if bool(b.IsFavorite) {
-				a.message = "已取消收藏版面"
+				a.notice("已取消收藏版面")
+			} else {
+				a.notice("已收藏版面")
 			}
-			a.failed = false
 		}, err
 	})
 }
@@ -940,6 +929,8 @@ func (a *App) loadThread() {
 			a.core.RememberCollection(r.Name, r.ID)
 		}
 		v.Collect = forum.Flag(a.core.CollectionState(r.Name, r.ID, bool(v.Collect)))
+		username := a.core.Session().Username
+		historyErr := a.core.Local.Visit(a.ctx, username, local.History{Board: r.Name, ID: r.ID, Title: v.Title})
 		return func() {
 			if a.current() != r {
 				return
@@ -947,9 +938,20 @@ func (a *App) loadThread() {
 			a.thread = v
 			if v.Pagination.CurrentPage > 0 {
 				a.stack[len(a.stack)-1].Number = int(v.Pagination.CurrentPage)
+				if r.Sub != "" {
+					for index, article := range v.Articles {
+						if string(article.ID) == r.Sub {
+							key := listKey{Page: PageThread, Name: r.Name, ID: r.ID, Sub: r.Sub, Number: int(v.Pagination.CurrentPage)}
+							state := a.mobileList(key)
+							state.Position.First = index + 1
+							state.Position.Offset = 0
+							break
+						}
+					}
+				}
 			}
-			if err := a.core.Local.Visit(ctx, a.core.Session().Username, local.History{Board: r.Name, ID: r.ID, Title: v.Title}); err != nil {
-				a.message = "阅读历史保存失败：" + err.Error()
+			if historyErr != nil {
+				a.message = "阅读历史保存失败：" + historyErr.Error()
 				a.failed = true
 			}
 		}, nil
@@ -961,7 +963,7 @@ func (a *App) threadPage(gtx layout.Context) layout.Dimensions {
 		return a.pendingPage(gtx, "正在加载主题…")
 	}
 	route := a.current()
-	state := a.mobileList(listKey{Page: PageThread, Name: route.Name, ID: route.ID, Number: max(1, route.Number)})
+	state := a.mobileList(listKey{Page: PageThread, Name: route.Name, ID: route.ID, Sub: route.Sub, Number: max(1, route.Number)})
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return a.threadMoreMenu(gtx)
@@ -1327,11 +1329,10 @@ func (a *App) collectThread() {
 		return func() {
 			a.thread.Collect = forum.Flag(!was)
 			if was {
-				a.message = "已取消收藏"
+				a.notice("已取消收藏文章")
 			} else {
-				a.message = "已收藏文章"
+				a.notice("已收藏文章")
 			}
-			a.failed = false
 		}, err
 	})
 }

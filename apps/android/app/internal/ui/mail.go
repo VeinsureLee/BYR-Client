@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"strings"
 
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -17,6 +18,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
+	"github.com/VeinsureLee/BYR-Client/core/content"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 )
 
@@ -26,13 +28,25 @@ type mailEditor struct {
 }
 
 func (a *App) openMessages(tab string) {
-	if tab == "" {
-		tab = "contacts"
+	if tab == "" || tab == "contacts" || tab == "inbox" || tab == "outbox" {
+		if tab == "" {
+			tab = "contacts"
+		}
+		a.openMessageRoute(Route{Page: PageMessages, Sub: "mail", Name: tab, Number: 1})
+		return
 	}
-	route := Route{Page: PageMessages, Sub: tab, Number: 1}
-	if tab == "refers" {
-		route.Name = "reply"
+	if tab == "at" || tab == "reply" || tab == "refers" {
+		kind := tab
+		if kind == "refers" {
+			kind = "reply"
+		}
+		a.openMessageRoute(Route{Page: PageMessages, Sub: kind, Number: 1})
+		return
 	}
+	a.openMessageRoute(Route{Page: PageMessages, Sub: "mail", Name: "contacts", Number: 1})
+}
+
+func (a *App) openMessageRoute(route Route) {
 	if !a.push(route) {
 		return
 	}
@@ -43,9 +57,19 @@ func (a *App) selectMessageTab(tab string) {
 	if a.busy || a.current().Page != PageMessages {
 		return
 	}
-	route := Route{Page: PageMessages, Sub: tab, Number: 1}
-	if tab == "refers" {
-		route.Name = "reply"
+	var route Route
+	switch tab {
+	case "reply", "at", "refers":
+		if tab == "refers" {
+			tab = "reply"
+		}
+		route = Route{Page: PageMessages, Sub: tab, Number: 1}
+	case "mail":
+		route = Route{Page: PageMessages, Sub: "mail", Name: "contacts", Number: 1}
+	case "contacts", "inbox", "outbox":
+		route = Route{Page: PageMessages, Sub: "mail", Name: tab, Number: 1}
+	default:
+		return
 	}
 	if a.current() == route {
 		return
@@ -54,35 +78,34 @@ func (a *App) selectMessageTab(tab string) {
 	a.loadMessages()
 }
 
-// referKind is the only route-to-endpoint mapping for reminder tabs. A route
-// name on contacts or a mailbox is never allowed to leak into /refer URLs.
+// referKind is the only route-to-endpoint mapping for reminder tabs.
 func (a *App) referKind() string {
 	route := a.current()
-	if route.Sub == "refers" && route.Name == "at" {
+	if route.Sub == "at" || route.Sub == "refers" && route.Name == "at" {
 		return "at"
 	}
 	return "reply"
 }
 
 func (a *App) selectReferKind(kind string) {
-	if a.busy || a.current().Page != PageMessages || a.current().Sub != "refers" {
-		return
-	}
 	if kind != "at" {
 		kind = "reply"
 	}
-	if a.current().Name == kind && a.current().Number == 1 {
-		return
-	}
-	a.stack[len(a.stack)-1].Name = kind
-	a.stack[len(a.stack)-1].Number = 1
-	a.loadMessages()
+	a.selectMessageTab(kind)
 }
 
 func (a *App) loadMessages() {
 	route := a.current()
 	page := max(1, route.Number)
 	tab := route.Sub
+	if tab == "mail" {
+		tab = route.Name
+		if tab == "" {
+			tab = "contacts"
+		}
+	} else if tab == "reply" || tab == "at" || tab == "refers" {
+		tab = "refers"
+	}
 	kind := "reply"
 	if tab == "refers" {
 		kind = a.referKind()
@@ -107,9 +130,9 @@ func (a *App) loadMessages() {
 				a.refers = v
 				a.pagination = v.Pagination
 				if a.messageAfterLoad != "" {
-					a.message = a.messageAfterLoad
+					message := a.messageAfterLoad
 					a.messageAfterLoad = ""
-					a.failed = false
+					a.notice(message)
 				}
 			}, err
 		default:
@@ -186,6 +209,9 @@ func (a *App) openMailCompose(to, box, id, mode string) {
 	a.mailEditor = mailEditor{to: route.Name, box: box, id: id, mode: mode}
 	a.mailEditor.toEditor.SingleLine = true
 	a.mailEditor.titleEditor.SingleLine = true
+	a.mailEditor.toEditor.InputHint = key.HintEmail
+	a.mailEditor.titleEditor.InputHint = key.HintAny
+	a.mailEditor.contentEditor.InputHint = key.HintAny
 	a.mailEditor.toEditor.SetText(route.Name)
 	if mode == "reply" {
 		title := a.mail.Title
@@ -197,35 +223,94 @@ func (a *App) openMailCompose(to, box, id, mode string) {
 	a.composeList.Position = layout.Position{}
 }
 
-func (a *App) messagesPage(gtx layout.Context) layout.Dimensions {
-	items := []moduleTab{
-		{Key: "contacts", Label: "私信"},
-		{Key: "inbox", Label: "收件箱"},
-		{Key: "outbox", Label: "发件箱"},
-		{Key: "refers", Label: "回复/@"},
+func (a *App) canonicalizeMessageRoute() {
+	if len(a.stack) == 0 || a.current().Page != PageMessages {
+		return
 	}
-	if a.current().Sub == "" {
-		a.stack[len(a.stack)-1].Sub = "contacts"
+	route := a.current()
+	switch route.Sub {
+	case "", "contacts", "inbox", "outbox":
+		mailTab := route.Sub
+		if mailTab == "" {
+			mailTab = "contacts"
+		}
+		route.Sub, route.Name = "mail", mailTab
+	case "refers":
+		if route.Name == "at" {
+			route.Sub = "at"
+		} else {
+			route.Sub = "reply"
+		}
+		route.Name = ""
+	}
+	a.stack[len(a.stack)-1] = route
+}
+
+func (a *App) currentMailBox() string {
+	route := a.current()
+	if route.Sub == "mail" {
+		if route.Name == "inbox" || route.Name == "outbox" {
+			return route.Name
+		}
+		return "inbox"
+	}
+	if route.Sub == "inbox" || route.Sub == "outbox" {
+		return route.Sub
+	}
+	return "inbox"
+}
+
+func (a *App) messagesPage(gtx layout.Context) layout.Dimensions {
+	a.canonicalizeMessageRoute()
+	route := a.current()
+	mainTabs := []moduleTab{
+		{Key: "reply", Label: "回复提醒"},
+		{Key: "at", Label: "@ 提醒"},
+		{Key: "mail", Label: "站内信"},
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return a.moduleTabs(gtx, items, a.current().Sub, func(key string) {
-					a.selectMessageTab(key)
-				})
+			return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return a.moduleTabs(gtx, mainTabs, route.Sub, a.selectMessageTab)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if route.Sub != "mail" {
+				return layout.Dimensions{}
+			}
+			mailTabs := []moduleTab{
+				{Key: "contacts", Label: "私信"},
+				{Key: "inbox", Label: "收件箱"},
+				{Key: "outbox", Label: "发件箱"},
+			}
+			return layout.Inset{Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return a.moduleTabs(gtx, mailTabs, route.Name, a.selectMessageTab)
 			})
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			switch a.current().Sub {
-			case "inbox", "outbox":
-				return a.mailboxBody(gtx)
-			case "refers":
+			switch route.Sub {
+			case "reply", "at", "refers":
 				return a.refersBody(gtx)
+			case "mail":
+				switch route.Name {
+				case "inbox", "outbox":
+					return a.mailboxBody(gtx)
+				default:
+					return a.contactsBody(gtx)
+				}
 			default:
-				return a.contactsBody(gtx)
+				return a.empty(gtx, "选择消息模块")
 			}
 		}),
-		layout.Rigid(a.pager),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if route.Sub == "mail" && (route.Name == "inbox" || route.Name == "outbox") {
+				return a.pager(gtx)
+			}
+			if route.Sub == "reply" || route.Sub == "at" || route.Sub == "refers" {
+				return a.pager(gtx)
+			}
+			return layout.Dimensions{}
+		}),
 	)
 }
 
@@ -289,7 +374,8 @@ func (a *App) mailboxBody(gtx layout.Context) layout.Dimensions {
 		if !bool(m.IsRead) {
 			title = "[未读] " + title
 		}
-		btn := a.click("mail:" + a.current().Sub + ":" + string(m.Index))
+		box := a.currentMailBox()
+		btn := a.click("mail:" + box + ":" + string(m.Index))
 		clicked := btn.Clicked(gtx)
 		dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -312,14 +398,15 @@ func (a *App) mailboxBody(gtx layout.Context) layout.Dimensions {
 			})
 		})
 		if clicked {
-			a.openMail(a.current().Sub, string(m.Index))
+			a.openMail(box, string(m.Index))
 		}
 		return dims
 	})
 }
 
 func (a *App) readAllRefers() {
-	if a.busy || a.current().Page != PageMessages || a.current().Sub != "refers" {
+	sub := a.current().Sub
+	if a.busy || a.current().Page != PageMessages || sub != "reply" && sub != "at" && sub != "refers" {
 		return
 	}
 	kind := a.referKind()
@@ -335,64 +422,41 @@ func (a *App) readAllRefers() {
 }
 
 func (a *App) refersBody(gtx layout.Context) layout.Dimensions {
-	header := func(gtx layout.Context) layout.Dimensions {
-		items := []moduleTab{
-			{Key: "reply", Label: "回复"},
-			{Key: "at", Label: "@ 我的"},
-			{Key: "read-all", Label: "一键已读"},
+	if len(a.refers.Articles) == 0 {
+		return a.emptyOrPending(gtx, "暂无提醒")
+	}
+	return material.List(a.theme, &a.auxList).Layout(gtx, len(a.refers.Articles), func(gtx layout.Context, i int) layout.Dimensions {
+		refer := a.refers.Articles[i]
+		title := refer.Title
+		if !bool(refer.IsRead) {
+			title = "[未读] " + title
 		}
-		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return a.moduleTabs(gtx, items, a.referKind(), func(key string) {
-				switch key {
-				case "reply", "at":
-					a.selectReferKind(key)
-				case "read-all":
-					a.readAllRefers()
-				}
+		btn := a.click("refer:" + string(refer.Index))
+		clicked := btn.Clicked(gtx)
+		dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							l := material.Label(a.theme, unit.Sp(14), title)
+							l.Font.Weight = 600
+							l.MaxLines = 2
+							return l.Layout(gtx)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							l := material.Label(a.theme, unit.Sp(11), refer.Board+" · "+refer.Author.DisplayName())
+							l.Color = colorMuted
+							return l.Layout(gtx)
+						}),
+					)
+				})
 			})
 		})
-	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(header),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			if len(a.refers.Articles) == 0 {
-				return a.emptyOrPending(gtx, "暂无提醒")
-			}
-			return material.List(a.theme, &a.auxList).Layout(gtx, len(a.refers.Articles), func(gtx layout.Context, i int) layout.Dimensions {
-				refer := a.refers.Articles[i]
-				title := refer.Title
-				if !bool(refer.IsRead) {
-					title = "[未读] " + title
-				}
-				btn := a.click("refer:" + string(refer.Index))
-				clicked := btn.Clicked(gtx)
-				dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(14), title)
-									l.Font.Weight = 600
-									l.MaxLines = 2
-									return l.Layout(gtx)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(11),
-										refer.Board+" · "+refer.Author.DisplayName())
-									l.Color = colorMuted
-									return l.Layout(gtx)
-								}),
-							)
-						})
-					})
-				})
-				if clicked {
-					a.openRefer(refer)
-				}
-				return dims
-			})
-		}),
-	)
+		if clicked {
+			a.openRefer(refer)
+		}
+		return dims
+	})
 }
 
 func (a *App) openRefer(refer forum.ReferEntry) {
@@ -411,9 +475,12 @@ func (a *App) openRefer(refer forum.ReferEntry) {
 	a.run("读取提醒", func(ctx context.Context) (func(), error) {
 		_, err := a.core.Forum.ReadRefer(ctx, kind, string(refer.Index))
 		return func() {
-			a.push(Route{Page: PageThread, Name: board, ID: id, Number: max(1, (int(refer.Pos)-1)/50+1)})
-			a.thread = forum.Thread{}
-			a.loadThread()
+			targetID := string(refer.ID)
+			route := Route{Page: PageThread, Name: board, ID: id, Sub: targetID, Number: max(1, (int(refer.Pos)-1)/30+1)}
+			if a.push(route) {
+				a.thread = forum.Thread{}
+				a.loadThread()
+			}
 		}, err
 	})
 }
@@ -482,7 +549,51 @@ func (a *App) chatPage(gtx layout.Context) layout.Dimensions {
 	)
 }
 
+func (a *App) messageBody(gtx layout.Context, key string, message forum.Mail) layout.Dimensions {
+	plain := strings.TrimSpace(content.Plain(message.Content))
+	runes := []rune(plain)
+	foldable := len(runes) > 320
+	expanded := a.expandedMail[key]
+	if !foldable || expanded {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return a.postBody(gtx, message.Content, message.Attachments)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if !foldable {
+					return layout.Dimensions{}
+				}
+				dims, clicked := a.compactIconAction(gtx, "mail-fold:"+key, "收起长消息", "expand_less", "", 0, false, false)
+				if clicked {
+					a.expandedMail[key] = false
+					a.window.Invalidate()
+				}
+				return dims
+			}),
+		)
+	}
+	preview := string(runes[:240]) + "…"
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			l := material.Body2(a.theme, preview)
+			l.MaxLines = 5
+			l.Truncator = "…"
+			return l.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			dims, clicked := a.compactIconAction(gtx, "mail-fold:"+key, "展开长消息", "expand_more", "", 0, false, false)
+			if clicked {
+				a.expandedMail[key] = true
+				a.window.Invalidate()
+			}
+			return dims
+		}),
+	)
+}
+
 func (a *App) chatBubble(gtx layout.Context, name string, message application.ChatMessage) layout.Dimensions {
+
 	who := name
 	bg := colorSurface
 	if message.Mine {
@@ -515,7 +626,8 @@ func (a *App) chatBubble(gtx layout.Context, name string, message application.Ch
 							return l.Layout(gtx)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return a.postBody(gtx, message.Mail.Content, message.Mail.Attachments)
+							key := message.Mail.Box + ":" + string(message.Mail.Index)
+							return a.messageBody(gtx, key, message.Mail)
 						}),
 					)
 				})
@@ -589,7 +701,8 @@ func (a *App) mailPage(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-							return a.postBody(gtx, m.Content, m.Attachments)
+							key := box + ":" + a.current().ID
+							return a.messageBody(gtx, key, m)
 						})
 					}),
 					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),

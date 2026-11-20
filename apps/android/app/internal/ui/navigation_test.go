@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -230,15 +231,14 @@ func TestSearchReturnKeepsListPosition(t *testing.T) {
 	a.searchMode = "all"
 	a.searchEdit.SetText("搜索")
 	a.searchHasRun = true
+	a.searchListQuery = "搜索"
 	a.searchResults = []forum.Article{{ID: "42", Board: "Go", Title: "搜索主题"}}
 	key := listKey{Page: PageSearch, Query: "搜索", Number: 1}
 	list := a.mobileList(key)
-	// A position outside the result range detects whether searchPage actually
-	// receives the keyed list instead of the legacy searchList field.
-	list.Position.First = 99
+	list.Position.First = 0
 	renderAndroidPage(t, func(gtx layout.Context) layout.Dimensions { return a.searchPage(gtx) })
-	if list.Position.First == 99 {
-		t.Fatal("search page did not use route-owned list state")
+	if got := a.mobileList(key); got != list {
+		t.Fatal("search text edits detached the editor list from its submitted query state")
 	}
 
 	list.Position.First = 2
@@ -253,6 +253,61 @@ func TestSearchReturnKeepsListPosition(t *testing.T) {
 	}
 	if len(a.searchResults) != 1 || a.searchResults[0].ID != "42" {
 		t.Fatalf("search results after back = %+v", a.searchResults)
+	}
+}
+
+func TestSearchEditorKeepsSequentialIMECharacters(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.stack = []Route{{Page: PageSearch, Number: 1}}
+	a.searchMode = "all"
+	if a.searchEdit.InputHint != key.HintAny {
+		t.Fatalf("search editor input hint = %v, want HintAny to avoid aggressive auto-correction", a.searchEdit.InputHint)
+	}
+	listKey := listKey{Page: PageSearch, Number: 1}
+	list := a.mobileList(listKey)
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{Ops: &ops, Source: router.Source(), Constraints: layout.Exact(image.Pt(420, 820)), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	a.Layout(gtx)
+	router.Frame(&ops)
+	gtx.Execute(key.FocusCmd{Tag: &a.searchEdit})
+	for i, character := range "abc" {
+		router.Queue(key.EditEvent{Range: key.Range{Start: i, End: i}, Text: string(character)})
+		ops.Reset()
+		gtx.Ops = &ops
+		a.Layout(gtx)
+		if got, want := a.searchEdit.Text(), string("abc"[:i+1]); got != want {
+			t.Fatalf("editor after char %q = %q, want %q", character, got, want)
+		}
+		if a.mobileList(listKey) != list {
+			t.Fatal("search typing replaced the active editor list state")
+		}
+		router.Frame(&ops)
+	}
+}
+
+func TestPrivateMessageEditorKeepsSequentialIMECharacters(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.openMailCompose("bob", "", "", "send")
+
+	var router input.Router
+	var ops op.Ops
+	gtx := layout.Context{Ops: &ops, Source: router.Source(), Constraints: layout.Exact(image.Pt(420, 820)), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	a.mailComposePage(gtx)
+	router.Frame(&ops)
+	gtx.Execute(key.FocusCmd{Tag: &a.mailEditor.contentEditor})
+	for i, character := range "abc" {
+		router.Queue(key.EditEvent{Range: key.Range{Start: i, End: i}, Text: string(character)})
+		ops.Reset()
+		gtx.Ops = &ops
+		a.mailComposePage(gtx)
+		if got, want := a.mailEditor.contentEditor.Text(), string("abc"[:i+1]); got != want {
+			t.Fatalf("private message editor after char %q = %q, want %q", character, got, want)
+		}
+		router.Frame(&ops)
 	}
 }
 
@@ -372,8 +427,8 @@ func TestBottomNavigationComposeAndMessages(t *testing.T) {
 	if got := a.current().Page; got != PageMessages {
 		t.Fatalf("messages nav page = %v, want messages", got)
 	}
-	if got := a.current().Sub; got != "contacts" {
-		t.Fatalf("messages tab = %q, want contacts", got)
+	if got := a.current().Sub; got != "mail" || a.current().Name != "contacts" {
+		t.Fatalf("messages tab = %q/%q, want mail/contacts", got, a.current().Name)
 	}
 }
 

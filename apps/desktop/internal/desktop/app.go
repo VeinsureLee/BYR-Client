@@ -44,11 +44,13 @@ type App struct {
 	cancel                  context.CancelFunc
 	serial                  uint64
 	closed, busy, restoring bool
+	refreshing              bool
 	route                   Route
 	back                    []Route
 	listStates              map[listKey]*ui.ListState
 	message                 string
 	failed                  bool
+	noticeSerial            uint64
 	pageLoading             bool
 	pageError, diagnostic   string
 	retryLoad               func()
@@ -58,6 +60,7 @@ type App struct {
 	section                 forum.Section
 	board                   forum.Board
 	thread                  forum.Thread
+	threadScrollPending     bool
 	articles                []forum.Article
 	boards                  []forum.Board
 	favorites               forum.Favorite
@@ -86,6 +89,7 @@ type App struct {
 	mail                    forum.Mail
 	contacts                []application.Contact
 	chat                    []application.ChatMessage
+	expandedMessages        map[string]bool
 	mailEditor              mailEditor
 	editor                  editor
 	vote                    forum.Vote
@@ -107,7 +111,7 @@ type confirmation struct {
 
 func New(core *application.App, device Device, update func(func())) *App {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &App{Core: core, Version: "开发版", device: device, update: update, ctx: ctx, close: cancel, route: Route{Page: "login"}, remember: true, searchMode: "all", images: map[string]*imageEntry{}, expandedPosts: map[listKey]map[string]bool{}, pinnedExpanded: map[listKey]bool{}, listStates: make(map[listKey]*ui.ListState), imageScale: 1, score: "10"}
+	return &App{Core: core, Version: "开发版", device: device, update: update, ctx: ctx, close: cancel, route: Route{Page: "login"}, remember: true, searchMode: "all", images: map[string]*imageEntry{}, expandedPosts: map[listKey]map[string]bool{}, pinnedExpanded: map[listKey]bool{}, expandedMessages: map[string]bool{}, listStates: make(map[listKey]*ui.ListState), imageScale: 1, score: "10"}
 }
 
 // Start is explicit so constructing and testing a view never logs in or sends
@@ -151,6 +155,7 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 	serial := a.serial
 	a.busy = true
 	a.message = label
+	a.noticeSerial++
 	a.failed = false
 	a.pageLoading = false
 	go func() {
@@ -164,6 +169,9 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 			wasPageLoad := a.pageLoading
 			a.pageLoading = false
 			if err != nil {
+				if a.refreshing {
+					a.refreshing = false
+				}
 				if a.route.Page == "compose" {
 					a.editor.Publishing = false
 				}
@@ -179,6 +187,10 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 			if done != nil {
 				done()
 			}
+			if a.refreshing {
+				a.refreshing = false
+				a.notice("刷新成功")
+			}
 		})
 	}()
 }
@@ -191,6 +203,7 @@ func (a *App) loadData(label string, work func(context.Context) (func(), error))
 }
 func (a *App) fail(err error) {
 	a.failed = true
+	a.noticeSerial++
 	a.diagnostic = err.Error()
 	a.message = err.Error()
 	var decode *forum.DecodeError
@@ -208,7 +221,35 @@ func (a *App) fail(err error) {
 		a.message = "登录已失效，请退出后重新登录"
 	}
 }
-func (a *App) notice(s string) { a.failed = false; a.message = s }
+func (a *App) notice(s string) {
+	a.failed = false
+	a.message = s
+	a.noticeSerial++
+	serial := a.noticeSerial
+	if a.closed || a.update == nil {
+		return
+	}
+	a.scheduleNoticeExpiry(s, serial)
+}
+
+func (a *App) scheduleNoticeExpiry(message string, serial uint64) {
+	time.AfterFunc(3*time.Second, func() {
+		if a.closed || a.update == nil {
+			return
+		}
+		a.update(func() {
+			if a.closed || a.noticeSerial != serial || a.failed || a.message != message {
+				return
+			}
+			if a.busy {
+				a.scheduleNoticeExpiry(message, serial)
+				return
+			}
+			a.message = ""
+			a.noticeSerial++
+		})
+	})
+}
 func (a *App) navigate(r Route, push bool) {
 	if a.busy {
 		return
@@ -460,6 +501,30 @@ func (a *App) resolveSubsections(ctx context.Context, section *forum.Section) {
 			*sub = full
 		}
 	}
+}
+
+func (a *App) refreshCurrent() {
+	if a.busy || a.closed {
+		return
+	}
+	a.route.Number = 1
+	a.pageJump = ""
+	a.route.Sub = ""
+	switch a.route.Page {
+	case "search":
+		a.desktopListState(a.articleListKey()).ScrollTo(0, ui.Start)
+		a.refreshing = true
+		a.loadSearch()
+		return
+	case "thread":
+		a.desktopListState(a.threadListKey()).ScrollTo(0, ui.Start)
+	default:
+		if a.route.Page == "board" || a.route.Page == "timeline" {
+			a.desktopListState(a.articleListKey()).ScrollTo(0, ui.Start)
+		}
+	}
+	a.refreshing = true
+	a.load()
 }
 
 func (a *App) load() {

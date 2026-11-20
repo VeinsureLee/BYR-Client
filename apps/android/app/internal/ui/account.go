@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gioui.org/layout"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
@@ -62,8 +63,11 @@ func (a *App) profileRow(gtx layout.Context, label, value string) layout.Dimensi
 		return layout.Dimensions{}
 	}
 	return layout.Inset{Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Start}.Layout(gtx,
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				width := gtx.Dp(unit.Dp(88))
+				gtx.Constraints.Min.X = width
+				gtx.Constraints.Max.X = width
 				l := material.Caption(a.theme, label)
 				l.Color = colorMuted
 				return l.Layout(gtx)
@@ -71,6 +75,9 @@ func (a *App) profileRow(gtx layout.Context, label, value string) layout.Dimensi
 			layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				l := material.Body2(a.theme, value)
+				l.Alignment = text.End
+				l.MaxLines = 2
+				l.Truncator = "…"
 				return l.Layout(gtx)
 			}),
 		)
@@ -89,7 +96,7 @@ func (a *App) profileLinkRow(gtx layout.Context, field profileField) layout.Dime
 	if clicked && !a.busy {
 		a.copyText(gtx, field.value)
 		if !a.failed {
-			a.message = "主页链接已复制"
+			a.notice("主页链接已复制")
 		}
 	}
 	return dims

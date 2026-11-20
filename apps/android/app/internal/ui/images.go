@@ -363,20 +363,9 @@ func (a *App) inlineImage(gtx layout.Context, raw string, fullURLs ...string) la
 	if maxW <= 0 {
 		maxW = gtx.Dp(unit.Dp(320))
 	}
-	maxH := gtx.Dp(unit.Dp(360))
-	if availableH := gtx.Constraints.Max.Y; availableH > 0 && availableH < maxH {
-		maxH = availableH
-	}
 	h := int(float64(maxW) * float64(e.h) / float64(e.w))
 	if h < 1 {
 		h = 1
-	}
-	if maxH > 0 && h > maxH {
-		maxW = int(float64(maxH) * float64(e.w) / float64(e.h))
-		if maxW < 1 {
-			maxW = 1
-		}
-		h = maxH
 	}
 	gtx.Constraints.Min = image.Point{}
 	gtx.Constraints.Max = image.Pt(maxW, h)

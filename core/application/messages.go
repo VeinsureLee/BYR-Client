@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 )
@@ -63,7 +64,13 @@ func (a *App) Contacts(ctx context.Context) ([]Contact, error) {
 }
 func (a *App) Conversation(ctx context.Context, contact string) ([]ChatMessage, error) {
 	var out []ChatMessage
-	for _, box := range []string{"inbox", "outbox"} {
+	boxes := []string{"inbox", "outbox"}
+	if strings.EqualFold(strings.TrimSpace(contact), strings.TrimSpace(a.Session().Username)) {
+		// BYR mirrors a self-addressed mail in both boxes; keep only the
+		// canonical sent copy so the conversation does not display it twice.
+		boxes = []string{"outbox"}
+	}
+	for _, box := range boxes {
 		m, err := a.Forum.Mailbox(ctx, box, forum.Page{Size: 100})
 		if err != nil {
 			return nil, err

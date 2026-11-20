@@ -639,6 +639,56 @@ func TestLoggedInContentFitsNativeWindowSizes(t *testing.T) {
 		}
 	}
 }
+func TestDesktopRefreshReturnsToFirstPageAndTop(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.app.route = Route{Page: "board", Name: "Go", Number: 3}
+	h.app.board = forum.Board{Name: "Go", Articles: []forum.Article{
+		{ID: "42", Board: "Go", Title: "测试主题"},
+		{ID: "43", Board: "Go", Title: "第二主题"},
+	}}
+	key := listKey{Page: "board", Name: "Go", Number: 1}
+	state := h.app.desktopListState(key)
+	state.ScrollTo(1, ui.Start)
+	h.view.Frame()
+	h.click("刷新")
+	if h.app.route.Number != 1 {
+		t.Fatalf("refreshed board page = %d, want 1", h.app.route.Number)
+	}
+	state = h.app.desktopListState(key)
+	if first, _ := state.Visible(); first != 0 {
+		t.Fatalf("refreshed board list first row = %d, want 0", first)
+	}
+	if h.app.message != "刷新成功" {
+		t.Fatalf("refresh message = %q, want 刷新成功", h.app.message)
+	}
+}
+
+func TestDesktopPrivateMessageEditorRetainsTypedText(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.app.route = Route{Page: "mail-compose", Name: "bob"}
+	h.app.mailEditor = mailEditor{To: "bob", Mode: "send"}
+	h.view.Frame()
+	h.typeIn("信件正文", "abc")
+	if got := h.app.mailEditor.Content; got != "abc" {
+		t.Fatalf("private message content = %q, want abc", got)
+	}
+}
+
+func TestDesktopNoticeExpiresAutomatically(t *testing.T) {
+	h := newHarness(t)
+	h.app.notice("已复制")
+	if h.app.message != "已复制" {
+		t.Fatalf("notice = %q", h.app.message)
+	}
+	time.Sleep(3100 * time.Millisecond)
+	h.idle()
+	if h.app.message != "" {
+		t.Fatalf("transient notice did not expire: %q", h.app.message)
+	}
+}
+
 func TestLoginBrowseReplyAndDraftLifecycle(t *testing.T) {
 	h := newHarness(t)
 	h.login()
@@ -827,6 +877,40 @@ func TestAnonymousReactionTreatsUnresolvedAuthorAsRecorded(t *testing.T) {
 	}
 }
 
+func TestDesktopReplyReminderOpensTargetFloor(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.view.SetSize(640, 420)
+	h.goTo(Route{Page: "refers", Name: "reply", Number: 1})
+	h.click("[未读] 通知主题")
+	h.view.Frame()
+	if h.app.route.Page != "thread" || h.app.route.ID != "42" || h.app.route.Sub != "44" {
+		t.Fatalf("reply reminder route = %+v, want thread 42 floor 44", h.app.route)
+	}
+	state := h.app.desktopListState(h.app.threadListKey())
+	first, _ := state.Visible()
+	if first != 1 {
+		t.Fatalf("thread visible first floor = %d, want target floor 44 at index 1", first)
+	}
+}
+
+func TestDesktopLongPrivateMessageFoldsAndExpands(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.app.route = Route{Page: "chat", Name: "alice"}
+	h.app.chat = []application.ChatMessage{{
+		Mail: forum.Mail{Box: "outbox", Index: "12", Content: strings.Repeat("长消息内容。", 100)},
+		Mine: true,
+	}}
+	h.view.Frame()
+	h.has("展开全文")
+	h.click("展开全文")
+	h.has("收起全文")
+	if !h.app.expandedMessages["outbox12"] {
+		t.Fatal("expanded message state not stored by box/index")
+	}
+}
+
 func TestTimelineIsSeparateFromFavorites(t *testing.T) {
 	h := newHarness(t)
 	h.login()
@@ -848,8 +932,9 @@ func TestSearchFavoritesAndAllMigratedScreens(t *testing.T) {
 	h.login()
 	h.goTo(Route{Page: "search"})
 	h.has("全站搜索")
-	h.has("AI 搜索")
-	h.has("敬请期待")
+	if h.view.HasText("AI 搜索") || h.view.HasText("敬请期待") {
+		t.Fatalf("search page still has oversized/redundant header content: %q", h.view.Texts())
+	}
 	h.typeIn("搜索关键词", "测试")
 	h.click("开始搜索")
 	h.has("测试主题")

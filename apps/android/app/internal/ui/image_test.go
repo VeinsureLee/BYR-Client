@@ -39,7 +39,7 @@ func TestAndroidInlineImageFitsAvailableWidth(t *testing.T) {
 	}
 }
 
-func TestAndroidInlineImageHonorsAvailableHeight(t *testing.T) {
+func TestAndroidInlineImageUsesAvailableWidthForTallImages(t *testing.T) {
 	a, err := New(noopInvalidator{})
 	if err != nil {
 		t.Fatal(err)
@@ -59,8 +59,8 @@ func TestAndroidInlineImageHonorsAvailableHeight(t *testing.T) {
 		Constraints: layout.Constraints{Max: image.Pt(300, 120)},
 		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
 	}, "tall")
-	if dims.Size != image.Pt(12, 120) {
-		t.Fatalf("tall inline image dimensions = %v, want 12x120", dims.Size)
+	if dims.Size != image.Pt(300, 3000) {
+		t.Fatalf("tall inline image dimensions = %v, want full-width 300x3000", dims.Size)
 	}
 }
 

@@ -56,9 +56,9 @@ func profileRow(c *ui.Context, field profileField) {
 	if strings.TrimSpace(field.label) == "" || strings.TrimSpace(field.value) == "" {
 		return
 	}
-	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Start).Children(func() {
-		ui.Text(c, field.label).FontSize(12).TextColor(c.Theme().TextMuted)
-		ui.Text(c, field.value).Grow(1).MinWidth(0).MaxLines(3).Ellipsis("…")
+	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, field.label).FontSize(12).TextColor(c.Theme().TextMuted).MinWidth(100).MaxWidth(100)
+		ui.Text(c, field.value).Grow(1).MinWidth(0).MaxLines(2).Ellipsis("…").TextAlign(ui.End)
 	})
 }
 

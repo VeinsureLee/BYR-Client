@@ -5,44 +5,84 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/VeinsureLee/BYR-Client/core/content"
+	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/egoist/mygo/ui"
 )
 
 type mailEditor struct{ To, Title, Content, Mode, Box, ID string }
 
 func (a *App) messageTabs(c *ui.Context) {
-	active := a.route.Page
-	switch active {
-	case "chat":
-		active = "contacts"
-	case "mail":
-		active = "mailbox"
+	selectedKey := "mail"
+	if a.route.Page == "refers" {
+		selectedKey = "reply"
+		if a.route.Name == "at" {
+			selectedKey = "at"
+		}
 	}
-	tabs := []struct {
-		page              Page
-		name, label, icon string
-	}{
-		{"contacts", "", "私信会话", "message"},
-		{"mailbox", "inbox", "收件箱", "mail"},
-		{"mailbox", "outbox", "发件箱", "send"},
-		{"refers", "", "回复 / @ 提醒", "clock"},
-		{"mail-compose", "", "写站内信", "edit"},
-	}
-	ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
-		for _, tab := range tabs {
-			isSelected := active == tab.page && (tab.name == "" || a.route.Name == tab.name)
+	ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
+		for _, tab := range []struct{ key, label, icon string }{
+			{"reply", "回复提醒", "reply"},
+			{"at", "@ 提醒", "at"},
+			{"mail", "站内信", "mail"},
+		} {
+			tab := tab
 			tone := quiet
-			if isSelected {
+			if selectedKey == tab.key {
 				tone = selected
 			}
-			if control(c, tab.label, tab.icon, tone).Clicked() {
-				r := Route{Page: tab.page, Name: tab.name}
-				push := tab.page == "mail-compose"
-				a.navigate(r, push)
-			}
+			a.action(c, tab.label, tab.icon, tone, func() {
+				switch tab.key {
+				case "reply", "at":
+					a.navigate(Route{Page: "refers", Name: tab.key}, false)
+				case "mail":
+					a.navigate(Route{Page: "contacts"}, false)
+				}
+			})
+		}
+		if a.route.Page == "refers" {
+			a.action(c, "一键已读", "check", quiet, func() {
+				kind := "reply"
+				if a.route.Name == "at" {
+					kind = "at"
+				}
+				a.run("全部标为已读", func(ctx context.Context) (func(), error) {
+					_, err := a.Core.Forum.ReadAllRefers(ctx, kind)
+					return func() {
+						a.load()
+						a.notice("已全部读")
+					}, err
+				})
+			})
 		}
 	})
+	if a.route.Page == "contacts" || a.route.Page == "mailbox" || a.route.Page == "chat" {
+		selectedMailTab := "contacts"
+		if a.route.Page == "mailbox" {
+			selectedMailTab = a.route.Name
+		} else if a.route.Page == "chat" {
+			selectedMailTab = "contacts"
+		}
+		ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
+			for _, tab := range []struct {
+				page        Page
+				name, label string
+			}{
+				{"contacts", "", "私信"},
+				{"mailbox", "inbox", "收件箱"},
+				{"mailbox", "outbox", "发件箱"},
+			} {
+				tab := tab
+				tone := quiet
+				if selectedMailTab == "contacts" && tab.page == "contacts" || selectedMailTab == tab.name && tab.page == "mailbox" {
+					tone = selected
+				}
+				a.action(c, tab.label, "mail", tone, func() { a.navigate(Route{Page: tab.page, Name: tab.name}, false) })
+			}
+		})
+	}
 }
 func (a *App) contactsView(c *ui.Context) {
 	a.messageTabs(c)
@@ -75,6 +115,45 @@ func (a *App) contactsView(c *ui.Context) {
 		})
 	})
 }
+func (a *App) chatMessageBody(c *ui.Context, key string, message forum.Mail) {
+	plain := strings.TrimSpace(content.Plain(message.Content))
+	runes := []rune(plain)
+	if utf8.RuneCountInString(plain) <= 420 {
+		a.bodyView(c, message.Content, message.Attachments)
+		return
+	}
+	if a.expandedMessages == nil {
+		a.expandedMessages = make(map[string]bool)
+	}
+	if a.expandedMessages[key] {
+		a.bodyView(c, message.Content, message.Attachments)
+		a.action(c, "收起全文", "up", quiet, func() { a.expandedMessages[key] = false })
+		return
+	}
+	preview := string(runes[:320]) + "…"
+	ui.Text(c, preview).FontSize(13).MaxLines(6).Ellipsis("…")
+	a.action(c, "展开全文", "next", quiet, func() { a.expandedMessages[key] = true })
+}
+
+func (a *App) messageContent(c *ui.Context, key, raw string, attachments []forum.Attachment) {
+	plain := strings.TrimSpace(content.Plain(raw))
+	runes := []rune(plain)
+	if utf8.RuneCountInString(plain) <= 420 {
+		a.bodyView(c, raw, attachments)
+		return
+	}
+	if a.expandedMessages == nil {
+		a.expandedMessages = make(map[string]bool)
+	}
+	if a.expandedMessages[key] {
+		a.bodyView(c, raw, attachments)
+		a.action(c, "收起全文", "up", quiet, func() { a.expandedMessages[key] = false })
+		return
+	}
+	ui.Text(c, string(runes[:320])+"…").FontSize(13).MaxLines(6).Ellipsis("…")
+	a.action(c, "展开全文", "next", quiet, func() { a.expandedMessages[key] = true })
+}
+
 func (a *App) chatView(c *ui.Context) {
 	ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
 		a.action(c, "查看用户", "user", quiet, func() { a.navigate(Route{Page: "user", Name: a.route.Name}, true) })
@@ -110,7 +189,7 @@ func (a *App) chatView(c *ui.Context) {
 						if m.Title != "" {
 							ui.Text(c, m.Title).FontSize(13).Bold()
 						}
-						a.bodyView(c, m.Content, m.Attachments)
+						a.chatMessageBody(c, m.Box+string(m.Index), m)
 					})
 					if !message.Mine {
 						ui.Spacer(c)
@@ -207,7 +286,7 @@ func (a *App) mailView(c *ui.Context) {
 		})
 		ui.Divider(c)
 		ui.Scroll(c).FillWidth().Grow(1).Children(func() {
-			ui.Column(c).FillWidth().Gap(8).Children(func() { a.bodyView(c, m.Content, m.Attachments) })
+			ui.Column(c).FillWidth().Gap(8).Children(func() { a.chatMessageBody(c, m.Box+string(m.Index), m) })
 		})
 	})
 }
@@ -242,26 +321,6 @@ func (a *App) mailComposeView(c *ui.Context) {
 }
 func (a *App) refersView(c *ui.Context) {
 	a.messageTabs(c)
-	ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
-		for _, s := range []struct{ name, label string }{{"reply", "回复我的"}, {"at", "@ 我的"}} {
-			tone := quiet
-			if a.route.Name == s.name {
-				tone = selected
-			}
-			if control(c, s.label, "clock", tone).Clicked() {
-				a.route.Name = s.name
-				a.route.Number = 1
-				a.load()
-			}
-		}
-		a.action(c, "全部标为已读", "check", quiet, func() {
-			kind := a.route.Name
-			a.run("标为已读", func(ctx context.Context) (func(), error) {
-				_, err := a.Core.Forum.ReadAllRefers(ctx, kind)
-				return func() { a.load() }, err
-			})
-		})
-	})
 	if len(a.refers.Articles) == 0 {
 		emptyState(c, "clock", "没有新的提醒", "有人回复或 @ 你时，会显示在这里。")
 		return
@@ -286,7 +345,7 @@ func (a *App) refersView(c *ui.Context) {
 									if id == "" {
 										id = v.ID
 									}
-									a.navigate(Route{Page: "thread", Name: v.Board, ID: string(id), Number: max(1, (int(v.Pos)-1)/50+1)}, true)
+									a.navigate(Route{Page: "thread", Name: v.Board, ID: string(id), Sub: string(v.ID), Number: max(1, (int(v.Pos)-1)/50+1)}, true)
 								}, err
 							})
 						}, a.busy)

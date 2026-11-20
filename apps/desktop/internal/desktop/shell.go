@@ -49,7 +49,7 @@ func (a *App) shell(c *ui.Context) {
 					ui.Text(c, a.title()).FontSize(20).Bold().MaxLines(1).Ellipsis("…")
 				})
 				if a.route.Page != "compose" && a.route.Page != "mail-compose" {
-					a.action(c, "刷新", "refresh", quiet, a.load)
+					a.action(c, "刷新", "refresh", quiet, a.refreshCurrent)
 				}
 				ui.Text(c, a.Version).FontSize(11).TextColor(c.Theme().TextMuted)
 			})

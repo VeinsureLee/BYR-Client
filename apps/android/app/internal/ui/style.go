@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"time"
 
 	"gioui.org/io/semantic"
 	"gioui.org/layout"
@@ -85,10 +86,58 @@ func (a *App) drawIcon(gtx layout.Context, name string, size unit.Dp, fg color.N
 func (a *App) iconButton(gtx layout.Context, key, name string) (layout.Dimensions, bool) {
 	btn := a.click(key)
 	clicked := btn.Clicked(gtx)
+	if clicked {
+		a.startActionPulse(key)
+	}
 	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return a.iconTarget(gtx, name)
+		active := btn.Pressed() || a.actionPulseActive(key, time.Now())
+		return layout.Stack{}.Layout(gtx,
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				size := gtx.Dp(unit.Dp(40))
+				bg := colorPill
+				if active {
+					bg = pressedSurface(bg)
+				}
+				paint.FillShape(gtx.Ops, bg, clip.RRect{Rect: image.Rect(0, 0, size, size), NE: 12, NW: 12, SE: 12, SW: 12}.Op(gtx.Ops))
+				return layout.Dimensions{Size: image.Pt(size, size)}
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions { return a.iconTarget(gtx, name) }),
+		)
 	})
 	return dims, clicked
+}
+
+func (a *App) startActionPulse(key string) {
+	started := time.Now()
+	if a.actionPulses == nil {
+		a.actionPulses = make(map[string]time.Time)
+	}
+	a.actionPulses[key] = started
+	var tick func()
+	tick = func() {
+		time.AfterFunc(16*time.Millisecond, func() {
+			if a.closed.Load() {
+				return
+			}
+			a.post(func() {
+				current, ok := a.actionPulses[key]
+				if !ok || !current.Equal(started) {
+					return
+				}
+				if time.Since(started) >= 180*time.Millisecond {
+					delete(a.actionPulses, key)
+					return
+				}
+				tick()
+			})
+		})
+	}
+	tick()
+}
+
+func (a *App) actionPulseActive(key string, now time.Time) bool {
+	started, ok := a.actionPulses[key]
+	return ok && now.Sub(started) < 180*time.Millisecond
 }
 
 // pill draws a compact rounded action and returns whether it was clicked.
@@ -141,6 +190,9 @@ func (a *App) pill(gtx layout.Context, key, label, icon string, selected, negati
 func (a *App) compactIconAction(gtx layout.Context, key, description, icon, selectedIcon string, count int, selected, negative bool) (layout.Dimensions, bool) {
 	btn := a.click(key)
 	clicked := btn.Clicked(gtx)
+	if clicked {
+		a.startActionPulse(key)
+	}
 	iconName := icon
 	if selected && selectedIcon != "" {
 		iconName = selectedIcon
@@ -153,8 +205,16 @@ func (a *App) compactIconAction(gtx layout.Context, key, description, icon, sele
 			bg = colorDangerSoft
 		}
 	}
-	if btn.Pressed() {
+	pulse := a.actionPulseActive(key, time.Now())
+	if btn.Pressed() || pulse {
 		bg = pressedSurface(bg)
+	}
+	iconSize := unit.Dp(18)
+	if btn.Pressed() {
+		iconSize = unit.Dp(16)
+	} else if started, ok := a.actionPulses[key]; ok && pulse {
+		progress := float32(time.Since(started)) / float32(180*time.Millisecond)
+		iconSize = unit.Dp(16 + 2*min(1, progress))
 	}
 	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		semantic.Button.Add(gtx.Ops)
@@ -165,7 +225,7 @@ func (a *App) compactIconAction(gtx layout.Context, key, description, icon, sele
 		inner := layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return a.drawIcon(gtx, iconName, 18, fg)
+					return a.drawIcon(gtx, iconName, iconSize, fg)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if count <= 0 {

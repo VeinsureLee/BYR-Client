@@ -15,6 +15,7 @@ import (
 func (a *App) loadThread() {
 	r := a.route
 	a.thread = forum.Thread{}
+	a.threadScrollPending = r.Sub != ""
 	a.resetThreadResourcePreflight()
 	account := a.Core.Session().Username
 	a.loadData("加载主题", func(ctx context.Context) (func(), error) {
@@ -101,6 +102,15 @@ func (a *App) threadView(c *ui.Context) {
 			return string(a.thread.Articles[i].ID)
 		}
 		return i
+	}
+	if a.threadScrollPending && a.route.Sub != "" {
+		for index, article := range a.thread.Articles {
+			if string(article.ID) == a.route.Sub {
+				state.ScrollTo(index, ui.Start)
+				a.threadScrollPending = false
+				break
+			}
+		}
 	}
 	ui.List(c.Key(fmt.Sprintf("thread-%s-%s-%d", a.route.Name, a.route.ID, a.route.Number)), state, len(a.thread.Articles), func(i int) {
 		a.postView(c, i, a.thread.Articles[i])

@@ -33,7 +33,7 @@ func (a *App) articleListKey() listKey {
 }
 
 func (a *App) threadListKey() listKey {
-	return listKey{Page: a.route.Page, Name: a.route.Name, ID: a.route.ID, Number: a.route.Number}
+	return listKey{Page: a.route.Page, Name: a.route.Name, ID: a.route.ID, Sub: a.route.Sub, Number: a.route.Number}
 }
 
 func (a *App) expandedPostState(key listKey) map[string]bool {

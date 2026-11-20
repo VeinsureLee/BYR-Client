@@ -51,8 +51,8 @@ func newInteractionServer(t *testing.T) *interactionServer {
 			_, _ = w.Write([]byte(`{"status":true,"like_sum":3,"votedown_sum":0}`))
 		case strings.HasSuffix(r.URL.Path, "/votedown/44.json"):
 			_, _ = w.Write([]byte(`{"status":true,"like_sum":0,"votedown_sum":6}`))
-		case strings.HasSuffix(r.URL.Path, "/thread/42.json"):
-			_, _ = w.Write([]byte(`{"id":42,"title":"主题","article":[{"id":42,"position":1,"content":"正文","like_sum":3}]}`))
+		case r.URL.Path == "/open/threads/Go/42.json":
+			_, _ = w.Write([]byte(`{"id":42,"title":"主题","board_name":"Go","article":[{"id":42,"position":1,"content":"正文","like_sum":3}]}`))
 		case r.URL.Path == "/open/collection.json":
 			_, _ = w.Write([]byte(`{"article":[{"gid":42,"bname":"Go","title":"收藏文章","num":1,"user":{"id":"alice","user_name":"Alice"}}]}`))
 		case r.URL.Path == "/open/search/article.json":
@@ -110,6 +110,68 @@ func interactionApp(t *testing.T, baseURL string) *App {
 	return a
 }
 
+func TestThreadLoadSavesHistoryWithLiveAppContext(t *testing.T) {
+	s := newInteractionServer(t)
+	a := interactionApp(t, s.server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageHome}}
+
+	a.openThread("Go", "42")
+	waitForIdle(t, a)
+
+	entries := a.core.Local.History("alice")
+	if len(entries) != 1 {
+		t.Fatalf("history entries = %+v, want one visited thread", entries)
+	}
+	if entries[0].Board != "Go" || entries[0].ID != "42" || entries[0].Title != "主题" {
+		t.Fatalf("saved history = %+v", entries[0])
+	}
+	if a.failed || strings.Contains(a.message, "context canceled") {
+		t.Fatalf("successful thread load reported history failure: failed=%v message=%q", a.failed, a.message)
+	}
+}
+
+func TestTransientNoticeExpiresAutomatically(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	a.notice("已复制")
+	if a.message != "已复制" {
+		t.Fatalf("notice = %q", a.message)
+	}
+	time.Sleep(2600 * time.Millisecond)
+	a.drain()
+	if a.message != "" {
+		t.Fatalf("transient notice did not expire: %q", a.message)
+	}
+}
+
+func TestLongPrivateMessageFoldsIndependently(t *testing.T) {
+	a := interactionApp(t, "http://127.0.0.1:1")
+	defer a.Close()
+	message := forum.Mail{Box: "inbox", Index: "1", Content: strings.Repeat("长消息内容。", 80)}
+	key := "inbox:1"
+
+	renderAndroidPage(t, func(gtx layout.Context) layout.Dimensions {
+		return a.messageBody(gtx, key, message)
+	})
+	if _, ok := a.clicks["mail-fold:"+key]; !ok {
+		t.Fatal("long private message did not render an expand control")
+	}
+	a.click("mail-fold:" + key).Click()
+	renderAndroidPage(t, func(gtx layout.Context) layout.Dimensions {
+		return a.messageBody(gtx, key, message)
+	})
+	if !a.expandedMail[key] {
+		t.Fatal("long private message did not expand")
+	}
+	other := "inbox:2"
+	renderAndroidPage(t, func(gtx layout.Context) layout.Dimensions {
+		return a.messageBody(gtx, other, message)
+	})
+	if a.expandedMail[other] {
+		t.Fatal("expanded state leaked between messages")
+	}
+}
 func TestThreadAuthorOpensUserProfile(t *testing.T) {
 	a := interactionApp(t, "http://127.0.0.1:1")
 	defer a.Close()
@@ -280,6 +342,39 @@ func TestAnonymousLikeTreatsUnresolvedAuthorAsRecorded(t *testing.T) {
 	}
 	if got := a.thread.Articles[0]; !bool(got.IsLiked) || got.LikeSum != 3 {
 		t.Fatalf("anonymous reaction state = %+v", got)
+	}
+}
+
+func TestReplyReminderOpensTargetFloorAtCorrectPage(t *testing.T) {
+	var threadQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open/refer/reply/setRead/1.json":
+			_, _ = io.WriteString(w, `{"code":"0000"}`)
+		case "/open/threads/Go/42.json":
+			threadQuery = r.URL.RawQuery
+			_, _ = io.WriteString(w, `{"id":42,"title":"主题","board_name":"Go","article":[{"id":43,"position":30,"content":"上一楼","user":{"id":"alice"}},{"id":44,"position":31,"content":"提醒目标楼层","user":{"id":"bob"}}],"pagination":{"page_current_count":2,"page_all_count":3}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	a := interactionApp(t, server.URL)
+	defer a.Close()
+	a.stack = []Route{{Page: PageMessages, Sub: "reply", Number: 1}}
+	a.openRefer(forum.ReferEntry{Index: "1", ID: "44", GroupID: "42", Board: "Go", Pos: 31})
+	waitForIdle(t, a)
+
+	if got := a.current(); got.Page != PageThread || got.ID != "42" || got.Sub != "44" || got.Number != 2 {
+		t.Fatalf("opened reminder route = %+v", got)
+	}
+	if !strings.Contains(threadQuery, "page=2") || !strings.Contains(threadQuery, "count=30") {
+		t.Fatalf("thread request query = %q, want page=2 count=30", threadQuery)
+	}
+	key := listKey{Page: PageThread, Name: "Go", ID: "42", Sub: "44", Number: 2}
+	if got := a.mobileList(key).Position.First; got != 2 {
+		t.Fatalf("target floor list position = %d, want row 2 (header plus first floor)", got)
 	}
 }
 
@@ -520,25 +615,25 @@ func TestMessageTabsCanonicalizeRouteNames(t *testing.T) {
 	defer a.Close()
 
 	for _, tab := range []string{"contacts", "inbox", "outbox"} {
-		a.stack = []Route{{Page: PageMessages, Sub: tab, Name: "reply", Number: 1}}
+		a.stack = []Route{{Page: PageMessages, Sub: "mail", Name: tab, Number: 1}}
 		a.busy = false
 		a.selectMessageTab(tab)
 		waitForIdle(t, a)
-		if got := a.current(); got.Page != PageMessages || got.Sub != tab || got.Name != "" {
-			t.Fatalf("tab %q route = %+v, want empty name", tab, got)
+		if got := a.current(); got.Page != PageMessages || got.Sub != "mail" || got.Name != tab {
+			t.Fatalf("mail tab %q route = %+v, want mail/%s", tab, got, tab)
 		}
 	}
 
-	a.stack = []Route{{Page: PageMessages, Sub: "contacts", Name: "leaked", Number: 1}}
-	a.selectMessageTab("refers")
+	a.stack = []Route{{Page: PageMessages, Sub: "mail", Name: "contacts", Number: 1}}
+	a.selectMessageTab("reply")
 	waitForIdle(t, a)
-	if got := a.current(); got.Sub != "refers" || got.Name != "reply" {
-		t.Fatalf("reply refers route = %+v", got)
+	if got := a.current(); got.Sub != "reply" || got.Name != "" {
+		t.Fatalf("reply reminder route = %+v", got)
 	}
-	a.selectReferKind("at")
+	a.selectMessageTab("at")
 	waitForIdle(t, a)
-	if got := a.current(); got.Sub != "refers" || got.Name != "at" {
-		t.Fatalf("at refers route = %+v", got)
+	if got := a.current(); got.Sub != "at" || got.Name != "" {
+		t.Fatalf("at reminder route = %+v", got)
 	}
 	if got := a.referKind(); got != "at" {
 		t.Fatalf("refer kind = %q, want at", got)
@@ -549,21 +644,10 @@ func TestReferReadAllUsesCanonicalEndpointAndReloads(t *testing.T) {
 	s := newInteractionServer(t)
 	a := interactionApp(t, s.server.URL)
 	defer a.Close()
-	a.stack = []Route{{Page: PageMessages, Sub: "refers", Name: "reply", Number: 1}}
+	a.stack = []Route{{Page: PageMessages, Sub: "reply", Number: 1}}
 	a.refers = forum.Refers{Articles: []forum.ReferEntry{{Index: "1", Title: "回复提醒"}}}
 
-	var router input.Router
-	var ops op.Ops
-	gtx := layout.Context{
-		Ops:         &ops,
-		Source:      router.Source(),
-		Constraints: layout.Exact(image.Pt(320, 760)),
-		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
-	}
-	a.refersBody(gtx)
-	a.click("refer-read-all").Click()
-	ops.Reset()
-	a.refersBody(gtx)
+	a.readAllRefers()
 	waitForIdle(t, a)
 
 	if got := len(s.find("POST", "/open/refer/reply/setRead.json")); got != 1 {
@@ -626,8 +710,8 @@ func TestCollectionSuccessShowsFeedback(t *testing.T) {
 	a.thread.Collect = true
 	a.collectThread()
 	waitForIdle(t, a)
-	if got := a.message; got != "已取消收藏" {
-		t.Fatalf("thread uncollect feedback = %q, want 已取消收藏", got)
+	if got := a.message; got != "已取消收藏文章" {
+		t.Fatalf("thread uncollect feedback = %q, want 已取消收藏文章", got)
 	}
 
 	a.stack = []Route{{Page: PageBoard, Name: "Go", Number: 1}}

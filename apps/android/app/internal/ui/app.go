@@ -70,6 +70,7 @@ type Route struct {
 }
 
 type invalidator interface{ Invalidate() }
+type systemBarColorSetter interface{ SetSystemBarColor(color.NRGBA) }
 
 type App struct {
 	window  invalidator
@@ -82,12 +83,13 @@ type App struct {
 	close   context.CancelFunc
 	cancel  context.CancelFunc
 
-	started bool
-	ready   bool
-	initErr string
-	busy    bool
-	message string
-	failed  bool
+	started          bool
+	ready            bool
+	initErr          string
+	busy             bool
+	message          string
+	failed           bool
+	noticeGeneration uint64
 
 	core *application.App
 	dir  string
@@ -130,7 +132,9 @@ type App struct {
 	searchResults    []forum.Article
 	searchPagination forum.Pagination
 	searchHasRun     bool
+	searchListQuery  string
 	expandedPosts    map[string]bool
+	expandedMail     map[string]bool
 	pinnedExpanded   bool
 	pinnedByRoute    map[string]bool
 	threadMoreOpen   bool
@@ -145,7 +149,8 @@ type App struct {
 	moduleTabsKey, moduleTabsSelected                                                          string
 	messageAfterLoad                                                                           string
 
-	clicks map[string]*widget.Clickable
+	clicks       map[string]*widget.Clickable
+	actionPulses map[string]time.Time
 
 	favoriteTab    string
 	topTab         string
@@ -192,7 +197,7 @@ func New(window invalidator) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{
 		window: window, version: "dev", theme: theme, ctx: ctx, close: cancel,
-		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{}, pinnedByRoute: map[string]bool{}, listStates: make(map[listKey]*widget.List),
+		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, actionPulses: map[string]time.Time{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{}, expandedMail: map[string]bool{}, pinnedByRoute: map[string]bool{}, listStates: make(map[listKey]*widget.List),
 		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai", sectionTab: "favorites", imageScale: 1,
 		homeList:      widget.List{List: layout.List{Axis: layout.Vertical}},
 		sectionList:   widget.List{List: layout.List{Axis: layout.Vertical}},
@@ -205,6 +210,8 @@ func New(window invalidator) (*App, error) {
 		moduleTabList: widget.List{List: layout.List{Axis: layout.Horizontal}},
 	}
 	a.searchEdit.SingleLine = true
+	a.searchEdit.Submit = true
+	a.searchEdit.InputHint = key.HintAny
 	a.username.SingleLine = true
 	// Email-type IME keeps English usernames free of sentence capitalization
 	// and autocorrect churn that some keyboards apply to plain text fields.
@@ -512,7 +519,9 @@ func (a *App) resetSessionUI() {
 	a.imageViewerRaw = ""
 	a.imageScale = 1
 	a.clicks = map[string]*widget.Clickable{}
+	a.actionPulses = map[string]time.Time{}
 	a.expandedPosts = map[string]bool{}
+	a.expandedMail = map[string]bool{}
 	a.pinnedByRoute = map[string]bool{}
 	a.pinnedExpanded = false
 	a.threadMoreOpen = false
@@ -536,6 +545,7 @@ func (a *App) resetSessionUI() {
 	a.searchResults = nil
 	a.searchPagination = forum.Pagination{}
 	a.searchHasRun = false
+	a.searchListQuery = ""
 	a.username.SetText("")
 	a.password.SetText("")
 	a.searchEdit.SetText("")
@@ -627,6 +637,7 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 	}
 	a.busy = true
 	a.busySince = time.Now()
+	a.noticeGeneration++
 	a.message = label
 	a.failed = false
 	a.window.Invalidate()
@@ -678,8 +689,9 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 				done()
 			}
 			if a.messageAfterLoad != "" && !a.failed {
-				a.message = a.messageAfterLoad
+				message := a.messageAfterLoad
 				a.messageAfterLoad = ""
+				a.notice(message)
 			}
 		})
 	}()
@@ -687,6 +699,7 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 
 func (a *App) fail(err error) {
 	a.failed = true
+	a.noticeGeneration++
 	a.message = err.Error()
 	defer a.window.Invalidate()
 	var api *forum.APIError
@@ -701,6 +714,33 @@ func (a *App) fail(err error) {
 		a.message = "登录已失效，请重新登录"
 		a.stack = []Route{{Page: PageLogin}}
 	}
+}
+
+func (a *App) notice(message string) {
+	a.message = message
+	a.failed = false
+	a.noticeGeneration++
+	generation := a.noticeGeneration
+	if a.window != nil {
+		a.window.Invalidate()
+	}
+	a.scheduleNoticeExpiry(message, generation)
+}
+
+func (a *App) scheduleNoticeExpiry(message string, generation uint64) {
+	time.AfterFunc(2500*time.Millisecond, func() {
+		a.post(func() {
+			if a.noticeGeneration != generation || a.message != message || a.failed {
+				return
+			}
+			if a.busy {
+				a.scheduleNoticeExpiry(message, generation)
+				return
+			}
+			a.message = ""
+			a.noticeGeneration++
+		})
+	})
 }
 
 func (a *App) click(key string) *widget.Clickable {
@@ -721,6 +761,9 @@ func (a *App) applyTheme() {
 			a.theme.Bg = colorBg
 			a.theme.Fg = colorFg
 			a.theme.ContrastBg = colorAccent
+			if setter, ok := a.window.(systemBarColorSetter); ok {
+				setter.SetSystemBarColor(colorBg)
+			}
 		}
 	}
 }
@@ -1015,7 +1058,7 @@ func (a *App) recoveryPage(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) topBar(gtx layout.Context) layout.Dimensions {
-	height := gtx.Dp(unit.Dp(64))
+	height := gtx.Dp(unit.Dp(56))
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			size := image.Pt(gtx.Constraints.Max.X, height)
@@ -1038,27 +1081,24 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(18), a.title())
-									l.Font.Weight = 700
-									l.MaxLines = 1
-									l.Truncator = "…"
-									return l.Layout(gtx)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(11), a.subtitle())
-									l.Color = colorMuted
-									l.MaxLines = 1
-									return l.Layout(gtx)
-								}),
-							)
+							l := material.Label(a.theme, unit.Sp(18), a.title())
+							l.Font.Weight = 700
+							l.MaxLines = 1
+							l.Truncator = "…"
+							return l.Layout(gtx)
 						})
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						page := a.current().Page
 						if page == PageThread {
 							return a.threadTopActions(gtx)
+						}
+						if page == PageMessages && (a.current().Sub == "reply" || a.current().Sub == "at" || a.current().Sub == "refers") {
+							dims, clicked := a.iconButton(gtx, "refer-read-all-top", "check")
+							if clicked {
+								a.readAllRefers()
+							}
+							return dims
 						}
 						if page == PageLogin || page == PageSearch || page == PageCompose && a.compose.editID == "" {
 							return layout.Dimensions{}
@@ -1106,14 +1146,21 @@ func (a *App) subtitle() string {
 		return "AI 搜索 · 全站搜索"
 	case PageMessages:
 		switch a.current().Sub {
-		case "inbox":
-			return "收件箱"
-		case "outbox":
-			return "发件箱"
-		case "refers":
-			return "回复与 @ 提醒"
+		case "reply", "refers":
+			return "回复提醒"
+		case "at":
+			return "@ 提醒"
+		case "mail":
+			switch a.current().Name {
+			case "inbox":
+				return "收件箱"
+			case "outbox":
+				return "发件箱"
+			default:
+				return "私信"
+			}
 		}
-		return "私信与站内信"
+		return "消息"
 	case PageChat:
 		return "与 " + a.current().Name + " 的私信"
 	case PageMailbox:
@@ -1592,9 +1639,7 @@ func (a *App) copyText(gtx layout.Context, text string) {
 	}
 	gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: stringsReader(text)})
 	a.lastClip = text
-	a.message = "已复制"
-	a.failed = false
-	a.window.Invalidate()
+	a.notice("已复制")
 }
 
 func stringsReader(s string) *stringReader { return &stringReader{Reader: strings.NewReader(s)} }

@@ -289,6 +289,36 @@ func TestPublishChecksBoardPermissionsBeforeMutation(t *testing.T) {
 		})
 	}
 }
+func TestConversationSelfMailUsesOutboxCopyOnly(t *testing.T) {
+	var inboxRequests, outboxRequests, detailRequests int
+	a := appFor(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open/mail/inbox.json":
+			inboxRequests++
+			io.WriteString(w, `{"mail":[{"index":1,"user":{"id":"alice"},"post_time":2}]}`)
+		case "/open/mail/outbox.json":
+			outboxRequests++
+			io.WriteString(w, `{"mail":[{"index":3,"user":{"id":"alice"},"post_time":2}]}`)
+		case "/open/mail/outbox/3.json":
+			detailRequests++
+			io.WriteString(w, `{"index":3,"content":"sent to self","post_time":2}`)
+		default:
+			t.Errorf("unexpected %s", r.URL.Path)
+		}
+	}, nil, &credentials{value: Credential{Username: "Alice", Token: "t"}})
+
+	chat, err := a.Conversation(context.Background(), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inboxRequests != 0 || outboxRequests != 1 || detailRequests != 1 {
+		t.Fatalf("mailbox/detail requests inbox=%d outbox=%d detail=%d", inboxRequests, outboxRequests, detailRequests)
+	}
+	if len(chat) != 1 || !chat[0].Mine || chat[0].Mail.Content != "sent to self" {
+		t.Fatalf("self conversation = %+v, want one sent copy", chat)
+	}
+}
+
 func TestConversationLoadsBodiesAndPreservesDirection(t *testing.T) {
 	a := appFor(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

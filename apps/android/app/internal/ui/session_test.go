@@ -216,8 +216,8 @@ func TestLogoutThenLoginAgainRenders(t *testing.T) {
 	a.password.SetText("pw")
 	a.login()
 	waitForIdle(t, a)
-	if got := a.current().Page; got != PageSearch {
-		t.Fatalf("login page = %v, want search", got)
+	if got := a.current().Page; got != PageTop || a.topTab != "top" {
+		t.Fatalf("login default = %v/%q, want today's top", got, a.topTab)
 	}
 	assertFrameRenders(t, a)
 
@@ -243,8 +243,8 @@ func TestLogoutThenLoginAgainRenders(t *testing.T) {
 	a.password.SetText("pw")
 	a.login()
 	waitForIdle(t, a)
-	if got := a.current().Page; got != PageSearch {
-		t.Fatalf("second login page = %v, want search", got)
+	if got := a.current().Page; got != PageTop || a.topTab != "top" {
+		t.Fatalf("second login default = %v/%q, want today's top", got, a.topTab)
 	}
 	assertFrameRenders(t, a)
 }

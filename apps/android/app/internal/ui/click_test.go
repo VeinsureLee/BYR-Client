@@ -87,12 +87,12 @@ func TestLoginButtonClickStartsLogin(t *testing.T) {
 			}
 			break
 		}
-		if a.stack[0].Page == PageSearch {
+		if a.stack[0].Page == PageTop && a.topTab == "top" {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("login did not reach search: page=%v message=%q", a.stack[0].Page, a.message)
+	t.Fatalf("login did not reach today's top: page=%v tab=%q message=%q", a.stack[0].Page, a.topTab, a.message)
 }
 
 func TestPillRegistersPhysicalTap(t *testing.T) {
