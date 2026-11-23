@@ -290,7 +290,7 @@ func waitForIdle(t *testing.T, a *App) {
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		a.drain()
-		if !a.busy {
+		if !a.busy && !a.threadExtrasBusy {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)

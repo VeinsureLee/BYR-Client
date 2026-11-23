@@ -44,6 +44,7 @@ type App struct {
 	credentials CredentialStore
 	mu          sync.RWMutex
 	session     Credential
+	generation  uint64
 	collections map[collectionKey]bool
 }
 
@@ -71,11 +72,20 @@ func (a *App) Token(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	s := a.Session()
-	if s.Token == "" || s.ExpiresAt > 0 && time.Now().Unix() >= s.ExpiresAt {
-		return "", forum.ErrUnauthenticated
+	fresh := func(c Credential) (string, error) {
+		if strings.TrimSpace(c.Token) == "" || c.ExpiresAt > 0 && time.Now().Unix() >= c.ExpiresAt {
+			return "", forum.ErrUnauthenticated
+		}
+		return c.Token, nil
 	}
-	return s.Token, nil
+	// A use case can bind the credential it started with so a later session
+	// change cannot silently send the new account's token on the old request.
+	// The bound credential obeys the same empty/expiry checks as the current
+	// session; binding is not a way to bypass token validity.
+	if bound, ok := ctx.Value(boundCredentialKey{}).(Credential); ok {
+		return fresh(bound)
+	}
+	return fresh(a.Session())
 }
 func (a *App) Restore(ctx context.Context) error {
 	if a.credentials == nil {
@@ -89,6 +99,7 @@ func (a *App) Restore(ctx context.Context) error {
 		a.mu.Lock()
 		a.session = Credential{}
 		a.collections = nil
+		a.bumpGenerationLocked()
 		a.mu.Unlock()
 		return nil
 	}
@@ -102,11 +113,13 @@ func (a *App) Restore(ctx context.Context) error {
 		a.mu.Lock()
 		a.session = Credential{}
 		a.collections = nil
+		a.bumpGenerationLocked()
 		a.mu.Unlock()
 		return clearErr
 	}
 	a.mu.Lock()
 	a.session = s
+	a.bumpGenerationLocked()
 	a.mu.Unlock()
 	return nil
 }
@@ -140,6 +153,7 @@ func (a *App) Login(ctx context.Context, username, password string, remember boo
 	}
 	a.mu.Lock()
 	a.session = s
+	a.bumpGenerationLocked()
 	a.mu.Unlock()
 	return nil
 }
@@ -158,6 +172,7 @@ func (a *App) Logout(ctx context.Context) error {
 	a.mu.Lock()
 	a.session = Credential{}
 	a.collections = nil
+	a.bumpGenerationLocked()
 	a.mu.Unlock()
 	return nil
 }

@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -18,7 +17,6 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/VeinsureLee/BYR-Client/core/content"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/resources"
 )
@@ -43,10 +41,7 @@ type mobileImage struct {
 	started time.Time
 	w, h    int
 
-	animationMu         sync.Mutex
-	animationVisible    bool
-	animationTimer      *time.Timer
-	animationGeneration uint64
+	animationMu sync.Mutex
 }
 
 // decodeMobileImage decodes one image entry and keeps every bounded GIF frame
@@ -227,6 +222,7 @@ func (a *App) imageEntry(raw string) *mobileImage {
 				e.started = decoded.started
 				e.w = decoded.w
 				e.h = decoded.h
+				a.mediaGeneration++
 			}
 		})
 	}()
@@ -270,66 +266,7 @@ func (a *App) avatar(gtx layout.Context, user forum.User, size unit.Dp) layout.D
 }
 
 func (a *App) postBody(gtx layout.Context, body string, attachments []forum.Attachment) layout.Dimensions {
-	parts := content.Parse(body, attachments)
-	if len(parts) == 0 {
-		l := material.Body1(a.theme, "(无内容)")
-		return l.Layout(gtx)
-	}
-	widgets := make([]layout.Widget, 0, len(parts))
-	for _, part := range parts {
-		part := part
-		switch part.Kind {
-		case content.Text:
-			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				l := material.Body1(a.theme, part.Text)
-				l.TextSize = unit.Sp(15)
-				if part.Style.Bold {
-					l.Font.Weight = 700
-				}
-				if part.Style.Italic {
-					l.Font.Style = font.Italic
-				}
-				if part.Style.Quote {
-					l.Color = colorHint
-				}
-				return l.Layout(gtx)
-			})
-		case content.Image:
-			raw := part.URL
-			full := part.FullURL
-			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				return a.inlineImage(gtx, raw, full)
-			})
-		case content.File:
-			name := part.Text
-			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				return material.Caption(a.theme, "[附件] "+name).Layout(gtx)
-			})
-		case content.Emoji:
-			fallback := part.Text
-			raw := "emoji:" + part.URL
-			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				return a.inlineEmoji(gtx, raw, fallback)
-			})
-		case content.Link:
-			text := part.Text
-			if text == "" {
-				text = part.URL
-			}
-			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
-				return material.Caption(a.theme, text).Layout(gtx)
-			})
-		}
-	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rigidWidgets(widgets)...)
-}
-
-func rigidWidgets(widgets []layout.Widget) []layout.FlexChild {
-	out := make([]layout.FlexChild, 0, len(widgets))
-	for _, w := range widgets {
-		out = append(out, layout.Rigid(w))
-	}
-	return out
+	return a.postBodyContent(gtx, buildThreadContent(body, attachments))
 }
 
 func (a *App) inlineEmoji(gtx layout.Context, raw, fallback string) layout.Dimensions {
@@ -355,29 +292,34 @@ func (a *App) inlineEmoji(gtx layout.Context, raw, fallback string) layout.Dimen
 // keeps the small helper convenient for emoji/tests that only have one URL.
 func (a *App) inlineImage(gtx layout.Context, raw string, fullURLs ...string) layout.Dimensions {
 	e := a.imageEntry(raw)
-	if e.loading {
-		return material.Caption(a.theme, "图片加载中…").Layout(gtx)
-	}
-	if e.err != nil {
-		return material.Caption(a.theme, "[图片加载失败]").Layout(gtx)
-	}
-	if e.img == nil || e.w == 0 || e.h == 0 {
-		return layout.Dimensions{}
-	}
 	maxW := gtx.Constraints.Max.X
 	if maxW <= 0 {
 		maxW = gtx.Dp(unit.Dp(320))
 	}
-	h := int(float64(maxW) * float64(e.h) / float64(e.w))
-	if h < 1 {
-		h = 1
+	maxH := gtx.Dp(unit.Dp(480))
+	placeholder := image.Pt(maxW, min(maxW*3/4, gtx.Dp(unit.Dp(360))))
+	if e.loading || e.err != nil || e.img == nil || e.w == 0 || e.h == 0 || e.frameAt(imageNow(gtx)) == nil {
+		message := "图片加载中…"
+		if e.err != nil || !e.loading && e.img != nil {
+			message = "[图片加载失败]"
+		}
+		gtx.Constraints = layout.Exact(placeholder)
+		paint.FillShape(gtx.Ops, colorPill, clip.RRect{Rect: image.Rectangle{Max: placeholder}, NE: 12, NW: 12, SE: 12, SW: 12}.Op(gtx.Ops))
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return material.Caption(a.theme, message).Layout(gtx)
+		})
+	}
+	scale := min(float64(maxW)/float64(e.w), float64(maxH)/float64(e.h))
+	width, height := int(float64(e.w)*scale), int(float64(e.h)*scale)
+	if width < 1 {
+		width = 1
+	}
+	if height < 1 {
+		height = 1
 	}
 	gtx.Constraints.Min = image.Point{}
-	gtx.Constraints.Max = image.Pt(maxW, h)
+	gtx.Constraints.Max = image.Pt(width, height)
 	img := e.frameAt(imageNow(gtx))
-	if img == nil {
-		return material.Caption(a.theme, "[图片加载失败]").Layout(gtx)
-	}
 	a.markImageVisible(e)
 	btn := a.click("image:" + raw)
 	clicked := btn.Clicked(gtx)
@@ -394,69 +336,62 @@ func (a *App) inlineImage(gtx layout.Context, raw string, fullURLs ...string) la
 	return dims
 }
 
+// One scheduler drives every visible GIF. Redraw work is capped per frame and
+// stops completely when no animated entry was drawn (a hidden page, route or
+// app), instead of each image keeping its own timer alive.
+const maxVisibleAnimatedGIFs = 4
+
 func (a *App) beginImageLayoutFrame() {
-	for _, entry := range a.images {
-		a.stopImageAnimation(entry)
-	}
+	a.animationFrame = a.animationFrame[:0]
+	a.animationSeen = make(map[*mobileImage]bool)
 }
 
 func (a *App) markImageVisible(entry *mobileImage) {
 	if entry == nil || len(entry.frames) < 2 || a.window == nil || a.closed.Load() {
 		return
 	}
-	entry.animationMu.Lock()
-	entry.animationVisible = true
-	needsTimer := entry.animationTimer == nil
-	entry.animationMu.Unlock()
-	if needsTimer {
-		a.scheduleImageAnimation(entry)
+	if a.animationSeen == nil {
+		a.animationSeen = make(map[*mobileImage]bool)
 	}
+	if a.animationSeen[entry] || len(a.animationFrame) >= maxVisibleAnimatedGIFs {
+		return
+	}
+	a.animationSeen[entry] = true
+	a.animationFrame = append(a.animationFrame, entry)
 }
 
-func (a *App) scheduleImageAnimation(entry *mobileImage) {
-	if entry == nil || len(entry.frames) < 2 || a.window == nil || a.closed.Load() {
+func (a *App) commitImageAnimations() {
+	a.visibleAnimations = append(a.visibleAnimations[:0], a.animationFrame...)
+	if len(a.visibleAnimations) == 0 {
+		a.stopImageAnimations()
 		return
 	}
-	entry.animationMu.Lock()
-	if !entry.animationVisible || entry.animationTimer != nil {
-		entry.animationMu.Unlock()
+	if a.animationTimer != nil {
 		return
 	}
-	entry.animationGeneration++
-	generation := entry.animationGeneration
-	entry.animationTimer = time.AfterFunc(imageAnimationInterval, func() {
-		entry.animationMu.Lock()
-		if entry.animationGeneration != generation {
-			entry.animationMu.Unlock()
-			return
-		}
-		entry.animationTimer = nil
-		visible := entry.animationVisible
-		entry.animationMu.Unlock()
-		if visible && !a.closed.Load() && a.window != nil {
+	a.animationTimerGeneration++
+	generation := a.animationTimerGeneration
+	a.animationTimer = time.AfterFunc(imageAnimationInterval, func() {
+		a.post(func() {
+			if generation != a.animationTimerGeneration {
+				return
+			}
+			a.animationTimer = nil
+			if a.closed.Load() || len(a.visibleAnimations) == 0 {
+				return
+			}
 			a.window.Invalidate()
-		}
+		})
 	})
-	entry.animationMu.Unlock()
-}
-
-func (a *App) stopImageAnimation(entry *mobileImage) {
-	if entry == nil {
-		return
-	}
-	entry.animationMu.Lock()
-	entry.animationVisible = false
-	entry.animationGeneration++
-	timer := entry.animationTimer
-	entry.animationTimer = nil
-	entry.animationMu.Unlock()
-	if timer != nil {
-		timer.Stop()
-	}
 }
 
 func (a *App) stopImageAnimations() {
-	for _, entry := range a.images {
-		a.stopImageAnimation(entry)
+	a.animationTimerGeneration++
+	if a.animationTimer != nil {
+		a.animationTimer.Stop()
+		a.animationTimer = nil
 	}
+	a.visibleAnimations = a.visibleAnimations[:0]
+	a.animationFrame = a.animationFrame[:0]
+	a.animationSeen = make(map[*mobileImage]bool)
 }

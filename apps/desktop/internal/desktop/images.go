@@ -19,7 +19,11 @@ type imageEntry struct {
 	err     error
 	loading bool
 	w, h    float32
+	seen    uint64
+	playing bool
 }
+
+const maxVisiblePlayers = 4
 
 func imageViewerURL(raw string, fullURLs ...string) string {
 	if len(fullURLs) > 0 && fullURLs[0] != "" {
@@ -107,6 +111,7 @@ func (a *App) image(c *ui.Context, raw string, w, h float32, click bool, fullURL
 	}
 	var element ui.Element
 	if e.player != nil {
+		a.showPlayer(e)
 		element = ui.Video(c, e.player).Size(w, h)
 	} else {
 		element = ui.Image(c, e.source).Size(w, h)
@@ -115,6 +120,113 @@ func (a *App) image(c *ui.Context, raw string, w, h float32, click bool, fullURL
 		a.imageView = imageViewerURL(raw, fullURLs...)
 		a.imageScale = 1
 	}
+}
+
+// showPlayer keeps animation work bounded: only players drawn this frame keep
+// running, and the reduced-motion preference or the visible-player budget pauses
+// the rest. commitImages pauses players that were drawn last frame but not this
+// one, so leaving a thread stops its GIF redraws.
+func (a *App) showPlayer(e *imageEntry) {
+	if e == nil || e.player == nil {
+		return
+	}
+	e.seen = a.frameSerial
+	if a.reduceMotion || a.visiblePlayers >= maxVisiblePlayers {
+		if e.playing {
+			e.player.Pause()
+			e.playing = false
+		}
+		return
+	}
+	a.visiblePlayers++
+	if !e.playing {
+		e.player.Play()
+		e.playing = true
+	}
+}
+
+func (a *App) commitImages() {
+	for _, e := range a.images {
+		if e.player == nil || !e.playing || e.seen == a.frameSerial {
+			continue
+		}
+		e.player.Pause()
+		e.playing = false
+	}
+}
+
+func (a *App) bodyPartsView(c *ui.Context, parts []content.Part) {
+	var spans []ui.Span
+	flush := func() {
+		if len(spans) > 0 {
+			ui.RichText(c, spans...).FillWidth().Selectable().
+				FontSize(a.textSize(c, 16)).FixedLineHeight(a.textSize(c, 26))
+			spans = nil
+		}
+	}
+	for _, p := range parts {
+		switch p.Kind {
+		case content.Text:
+			s := ui.Span{Text: p.Text, Italic: p.Style.Italic, Underline: p.Style.Underline, Size: a.textSize(c, 16)}
+			if p.Style.Bold {
+				s.Weight = 600
+			}
+			if p.Style.Quote {
+				s.Color = c.Theme().TextMuted
+			}
+			spans = append(spans, s)
+		case content.Emoji:
+			flush()
+			a.image(c, "emoji:"+p.URL, 24, 24, false)
+		case content.Image:
+			flush()
+			a.inlineImage(c, p.URL, p.FullURL)
+		case content.File:
+			flush()
+			full := p.FullURL
+			if full == "" {
+				full = p.URL
+			}
+			a.button(c, "下载附件："+p.Text, func() { a.download(p.Text, full) })
+		case content.Link:
+			flush()
+			raw := p.URL
+			a.button(c, p.Text, func() {
+				a.run("打开链接", func(ctx context.Context) (func(), error) { return nil, a.device.Open(raw) })
+			})
+		}
+	}
+	flush()
+	if len(parts) == 0 {
+		ui.Text(c, "(无内容)")
+	}
+}
+
+// inlineImage reserves a fixed box before decoding and keeps that box for the
+// final image, so loading a picture never changes the height of its floor.
+func (a *App) inlineImage(c *ui.Context, raw, full string) {
+	const boxWidth, boxHeight = float32(520), float32(300)
+	ui.Column(c).FillWidth().Height(boxHeight).Center().Gap(6).
+		Background(c.Theme().Background).Radius(12).Children(func() {
+		e := a.images[raw]
+		if e == nil || e.loading || e.err != nil || e.source == nil {
+			a.image(c, raw, boxWidth, boxHeight, true, full)
+			return
+		}
+		scale := min(boxWidth/e.w, boxHeight/e.h)
+		width, height := e.w*scale, e.h*scale
+		var element ui.Element
+		if e.player != nil {
+			a.showPlayer(e)
+			element = ui.Video(c, e.player).Size(width, height)
+		} else {
+			element = ui.Image(c, e.source).Size(width, height)
+		}
+		if element.Clicked() {
+			a.imageView = imageViewerURL(raw, full)
+			a.imageScale = 1
+		}
+	})
 }
 func (a *App) bodyView(c *ui.Context, body string, attachments []forum.Attachment) {
 	parts := content.Parse(body, attachments)

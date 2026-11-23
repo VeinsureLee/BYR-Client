@@ -19,17 +19,20 @@ import (
 
 var (
 	colorSurface     = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
-	colorBorder      = color.NRGBA{R: 0xE2, G: 0xE8, B: 0xF2, A: 0xFF}
-	colorMuted       = color.NRGBA{R: 0x6C, G: 0x7C, B: 0x93, A: 0xFF}
+	colorBorder      = color.NRGBA{R: 0xDD, G: 0xE3, B: 0xEA, A: 0xFF}
+	colorMuted       = color.NRGBA{R: 0x47, G: 0x55, B: 0x69, A: 0xFF}
+	colorFaint       = color.NRGBA{R: 0x55, G: 0x62, B: 0x77, A: 0xFF}
 	colorAccent      = color.NRGBA{R: 0x0A, G: 0x5C, B: 0xBF, A: 0xFF}
-	colorAccentSoft  = color.NRGBA{R: 0xE8, G: 0xF0, B: 0xFC, A: 0xFF}
-	colorDanger      = color.NRGBA{R: 0xB3, G: 0x26, B: 0x1E, A: 0xFF}
-	colorDangerSoft  = color.NRGBA{R: 0xFD, G: 0xEC, B: 0xEC, A: 0xFF}
-	colorWarning     = color.NRGBA{R: 0xB2, G: 0x6A, B: 0x00, A: 0xFF}
-	colorWarningSoft = color.NRGBA{R: 0xFF, G: 0xF4, B: 0xDE, A: 0xFF}
-	colorBg          = color.NRGBA{R: 0xF4, G: 0xF7, B: 0xFC, A: 0xFF}
-	colorFg          = color.NRGBA{R: 0x1E, G: 0x2B, B: 0x40, A: 0xFF}
-	colorPill        = color.NRGBA{R: 0xF1, G: 0xF5, B: 0xFB, A: 0xFF}
+	colorAccentSoft  = color.NRGBA{R: 0xE7, G: 0xF0, B: 0xFB, A: 0xFF}
+	colorDanger      = color.NRGBA{R: 0xA3, G: 0x2D, B: 0x29, A: 0xFF}
+	colorDangerSoft  = color.NRGBA{R: 0xFC, G: 0xEC, B: 0xEA, A: 0xFF}
+	colorSuccess     = color.NRGBA{R: 0x22, G: 0x64, B: 0x56, A: 0xFF}
+	colorSuccessSoft = color.NRGBA{R: 0xE8, G: 0xF5, B: 0xEE, A: 0xFF}
+	colorWarning     = color.NRGBA{R: 0x85, G: 0x53, B: 0x00, A: 0xFF}
+	colorWarningSoft = color.NRGBA{R: 0xFF, G: 0xF3, B: 0xD8, A: 0xFF}
+	colorBg          = color.NRGBA{R: 0xF6, G: 0xF7, B: 0xF9, A: 0xFF}
+	colorFg          = color.NRGBA{R: 0x18, G: 0x20, B: 0x2A, A: 0xFF}
+	colorPill        = color.NRGBA{R: 0xEE, G: 0xF1, B: 0xF5, A: 0xFF}
 )
 
 // setPalette switches the shared surfaces between the light and dark desktop
@@ -37,36 +40,42 @@ var (
 // same small set; keeping one palette avoids per-widget theme plumbing.
 func setPalette(dark bool) {
 	if dark {
-		colorSurface = color.NRGBA{R: 0x18, G: 0x22, B: 0x2F, A: 0xFF}
-		colorBorder = color.NRGBA{R: 0x2C, G: 0x3A, B: 0x4C, A: 0xFF}
-		colorMuted = color.NRGBA{R: 0x9A, G: 0xAA, B: 0xBF, A: 0xFF}
-		colorAccent = color.NRGBA{R: 0x4C, G: 0x8F, B: 0xE8, A: 0xFF}
-		colorAccentSoft = color.NRGBA{R: 0x1C, G: 0x2E, B: 0x46, A: 0xFF}
-		colorDanger = color.NRGBA{R: 0xF0, G: 0x8A, B: 0x82, A: 0xFF}
-		colorDangerSoft = color.NRGBA{R: 0x3A, G: 0x22, B: 0x25, A: 0xFF}
-		colorWarning = color.NRGBA{R: 0xE8, G: 0xB0, B: 0x5C, A: 0xFF}
-		colorWarningSoft = color.NRGBA{R: 0x3A, G: 0x2F, B: 0x1A, A: 0xFF}
-		colorBg = color.NRGBA{R: 0x0E, G: 0x16, B: 0x20, A: 0xFF}
-		colorFg = color.NRGBA{R: 0xE6, G: 0xED, B: 0xF5, A: 0xFF}
-		colorPill = color.NRGBA{R: 0x22, G: 0x30, B: 0x43, A: 0xFF}
+		colorSurface = color.NRGBA{R: 0x19, G: 0x1E, B: 0x25, A: 0xFF}
+		colorBorder = color.NRGBA{R: 0x30, G: 0x39, B: 0x46, A: 0xFF}
+		colorMuted = color.NRGBA{R: 0xBC, G: 0xC7, B: 0xD5, A: 0xFF}
+		colorFaint = color.NRGBA{R: 0xA5, G: 0xB2, B: 0xC3, A: 0xFF}
+		colorAccent = color.NRGBA{R: 0x9C, G: 0xC5, B: 0xFF, A: 0xFF}
+		colorAccentSoft = color.NRGBA{R: 0x20, G: 0x2F, B: 0x43, A: 0xFF}
+		colorDanger = color.NRGBA{R: 0xFF, G: 0xB4, B: 0xAA, A: 0xFF}
+		colorDangerSoft = color.NRGBA{R: 0x38, G: 0x26, B: 0x28, A: 0xFF}
+		colorSuccess = color.NRGBA{R: 0x8B, G: 0xD6, B: 0xB3, A: 0xFF}
+		colorSuccessSoft = color.NRGBA{R: 0x20, G: 0x35, B: 0x2D, A: 0xFF}
+		colorWarning = color.NRGBA{R: 0xF3, G: 0xCB, B: 0x80, A: 0xFF}
+		colorWarningSoft = color.NRGBA{R: 0x37, G: 0x2E, B: 0x21, A: 0xFF}
+		colorBg = color.NRGBA{R: 0x11, G: 0x14, B: 0x18, A: 0xFF}
+		colorFg = color.NRGBA{R: 0xEF, G: 0xF2, B: 0xF6, A: 0xFF}
+		colorPill = color.NRGBA{R: 0x22, G: 0x29, B: 0x33, A: 0xFF}
 		return
 	}
 	colorSurface = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
-	colorBorder = color.NRGBA{R: 0xE2, G: 0xE8, B: 0xF2, A: 0xFF}
-	colorMuted = color.NRGBA{R: 0x6C, G: 0x7C, B: 0x93, A: 0xFF}
+	colorBorder = color.NRGBA{R: 0xDD, G: 0xE3, B: 0xEA, A: 0xFF}
+	colorMuted = color.NRGBA{R: 0x47, G: 0x55, B: 0x69, A: 0xFF}
+	colorFaint = color.NRGBA{R: 0x55, G: 0x62, B: 0x77, A: 0xFF}
 	colorAccent = color.NRGBA{R: 0x0A, G: 0x5C, B: 0xBF, A: 0xFF}
-	colorAccentSoft = color.NRGBA{R: 0xE8, G: 0xF0, B: 0xFC, A: 0xFF}
-	colorDanger = color.NRGBA{R: 0xB3, G: 0x26, B: 0x1E, A: 0xFF}
-	colorDangerSoft = color.NRGBA{R: 0xFD, G: 0xEC, B: 0xEC, A: 0xFF}
-	colorWarning = color.NRGBA{R: 0xB2, G: 0x6A, B: 0x00, A: 0xFF}
-	colorWarningSoft = color.NRGBA{R: 0xFF, G: 0xF4, B: 0xDE, A: 0xFF}
-	colorBg = color.NRGBA{R: 0xF4, G: 0xF7, B: 0xFC, A: 0xFF}
-	colorFg = color.NRGBA{R: 0x1E, G: 0x2B, B: 0x40, A: 0xFF}
-	colorPill = color.NRGBA{R: 0xF1, G: 0xF5, B: 0xFB, A: 0xFF}
+	colorAccentSoft = color.NRGBA{R: 0xE7, G: 0xF0, B: 0xFB, A: 0xFF}
+	colorDanger = color.NRGBA{R: 0xA3, G: 0x2D, B: 0x29, A: 0xFF}
+	colorDangerSoft = color.NRGBA{R: 0xFC, G: 0xEC, B: 0xEA, A: 0xFF}
+	colorSuccess = color.NRGBA{R: 0x22, G: 0x64, B: 0x56, A: 0xFF}
+	colorSuccessSoft = color.NRGBA{R: 0xE8, G: 0xF5, B: 0xEE, A: 0xFF}
+	colorWarning = color.NRGBA{R: 0x85, G: 0x53, B: 0x00, A: 0xFF}
+	colorWarningSoft = color.NRGBA{R: 0xFF, G: 0xF3, B: 0xD8, A: 0xFF}
+	colorBg = color.NRGBA{R: 0xF6, G: 0xF7, B: 0xF9, A: 0xFF}
+	colorFg = color.NRGBA{R: 0x18, G: 0x20, B: 0x2A, A: 0xFF}
+	colorPill = color.NRGBA{R: 0xEE, G: 0xF1, B: 0xF5, A: 0xFF}
 }
 
 func (a *App) iconTarget(gtx layout.Context, name string) layout.Dimensions {
-	px := gtx.Dp(unit.Dp(40))
+	px := gtx.Dp(unit.Dp(24))
 	gtx.Constraints = layout.Exact(image.Pt(px, px))
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return a.drawIcon(gtx, name, 22, a.theme.Fg)
@@ -91,9 +100,11 @@ func (a *App) iconButton(gtx layout.Context, key, name string) (layout.Dimension
 	}
 	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		active := btn.Pressed() || a.actionPulseActive(key, time.Now())
+		semantic.Button.Add(gtx.Ops)
+		semantic.LabelOp(iconDescription(name)).Add(gtx.Ops)
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				size := gtx.Dp(unit.Dp(40))
+				size := gtx.Dp(unit.Dp(48))
 				bg := colorPill
 				if active {
 					bg = pressedSurface(bg)
@@ -102,6 +113,64 @@ func (a *App) iconButton(gtx layout.Context, key, name string) (layout.Dimension
 				return layout.Dimensions{Size: image.Pt(size, size)}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions { return a.iconTarget(gtx, name) }),
+		)
+	})
+	return dims, clicked
+}
+
+func iconDescription(name string) string {
+	switch name {
+	case "back":
+		return "返回"
+	case "more":
+		return "更多操作"
+	case "star":
+		return "收藏主题"
+	case "star_on":
+		return "已收藏主题"
+	case "refresh":
+		return "刷新"
+	case "check":
+		return "全部已读"
+	}
+	return name
+}
+
+// menuButton is a full-width, at-least-48dp action row. The visible label and
+// the semantic label are the same so a narrow menu remains readable to screen
+// readers and to sighted users.
+func (a *App) menuButton(gtx layout.Context, key, label, icon string) (layout.Dimensions, bool) {
+	btn := a.click(key)
+	clicked := btn.Clicked(gtx)
+	size := image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(48)))
+	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		semantic.Button.Add(gtx.Ops)
+		semantic.LabelOp(label).Add(gtx.Ops)
+		return layout.Stack{}.Layout(gtx,
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				bg := colorPill
+				if btn.Pressed() {
+					bg = pressedSurface(bg)
+				}
+				paint.FillShape(gtx.Ops, bg, clip.RRect{Rect: image.Rectangle{Max: size}, NE: 10, NW: 10, SE: 10, SW: 10}.Op(gtx.Ops))
+				return layout.Dimensions{Size: size}
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(14), Bottom: unit.Dp(14), Left: unit.Dp(14), Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return a.drawIcon(gtx, icon, 20, colorMuted)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							l := material.Label(a.theme, unit.Sp(15), label)
+							l.Color = colorFg
+							l.MaxLines = 1
+							return l.Layout(gtx)
+						}),
+					)
+				})
+			}),
 		)
 	})
 	return dims, clicked
@@ -147,7 +216,7 @@ func (a *App) pill(gtx layout.Context, key, label, icon string, selected, negati
 	clicked := btn.Clicked(gtx)
 	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		m := op.Record(gtx.Ops)
-		inner := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(11), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		inner := layout.Inset{Top: unit.Dp(16), Bottom: unit.Dp(16), Left: unit.Dp(15), Right: unit.Dp(15)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if icon == "" {
@@ -222,7 +291,7 @@ func (a *App) compactIconAction(gtx layout.Context, key, description, icon, sele
 			semantic.DescriptionOp(description).Add(gtx.Ops)
 		}
 		m := op.Record(gtx.Ops)
-		inner := layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		inner := layout.Inset{Top: unit.Dp(15), Bottom: unit.Dp(15), Left: unit.Dp(15), Right: unit.Dp(15)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return a.drawIcon(gtx, iconName, iconSize, fg)

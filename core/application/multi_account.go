@@ -113,6 +113,7 @@ func (a *App) SwitchAccount(ctx context.Context, username string) error {
 	a.mu.Lock()
 	if accountKey(a.session.Username) != accountKey(credential.Username) || a.session.Token != credential.Token {
 		a.collections = nil
+		a.bumpGenerationLocked()
 	}
 	a.session = credential
 	a.mu.Unlock()
@@ -140,6 +141,7 @@ func (a *App) ForgetAccount(ctx context.Context, username string) error {
 	if accountKey(a.session.Username) == accountKey(username) {
 		a.session = Credential{}
 		a.collections = nil
+		a.bumpGenerationLocked()
 	}
 	a.mu.Unlock()
 	return nil

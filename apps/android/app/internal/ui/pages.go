@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -18,9 +19,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
-	"github.com/VeinsureLee/BYR-Client/core/content"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
-	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
 func (a *App) loginPage(gtx layout.Context) layout.Dimensions {
@@ -162,7 +161,7 @@ func (a *App) textAction(gtx layout.Context, key, label string) (layout.Dimensio
 	btn := a.click(key)
 	clicked := btn.Clicked(gtx)
 	dims := material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(4), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Top: unit.Dp(15), Bottom: unit.Dp(15), Left: unit.Dp(8), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			l := material.Body2(a.theme, label)
 			l.Color = a.theme.ContrastBg
 			l.TextSize = unit.Sp(13)
@@ -470,7 +469,7 @@ func (a *App) sectionEntryCard(gtx layout.Context, s forum.Section, pick bool) l
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								l := material.Label(a.theme, unit.Sp(15), title)
-								l.Font.Weight = 600
+								l.Font.Weight = font.SemiBold
 								return l.Layout(gtx)
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -512,7 +511,7 @@ func (a *App) subsectionEntryCard(gtx layout.Context, s forum.Section, pick bool
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								l := material.Label(a.theme, unit.Sp(14), title)
-								l.Font.Weight = 600
+								l.Font.Weight = font.SemiBold
 								return l.Layout(gtx)
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -554,7 +553,7 @@ func (a *App) sectionBoardCard(gtx layout.Context, b forum.Board, pick bool) lay
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								l := material.Label(a.theme, unit.Sp(14), label)
-								l.Font.Weight = 600
+								l.Font.Weight = font.SemiBold
 								return l.Layout(gtx)
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -656,7 +655,7 @@ func (a *App) boardCard(gtx layout.Context, b forum.Board) layout.Dimensions {
 								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 										l := material.Label(a.theme, unit.Sp(14), label)
-										l.Font.Weight = 600
+										l.Font.Weight = font.SemiBold
 										return l.Layout(gtx)
 									}),
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -779,7 +778,7 @@ func (a *App) pinnedGroupCard(count int) layout.Widget {
 							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									l := material.Label(a.theme, unit.Sp(14), fmt.Sprintf("置顶主题 · %d", count))
-									l.Font.Weight = 600
+									l.Font.Weight = font.SemiBold
 									return l.Layout(gtx)
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -898,63 +897,130 @@ func (a *App) openThread(board, id string) {
 		return
 	}
 	a.thread = forum.Thread{}
+	a.threadModels = nil
+	a.threadLoadedRoute = Route{}
 	a.resetThreadExpanded(a.current())
-	a.threadMoreOpen = false
-	a.threadExtrasBusy = false
-	a.threadExtrasDone = false
-	a.threadVote = nil
-	a.threadBet = nil
 	a.loadThread()
 }
 
 func (a *App) loadThread() {
-	if a.busy {
+	a.threadRefreshPending = false
+	a.threadRetryPage = 0
+	a.threadRetryRefresh = false
+	a.loadThreadPage(max(1, a.current().Number))
+}
+
+func (a *App) loadThreadPage(page int) {
+	if a.core == nil {
+		return
+	}
+	if a.busy && !a.cancelRead() {
 		return
 	}
 	r := a.current()
-	a.thread = forum.Thread{}
-	a.resetThreadExpanded(a.current())
+	if r.Page != PageThread {
+		return
+	}
+	if page < 1 {
+		page = max(1, r.Number)
+	}
+	refresh := a.threadRefreshPending
+	a.threadRefreshPending = false
+	a.threadRequestPage = page
+	a.threadRetryPage = page
+	a.threadRetryRefresh = refresh
+	if a.threadLoadedRequest.Name != r.Name || a.threadLoadedRequest.ID != r.ID {
+		a.thread = forum.Thread{}
+		a.threadModels = nil
+		a.threadLoadedRequest = Route{}
+		a.resetThreadExpanded(r)
+	}
 	a.threadMoreOpen = false
-	a.threadExtrasBusy = false
-	a.threadExtrasDone = false
-	a.threadVote = nil
-	a.threadBet = nil
-	a.run("加载主题", func(ctx context.Context) (func(), error) {
-		v, err := a.core.Forum.Thread(ctx, r.Name, r.ID, forum.Page{Number: max(1, r.Number), Size: 30})
+	info := a.core.SessionInfo()
+	a.threadReqSerial++
+	req := threadReadRequest{Serial: a.threadReqSerial, Generation: info.Generation, Route: r}
+	a.threadReq = req
+	account := info.Username
+	a.runRead("加载主题", func(ctx context.Context) (func(), error) {
+		detail, err := a.core.ReadThread(ctx, r.Name, r.ID, forum.Page{Number: page, Size: 30})
+		if errors.Is(err, application.ErrStaleSession) {
+			err = context.Canceled
+		}
 		if err != nil {
 			return nil, err
 		}
-		if bool(v.Collect) {
-			a.core.RememberCollection(r.Name, r.ID)
-		}
-		v.Collect = forum.Flag(a.core.CollectionState(r.Name, r.ID, bool(v.Collect)))
-		username := a.core.Session().Username
-		historyErr := a.core.Local.Visit(a.ctx, username, local.History{Board: r.Name, ID: r.ID, Title: v.Title})
 		return func() {
-			if a.current() != r {
+			if req.Serial != a.threadReqSerial || a.current() != r {
 				return
 			}
-			a.thread = v
-			if v.Pagination.CurrentPage > 0 {
-				a.stack[len(a.stack)-1].Number = int(v.Pagination.CurrentPage)
-				if r.Sub != "" {
-					for index, article := range v.Articles {
-						if string(article.ID) == r.Sub {
-							key := listKey{Page: PageThread, Name: r.Name, ID: r.ID, Sub: r.Sub, Number: int(v.Pagination.CurrentPage)}
-							state := a.mobileList(key)
-							state.Position.First = index + 1
-							state.Position.Offset = 0
-							break
-						}
+			now := a.core.SessionInfo()
+			if now.Generation != req.Generation || !strings.EqualFold(now.Username, account) {
+				return
+			}
+			displayPage := max(1, page)
+			if detail.Thread.Pagination.CurrentPage > 0 {
+				displayPage = int(detail.Thread.Pagination.CurrentPage)
+			}
+			a.stack[len(a.stack)-1].Number = displayPage
+			if refresh {
+				a.stack[len(a.stack)-1].Sub = ""
+			}
+			a.thread = detail.Thread
+			a.prepareThreadContent(detail.Thread)
+			a.threadLoadedRoute = Route{Page: PageThread, Name: detail.CanonicalBoard, ID: r.ID, Number: displayPage}
+			a.threadLoadedRequest = Route{Page: PageThread, Name: r.Name, ID: r.ID, Number: displayPage}
+			a.threadRequestPage = displayPage
+			a.threadRetryPage = 0
+			a.threadRetryRefresh = false
+			a.syncThreadExtras()
+			if refresh {
+				key := listKey{Page: PageThread, Name: a.current().Name, ID: a.current().ID, Number: displayPage}
+				state := a.mobileList(key)
+				state.Position = layout.Position{}
+				a.threadAnchors[key] = threadAnchor{Signature: threadArticleSignature(detail.Thread.Articles)}
+				a.threadMedia[key] = a.mediaGeneration
+				a.notice("刷新成功")
+			} else if target := a.current().Sub; target != "" {
+				for index, article := range detail.Thread.Articles {
+					if string(article.ID) == target {
+						key := listKey{Page: PageThread, Name: a.current().Name, ID: a.current().ID, Sub: target, Number: displayPage}
+						state := a.mobileList(key)
+						state.Position.First = index + 1
+						state.Position.Offset = 0
+						a.threadAnchors[key] = threadAnchor{Row: index + 1, ArticleID: string(article.ID), Signature: threadArticleSignature(detail.Thread.Articles)}
+						break
 					}
 				}
 			}
-			if historyErr != nil {
-				a.message = "阅读历史保存失败：" + historyErr.Error()
-				a.failed = true
-			}
+			go a.recordThreadVisit(req, detail)
 		}, nil
 	})
+}
+
+func (a *App) recordThreadVisit(req threadReadRequest, detail application.ThreadDetail) {
+	err := a.core.RecordThreadVisit(a.ctx, req.Generation, detail.CanonicalBoard, req.Route.ID, detail.Thread.Title)
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, application.ErrStaleSession) {
+		return
+	}
+	a.post(func() {
+		if a.closed.Load() || a.current().Page != PageThread || a.current().ID != req.Route.ID {
+			return
+		}
+		// A local history failure must leave the loaded floors readable.
+		a.message = "阅读历史保存失败：" + err.Error()
+		a.failed = false
+		a.noticeGeneration++
+	})
+}
+
+func threadArticleSignature(articles []forum.Article) string {
+	var b strings.Builder
+	b.Grow(len(articles) * 8)
+	for _, article := range articles {
+		b.WriteString(string(article.ID))
+		b.WriteByte('|')
+	}
+	return b.String()
 }
 
 func (a *App) threadPage(gtx layout.Context) layout.Dimensions {
@@ -962,7 +1028,65 @@ func (a *App) threadPage(gtx layout.Context) layout.Dimensions {
 		return a.pendingPage(gtx, "正在加载主题…")
 	}
 	route := a.current()
-	state := a.mobileList(listKey{Page: PageThread, Name: route.Name, ID: route.ID, Sub: route.Sub, Number: max(1, route.Number)})
+	key := listKey{Page: PageThread, Name: route.Name, ID: route.ID, Sub: route.Sub, Number: max(1, route.Number)}
+	state := a.mobileList(key)
+	if a.threadAnchors == nil {
+		a.threadAnchors = make(map[listKey]threadAnchor)
+	}
+	// A route transition clears the thread model and queues an async reload.
+	// Do not treat that empty frame as new data: it would overwrite the saved
+	// floor ID before the reload can restore it.
+	if a.thread.ID != "" {
+		signature := threadArticleSignature(a.thread.Articles)
+		saved, hasAnchor := a.threadAnchors[key]
+		viewport := threadViewportKey{Width: gtx.Constraints.Max.X, Scale: gtx.Metric.PxPerSp}
+		savedViewport, viewportSeen := a.threadViewports[key]
+		dataChanged := hasAnchor && saved.Signature != signature
+		if !dataChanged {
+			// Rows and IDs still describe the same data, so the list position is
+			// the user's current reading point. Capture it before a viewport or
+			// media change restores that point.
+			saved = threadAnchor{Row: state.Position.First, Offset: state.Position.Offset, Signature: signature}
+			if saved.Row > 0 && saved.Row-1 < len(a.thread.Articles) {
+				saved.ArticleID = string(a.thread.Articles[saved.Row-1].ID)
+			}
+			a.threadAnchors[key] = saved
+			hasAnchor = true
+		}
+		restoreAnchor := !viewportSeen || savedViewport != viewport ||
+			a.threadMedia[key] != a.mediaGeneration || dataChanged
+		// Restore by the old article ID before recording the new list position.
+		// When rows move (a floor is inserted above), the stored row number is
+		// stale but the ID and offset still identify the same reading point.
+		if restoreAnchor && hasAnchor {
+			row, offset := saved.Row, saved.Offset
+			if saved.ArticleID != "" {
+				found := false
+				for index, article := range a.thread.Articles {
+					if string(article.ID) == saved.ArticleID {
+						row, found = index+1, true
+						break
+					}
+				}
+				if !found {
+					// The target floor was deleted: keep the nearest valid row.
+					row = min(max(saved.Row, 0), len(a.thread.Articles))
+				}
+			}
+			if row < 0 {
+				row = 0
+			}
+			state.Position.First = row
+			state.Position.Offset = offset
+		}
+		anchor := threadAnchor{Row: state.Position.First, Offset: state.Position.Offset, Signature: signature}
+		if anchor.Row > 0 && anchor.Row-1 < len(a.thread.Articles) {
+			anchor.ArticleID = string(a.thread.Articles[anchor.Row-1].ID)
+		}
+		a.threadAnchors[key] = anchor
+		a.threadViewports[key] = viewport
+		a.threadMedia[key] = a.mediaGeneration
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return a.threadMoreMenu(gtx)
@@ -1003,7 +1127,7 @@ func (a *App) compactThreadHeader(gtx layout.Context) layout.Dimensions {
 							}
 							return dims
 						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							meta := make([]string, 0, 2)
 							if a.thread.ReplyCount > 0 {
@@ -1015,29 +1139,38 @@ func (a *App) compactThreadHeader(gtx layout.Context) layout.Dimensions {
 							if len(meta) == 0 {
 								return layout.Dimensions{}
 							}
-							l := material.Label(a.theme, unit.Sp(11), strings.Join(meta, " · "))
-							l.Color = colorMuted
+							l := material.Label(a.theme, unit.Sp(12), strings.Join(meta, " · "))
+							l.Color = colorFaint
 							l.MaxLines = 1
 							l.Truncator = "…"
 							return l.Layout(gtx)
 						}),
 					)
 				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					title := a.thread.Title
+					title := a.threadTitle()
 					if title == "" {
 						title = "帖子"
 					}
-					l := material.Label(a.theme, unit.Sp(18), title)
-					l.Font.Weight = 700
-					l.MaxLines = 2
-					l.Truncator = "…"
+					l := material.Label(a.theme, unit.Sp(22), title)
+					l.Font.Weight = font.SemiBold
+					l.LineHeight = unit.Sp(30)
 					return l.Layout(gtx)
 				}),
 			)
 		})
 	})
+}
+
+func (a *App) threadTitle() string {
+	if title := strings.TrimSpace(a.thread.Title); title != "" {
+		return title
+	}
+	if len(a.thread.Articles) > 0 {
+		return a.thread.Articles[0].Title
+	}
+	return ""
 }
 
 func (a *App) isThreadAuthor(v forum.Article) bool {
@@ -1054,7 +1187,8 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 	postKey := threadExpansionKey(a.current(), string(v.ID))
 	expanded := a.expandedPosts[postKey]
 	collapsed := pinned && !expanded
-	body := strings.TrimSpace(content.Plain(v.Content))
+	model := a.threadContent(v)
+	body := strings.TrimSpace(model.plain)
 	if body == "" {
 		body = "(无内容)"
 	}
@@ -1085,7 +1219,7 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 											label := func(gtx layout.Context) layout.Dimensions {
 												l := material.Label(a.theme, unit.Sp(14), author)
-												l.Font.Weight = 600
+												l.Font.Weight = font.SemiBold
 												if !v.Author.Anonymous() && v.Author.ID != "" {
 													l.Color = colorAccent
 												}
@@ -1117,8 +1251,14 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 									)
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									l := material.Label(a.theme, unit.Sp(11), fmt.Sprintf("#%d · %s", v.Position, formatTime(v.PostTime)))
-									l.Color = colorMuted
+									meta := fmt.Sprintf("#%d · %s", v.Position, formatTime(v.PostTime))
+									if model.replyPosition > 0 {
+										meta = fmt.Sprintf("#%d · %s · 回复 #%d %s", v.Position, formatTime(v.PostTime), model.replyPosition, model.replyAuthor)
+									}
+									l := material.Label(a.theme, unit.Sp(12), meta)
+									l.Color = colorFaint
+									l.MaxLines = 1
+									l.Truncator = "…"
 									return l.Layout(gtx)
 								}),
 							)
@@ -1171,7 +1311,7 @@ func (a *App) postCard(gtx layout.Context, index int, v forum.Article) layout.Di
 					if collapsed {
 						return layout.Dimensions{}
 					}
-					return a.postBody(gtx, v.Content, v.Attachments)
+					return a.postBodyContent(gtx, model)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if collapsed {
@@ -1511,7 +1651,7 @@ func (a *App) collectionBody(gtx layout.Context) layout.Dimensions {
 												title = "无标题"
 											}
 											l := material.Label(a.theme, unit.Sp(14), title)
-											l.Font.Weight = 600
+											l.Font.Weight = font.SemiBold
 											l.MaxLines = 2
 											return l.Layout(gtx)
 										}),
@@ -1697,7 +1837,7 @@ func (a *App) selfPage(gtx layout.Context) layout.Dimensions {
 									return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 											l := material.Label(a.theme, unit.Sp(14), e.Title)
-											l.Font.Weight = 600
+											l.Font.Weight = font.SemiBold
 											return l.Layout(gtx)
 										}),
 										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1760,7 +1900,7 @@ func (a *App) selfRow(gtx layout.Context, key, icon, title, detail string, actio
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							l := material.Label(a.theme, unit.Sp(14), title)
-							l.Font.Weight = 600
+							l.Font.Weight = font.SemiBold
 							return l.Layout(gtx)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {

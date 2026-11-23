@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 )
@@ -34,7 +35,13 @@ var breaks = regexp.MustCompile(`(?i)<br\s*/?>|</p>|</div>`)
 var tags = regexp.MustCompile(`<[^>]*>`)
 var token = regexp.MustCompile(`(?is)\[upload=(\d+)\](?:\s*\[/upload\])?|\[img(?:=[^\]]*)?\](.*?)\[/img\]|\[em([a-zA-Z0-9]+)\]|\[url(?:=([^\]]+))?\](.*?)\[/url\]|\[(/?)(b|i|u|quote)(?:=[^\]]*)?\]|\[/?(?:color|size|font|upload)(?:=[^\]]*)?\]`)
 
+// ParseCalls counts parse work for offline performance comparisons. It is a
+// monotonic diagnostic only: presentation layers cache parsed content and scroll
+// paths must not add to it.
+var ParseCalls atomic.Int64
+
 func Parse(body string, attachments []forum.Attachment) []Part {
+	ParseCalls.Add(1)
 	body = imageHTML.ReplaceAllString(body, "[img]$1[/img]")
 	body = breaks.ReplaceAllString(body, "\n")
 	var files []forum.File
@@ -131,8 +138,14 @@ func FilePart(f forum.File) Part {
 	return Part{Kind: kind, Text: f.Name, URL: thumb, FullURL: f.URL}
 }
 func Plain(body string) string {
+	return PlainParts(Parse(body, nil))
+}
+
+// PlainParts renders parsed content as copyable text without parsing again.
+// Presentation caches use it so copying a visible floor does not repeat work.
+func PlainParts(parts []Part) string {
 	var b strings.Builder
-	for _, p := range Parse(body, nil) {
+	for _, p := range parts {
 		switch p.Kind {
 		case Text, Link, Emoji:
 			b.WriteString(p.Text)

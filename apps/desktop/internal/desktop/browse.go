@@ -11,10 +11,31 @@ import (
 )
 
 func (a *App) homeView(c *ui.Context) {
+	if a.compactNavigation() {
+		ui.Column(c).Fill().Gap(12).Children(func() {
+			ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
+				for _, s := range a.sections {
+					label := s.Description
+					if label == "" {
+						label = string(s.Name)
+					}
+					tone := quiet
+					if a.section.Name == s.Name || a.section.Parent == s.Name {
+						tone = selected
+					}
+					if control(c, "分区："+label, "board", tone).Clicked() {
+						a.loadSection(string(s.Name))
+					}
+				}
+			})
+			a.homeContent(c)
+		})
+		return
+	}
 	ui.Row(c).Fill().Gap(16).Children(func() {
-		ui.Column(c).Width(236).Shrink(0).FillHeight().Background(c.Theme().Surface).
-			Border(1, c.Theme().Border).Radius(14).Padding(12).Gap(4).Children(func() {
-			ui.Text(c, "分区").FontSize(12).Bold().TextColor(c.Theme().TextMuted).Padding(2, 8)
+		ui.Column(c).Width(224).Shrink(0).FillHeight().Background(c.Theme().Surface).
+			Border(1, c.Theme().Border).Radius(12).Padding(12).Gap(4).Children(func() {
+			ui.Text(c, "分区").FontSize(a.textSize(c, 12)).FontWeight(600).TextColor(c.Theme().TextMuted).Padding(2, 8)
 			ui.Scroll(c).FillWidth().Grow(1).Children(func() {
 				ui.Column(c).FillWidth().Gap(2).Children(func() {
 					// Subsections live in the board pane as navigable cards; the
@@ -25,49 +46,53 @@ func (a *App) homeView(c *ui.Context) {
 				})
 			})
 		})
-		ui.Column(c).Grow(1).MinWidth(0).FillHeight().Gap(12).Children(func() {
-			ui.Row(c).FillWidth().Wrap().Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-					ui.Text(c, "发现版面").FontSize(22).Bold()
-					detail := []string{}
-					if path := a.sectionPath(); path != "" {
-						detail = append(detail, path)
-					}
-					detail = append(detail, fmt.Sprintf("%d 个版面", len(a.boards)))
-					if len(a.section.Subsections) > 0 {
-						detail = append(detail, fmt.Sprintf("%d 个子分区", len(a.section.Subsections)))
-					}
-					ui.Text(c, strings.Join(detail, " · ")).FontSize(12).TextColor(c.Theme().TextMuted)
-				})
-				if a.section.Parent != "" {
-					a.action(c, "返回上级分区", "back", quiet, func() { a.loadSection(string(a.section.Parent)) })
+		a.homeContent(c)
+	})
+}
+
+func (a *App) homeContent(c *ui.Context) {
+	ui.Column(c).Grow(1).MinWidth(0).FillHeight().Gap(12).Children(func() {
+		ui.Row(c).FillWidth().Wrap().Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
+				ui.Text(c, "发现版面").FontSize(a.textSize(c, 22)).FontWeight(600)
+				detail := []string{}
+				if path := a.sectionPath(); path != "" {
+					detail = append(detail, path)
 				}
-				a.action(c, "全部版面", "board", quiet, a.loadAllBoards)
-				a.action(c, "推荐", "hot", tonal, func() {
-					a.navigate(Route{Page: "top", Sub: "recommend"}, true)
-				})
+				detail = append(detail, fmt.Sprintf("%d 个版面", len(a.boards)))
+				if len(a.section.Subsections) > 0 {
+					detail = append(detail, fmt.Sprintf("%d 个子分区", len(a.section.Subsections)))
+				}
+				ui.Text(c, strings.Join(detail, " · ")).FontSize(a.textSize(c, 12)).TextColor(c.Theme().TextMuted)
 			})
-			ui.Scroll(c).Grow(1).FillWidth().Children(func() {
-				ui.Column(c).FillWidth().Gap(10).Children(func() {
-					if len(a.section.Subsections) > 0 {
-						ui.Text(c, "子分区").FontSize(12).Bold().TextColor(c.Theme().TextMuted).Padding(2, 4)
-						ui.Column(c).FillWidth().Gap(8).Children(func() {
-							for _, sub := range a.section.Subsections {
-								a.sectionRow(c, sub)
-							}
-						})
-					}
-					n := 0
-					for _, b := range a.boards {
-						if has(b.Name+" "+b.Description, a.boardFilter) {
-							a.boardRow(c, b)
-							n++
+			if a.section.Parent != "" {
+				a.action(c, "返回上级分区", "back", quiet, func() { a.loadSection(string(a.section.Parent)) })
+			}
+			a.action(c, "全部版面", "board", quiet, a.loadAllBoards)
+			a.action(c, "推荐", "hot", tonal, func() {
+				a.navigate(Route{Page: "top", Sub: "recommend"}, true)
+			})
+		})
+		ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+			ui.Column(c).FillWidth().Gap(10).Children(func() {
+				if len(a.section.Subsections) > 0 {
+					ui.Text(c, "子分区").FontSize(a.textSize(c, 12)).FontWeight(600).TextColor(c.Theme().TextMuted).Padding(2, 4)
+					ui.Column(c).FillWidth().Gap(8).Children(func() {
+						for _, sub := range a.section.Subsections {
+							a.sectionRow(c, sub)
 						}
+					})
+				}
+				n := 0
+				for _, b := range a.boards {
+					if has(b.Name+" "+b.Description, a.boardFilter) {
+						a.boardRow(c, b)
+						n++
 					}
-					if n == 0 && len(a.section.Subsections) == 0 {
-						emptyState(c, "board", "没有匹配的版面", "换一个关键词，或选择其他分区。")
-					}
-				})
+				}
+				if n == 0 && len(a.section.Subsections) == 0 {
+					emptyState(c, "board", "没有匹配的版面", "换一个关键词，或选择其他分区。")
+				}
 			})
 		})
 	})

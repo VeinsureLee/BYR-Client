@@ -14,21 +14,35 @@ func forumTheme(dark bool, scale float32) *ui.Theme {
 	t := *ui.LightTheme()
 	if dark {
 		t = *ui.DarkTheme()
-		t.Background, t.Surface = ui.Hex("#10151F"), ui.Hex("#192130")
-		t.SurfaceHover, t.SurfacePressed = ui.Hex("#232E41"), ui.Hex("#2B3A52")
-		t.Border, t.Text, t.TextMuted = ui.Hex("#2B3648"), ui.Hex("#E5ECF6"), ui.Hex("#A3B1C6")
-		t.Accent, t.AccentHover, t.AccentPressed = ui.Hex("#96C2FF"), ui.Hex("#B7D5FF"), ui.Hex("#71ABF6")
-		t.AccentText = ui.Hex("#082E5D")
+		t.Background, t.Surface = ui.Hex("#111418"), ui.Hex("#191E25")
+		t.SurfaceHover, t.SurfacePressed = ui.Hex("#222A35"), ui.Hex("#2B3746")
+		t.Border, t.Text, t.TextMuted = ui.Hex("#303946"), ui.Hex("#EFF2F6"), ui.Hex("#BCC7D5")
+		t.Accent, t.AccentHover, t.AccentPressed = ui.Hex("#9CC5FF"), ui.Hex("#B1D0FF"), ui.Hex("#7EAFE9")
+		t.AccentText = ui.Hex("#10243D")
+		t.Selection = ui.Hex("#202F43")
+		t.Danger, t.Warning, t.Success = ui.Hex("#FFB4AA"), ui.Hex("#F3CB80"), ui.Hex("#8BD6B3")
 	} else {
-		t.Background, t.Surface = ui.Hex("#F4F7FC"), ui.Hex("#FFFFFF")
-		t.SurfaceHover, t.SurfacePressed = ui.Hex("#EDF2FA"), ui.Hex("#DFE9F8")
-		t.Border, t.Text, t.TextMuted = ui.Hex("#E2E8F2"), ui.Hex("#1E2B40"), ui.Hex("#6C7C93")
-		t.Accent, t.AccentHover, t.AccentPressed = ui.Hex("#0A5CBF"), ui.Hex("#084FA5"), ui.Hex("#06438D")
+		t.Background, t.Surface = ui.Hex("#F6F7F9"), ui.Hex("#FFFFFF")
+		t.SurfaceHover, t.SurfacePressed = ui.Hex("#EFF3F8"), ui.Hex("#E7ECF3")
+		t.Border, t.Text, t.TextMuted = ui.Hex("#DDE3EA"), ui.Hex("#18202A"), ui.Hex("#475569")
+		t.Accent, t.AccentHover, t.AccentPressed = ui.Hex("#0A5CBF"), ui.Hex("#084FA5"), ui.Hex("#073F87")
 		t.AccentText = ui.Hex("#FFFFFF")
+		t.Selection = ui.Hex("#E7F0FB")
+		t.Danger, t.Warning, t.Success = ui.Hex("#A32D29"), ui.Hex("#855300"), ui.Hex("#226456")
 	}
-	t.Font, t.FontSize, t.Radius = fonts.Family, 14*scale, 9
+	t.Font, t.FontSize, t.Radius, t.Spacing = fonts.Family, 14*scale, 8, 4
 	t.Focus, t.InactiveAccent = t.Accent, t.Accent
 	return &t
+}
+
+// textSize applies the application font scale to explicit typography sizes.
+// The system text scale is folded in by View, so each size is scaled once.
+func (a *App) textSize(_ *ui.Context, base float32) float32 {
+	scale := a.fontScale
+	if scale <= 0 {
+		scale = 1
+	}
+	return base * scale
 }
 
 func accentSurface(c *ui.Context) ui.Color {
@@ -56,7 +70,7 @@ const (
 func control(c *ui.Context, label, icon string, tone buttonTone) ui.Element {
 	t := c.Theme()
 	e := ui.ButtonBase(c).Label(label).Row().AlignItems(ui.Center).Justify(ui.Center).
-		Padding(8, 12).Gap(7).Radius(9).MinWidth(0)
+		Padding(8, 12).Gap(7).Radius(8).MinWidth(0).MinHeight(36)
 	bg, fg := ui.Transparent, t.TextMuted
 	switch tone {
 	case filled:

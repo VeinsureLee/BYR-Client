@@ -6,6 +6,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,20 +80,27 @@ func TestPreviewScreens(t *testing.T) {
 		t.Fatal(err)
 	}
 	const width, height = 420, 820
-	w, err := headless.NewWindow(width, height)
+	// Keep one surface large enough for every capture size; a smaller
+	// framebuffer clips the wide screenshots even though layout used the full
+	// requested constraints.
+	w, err := headless.NewWindow(900, 1000)
 	if err != nil {
 		t.Skipf("headless renderer unavailable: %v", err)
 	}
 	defer w.Release()
 	var router input.Router
-	captureSize := func(name string, a *App, size image.Point) {
+	captureSize := func(name string, a *App, size image.Point, scales ...float32) {
 		t.Helper()
+		scale := float32(1)
+		if len(scales) > 0 {
+			scale = scales[0]
+		}
 		var ops op.Ops
 		gtx := layout.Context{
 			Ops:         &ops,
 			Source:      router.Source(),
 			Constraints: layout.Exact(size),
-			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: scale},
 			Now:         time.Now(),
 		}
 		a.Layout(gtx)
@@ -113,6 +121,42 @@ func TestPreviewScreens(t *testing.T) {
 		}
 	}
 	capture := func(name string, a *App) { captureSize(name, a, image.Pt(width, height)) }
+	captureMoreMenu := func(name string, a *App, size image.Point, scale float32, first ...int) {
+		t.Helper()
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Constraints: layout.Exact(size),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: scale},
+			Now:         time.Now(),
+		}
+		// Prime page state before opening the menu; the first frame resets it
+		// by route identity.
+		a.Layout(gtx)
+		a.threadMoreOpen = true
+		if len(first) > 0 {
+			a.threadMenuList.Position.First = first[0]
+		}
+		var frame op.Ops
+		gtx.Ops = &frame
+		a.Layout(gtx)
+		if err := w.Frame(&frame); err != nil {
+			t.Fatal(err)
+		}
+		img := image.NewRGBA(image.Rectangle{Max: size})
+		if err := w.Screenshot(img); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, img); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	login := previewApp(t)
 	login.stack = []Route{{Page: PageLogin}}
@@ -166,6 +210,13 @@ func TestPreviewScreens(t *testing.T) {
 	thread.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	capture("thread", thread)
 
+	longBody := previewApp(t)
+	longBodyThread := sampleThread()
+	longBodyThread.Articles[0].Content = "这是一段用于验证自然段与行内样式换行的长正文，包含中文、English words 与连续链接 https://example.test/" + strings.Repeat("very-long-path-", 4) + "。\n[b]整段加粗的第二自然段[/b]，用于确认段落边界。"
+	longBody.thread = longBodyThread
+	longBody.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	captureSize("thread-long-body-320", longBody, image.Pt(320, 760))
+
 	longTitle := previewApp(t)
 	longThread := sampleThread()
 	longThread.Title = "这是一个用于验证主题详情首屏折行与省略行为的超长主题标题：Go、Gio 与跨平台阅读位置"
@@ -192,6 +243,54 @@ func TestPreviewScreens(t *testing.T) {
 	scrolled.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	scrolled.mobileList(listKey{Page: PageThread, Name: "Go", ID: "42", Number: 1}).Position.First = 4
 	capture("thread-scrolled", scrolled)
+
+	for _, tc := range []struct {
+		name   string
+		width  int
+		height int
+		scale  float32
+	}{
+		{"thread-320", 320, 760, 1},
+		{"thread-840", 840, 900, 1},
+		{"thread-412-large-font", 412, 820, 1.3},
+		{"thread-320-large-font", 320, 760, 1.3},
+		{"thread-landscape", 820, 420, 1},
+	} {
+		sized := previewApp(t)
+		sized.thread = sampleThread()
+		sized.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+		captureSize(tc.name, sized, image.Pt(tc.width, tc.height), tc.scale)
+	}
+
+	more := previewAppWithCore(t)
+	more.thread = sampleThread()
+	more.threadVote = &forum.Vote{ID: "1"}
+	more.threadBet = &forum.Bet{ID: "2"}
+	more.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	captureMoreMenu("thread-more-320", more, image.Pt(320, 760), 1.3)
+	captureMoreMenu("thread-more-320-short", more, image.Pt(320, 292), 1.3, 4)
+
+	prefDark := previewAppWithCore(t)
+	prefs := prefDark.core.Local.Preferences()
+	prefs.Theme = 2
+	if err := prefDark.core.Local.SetPreferences(context.Background(), prefs); err != nil {
+		t.Fatal(err)
+	}
+	prefDark.thread = sampleThread()
+	prefDark.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	captureSize("thread-dark-840", prefDark, image.Pt(840, 900))
+	captureSize("thread-dark-840-with-preferences", prefDark, image.Pt(840, 900))
+
+	prefLight := previewAppWithCore(t)
+	lightPrefs := prefLight.core.Local.Preferences()
+	lightPrefs.Theme = 1
+	if err := prefLight.core.Local.SetPreferences(context.Background(), lightPrefs); err != nil {
+		t.Fatal(err)
+	}
+	prefLight.thread = sampleThread()
+	prefLight.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	captureSize("thread-840", prefLight, image.Pt(840, 900))
+	captureSize("thread-840-with-preferences", prefLight, image.Pt(840, 900))
 
 	pinned := previewApp(t)
 	pinnedThread := sampleThread()
@@ -242,20 +341,28 @@ func TestPreviewScreens(t *testing.T) {
 	vote.stack = []Route{{Page: PageSelf}, {Page: PageVote, ID: "42"}}
 	capture("vote", vote)
 
-	setPalette(true)
-	colorHint = colorMuted
-	darkThread := previewApp(t)
+	darkThread := previewAppWithCore(t)
+	darkPrefs := darkThread.core.Local.Preferences()
+	darkPrefs.Theme = 2
+	if err := darkThread.core.Local.SetPreferences(context.Background(), darkPrefs); err != nil {
+		t.Fatal(err)
+	}
 	darkThread.thread = sampleThread()
 	darkThread.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	capture("thread-dark", darkThread)
 
-	darkHome := previewApp(t)
+	darkHome := previewAppWithCore(t)
+	homePrefs := darkHome.core.Local.Preferences()
+	homePrefs.Theme = 2
+	if err := darkHome.core.Local.SetPreferences(context.Background(), homePrefs); err != nil {
+		t.Fatal(err)
+	}
 	darkHome.sections = home.sections
 	darkHome.sectionTab = "all"
 	darkHome.stack = []Route{{Page: PageHome}}
 	capture("home-dark", darkHome)
 	setPalette(false)
-	colorHint = colorMuted
+	colorHint = colorFaint
 
 	top := previewApp(t)
 	top.topTab = "top"

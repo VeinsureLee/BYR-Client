@@ -46,7 +46,7 @@ func main() {
 			Title:     "BYR Client · " + app.Version,
 			Width:     1100,
 			Height:    760,
-			MinWidth:  960,
+			MinWidth:  720,
 			MinHeight: 480,
 			Content:   ui.View(app.View),
 		})

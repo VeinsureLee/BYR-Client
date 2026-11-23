@@ -71,9 +71,11 @@ type harness struct {
 	updates   chan func()
 	mu        sync.Mutex
 	requests  []string
+	queries   []string
 	t         *testing.T
 	device    *testDevice
 	overrides map[string]string
+	gates     map[string]chan struct{}
 }
 
 func newHarness(t *testing.T) *harness {
@@ -82,6 +84,7 @@ func newHarness(t *testing.T) *harness {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
 		h.requests = append(h.requests, r.Method+" "+r.URL.Path)
+		h.queries = append(h.queries, r.URL.RawQuery)
 		h.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		body := `{"code":"0000"}`
@@ -154,9 +157,13 @@ func newHarness(t *testing.T) *harness {
 		}
 		h.mu.Lock()
 		override, ok := h.overrides[r.URL.Path]
+		gate := h.gates[r.URL.Path]
 		h.mu.Unlock()
 		if ok {
 			body = override
+		}
+		if gate != nil {
+			<-gate
 		}
 		io.WriteString(w, body)
 	}))
@@ -170,12 +177,29 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(h.app.Close)
 	return h
 }
+func (h *harness) waitFor(cond func() bool) {
+	h.t.Helper()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	for !cond() {
+		select {
+		case fn := <-h.updates:
+			fn()
+			h.view.Frame()
+		case <-deadline.C:
+			h.t.Fatalf("condition not reached: route=%s busy=%t pageLoading=%t extrasBusy=%t message=%q", h.app.route.Page, h.app.busy, h.app.pageLoading, h.app.threadResourcesBusy, h.app.message)
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
 func (h *harness) idle() {
 	h.t.Helper()
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
 	for {
-		if !h.app.busy {
+		if !h.app.busy && !h.app.threadResourcesBusy {
 			for {
 				select {
 				case fn := <-h.updates:
@@ -246,6 +270,17 @@ func countText(texts []string, query string) int {
 	return (n + 1) / 2
 }
 
+func (h *harness) query(methodPath string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.requests) - 1; i >= 0; i-- {
+		if h.requests[i] == methodPath {
+			return h.queries[i]
+		}
+	}
+	return ""
+}
+
 func (h *harness) count(methodPath string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -285,7 +320,41 @@ func TestCaptureMigratedScreens(t *testing.T) {
 	h.click("Go 讨论 · Go")
 	h.click("测试主题")
 	capture("thread")
-	h.click("回复主题")
+	for _, size := range [][2]int{{720, 480}, {1100, 760}, {1440, 900}} {
+		h.view.SetSize(size[0], size[1])
+		capture(fmt.Sprintf("thread-%dx%d", size[0], size[1]))
+	}
+	prefs := h.app.Core.Local.Preferences()
+	prefs.Theme, prefs.FontScale = 2, 1
+	if err := h.app.Core.Local.SetPreferences(context.Background(), prefs); err != nil {
+		t.Fatal(err)
+	}
+	h.view.SetSize(1100, 760)
+	capture("thread-dark")
+	prefs.Theme, prefs.FontScale = 1, 1.3
+	if err := h.app.Core.Local.SetPreferences(context.Background(), prefs); err != nil {
+		t.Fatal(err)
+	}
+	h.view.SetSize(720, 480)
+	capture("thread-large-font")
+	prefs.FontScale = 1.4
+	if err := h.app.Core.Local.SetPreferences(context.Background(), prefs); err != nil {
+		t.Fatal(err)
+	}
+	h.app.thread.Title = strings.Repeat("测试", 80)
+	h.view.Frame()
+	capture("thread-long-title-720x480-large-font")
+	h.app.desktopListState(h.app.threadListKey()).ScrollTo(2, ui.Start)
+	h.view.Frame()
+	capture("thread-long-title-720x480-large-font-scrolled")
+	h.app.desktopListState(h.app.threadListKey()).ScrollTo(0, ui.Start)
+	prefs.Theme, prefs.FontScale = 1, 1
+	if err := h.app.Core.Local.SetPreferences(context.Background(), prefs); err != nil {
+		t.Fatal(err)
+	}
+	h.view.SetSize(1200, 900)
+	h.view.Frame()
+	h.click("回复此楼")
 	h.typeIn("帖子正文", "迁移后的发帖编辑器，支持草稿、附件与表情。")
 	capture("compose")
 	h.goTo(Route{Page: "chat", Name: "bob"})
@@ -624,6 +693,7 @@ func TestLoggedInContentFitsNativeWindowSizes(t *testing.T) {
 				h.view.SetSize(size[0], size[1])
 				h.view.SetScale(scale)
 				h.login()
+				contentLeft := h.app.navWidth()
 				for _, page := range []string{"home", "top", "compose", "contacts", "self", "settings"} {
 					h.goTo(Route{Page: Page(page)})
 					label := h.app.title()
@@ -631,7 +701,7 @@ func TestLoggedInContentFitsNativeWindowSizes(t *testing.T) {
 						label = "外观"
 					}
 					r, ok := h.view.Find(label)
-					if !ok || r.X < 105 || r.Y < 0 || r.W <= 0 || r.H <= 0 || r.X+r.W > float32(size[0])+1 || r.Y+r.H > float32(size[1])+1 {
+					if !ok || r.X < contentLeft || r.Y < 0 || r.W <= 0 || r.H <= 0 || r.X+r.W > float32(size[0])+1 || r.Y+r.H > float32(size[1])+1 {
 						t.Errorf("page %s has invisible content %q at %+v, found %t", page, label, r, ok)
 					}
 				}
@@ -889,9 +959,10 @@ func TestDesktopReplyReminderOpensTargetFloor(t *testing.T) {
 	}
 	state := h.app.desktopListState(h.app.threadListKey())
 	first, _ := state.Visible()
-	if first != 1 {
-		t.Fatalf("thread visible first floor = %d, want target floor 44 at index 1", first)
+	if first != 2 {
+		t.Fatalf("thread list row = %d, want target floor 44 at row 2 after the header row", first)
 	}
+	h.has("回复正文")
 }
 
 func TestDesktopLongPrivateMessageFoldsAndExpands(t *testing.T) {

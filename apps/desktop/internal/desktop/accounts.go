@@ -48,6 +48,7 @@ func (a *App) forgetAccount(username string) {
 }
 
 func (a *App) resetAccountUI() {
+	a.cancelThreadPreflight()
 	a.clearImages()
 	a.imageView = ""
 	a.imageScale = 1
@@ -58,6 +59,13 @@ func (a *App) resetAccountUI() {
 	a.section = forum.Section{}
 	a.board = forum.Board{}
 	a.thread = forum.Thread{}
+	a.threadModels = nil
+	a.threadLoadedRoute = Route{}
+	a.threadLoadedRequest = Route{}
+	a.threadAnchorID = ""
+	a.threadViewport = viewportKey{}
+	a.threadForceTop = false
+	a.threadRefreshClearSub = false
 	a.articles = nil
 	a.boards = nil
 	a.favorites = forum.Favorite{}
@@ -80,6 +88,7 @@ func (a *App) resetAccountUI() {
 	a.vote = forum.Vote{}
 	a.bet = forum.Bet{}
 	a.pageError, a.message = "", ""
+	a.historyNotice = ""
 	a.failed = false
 	a.back = nil
 	a.confirm = nil

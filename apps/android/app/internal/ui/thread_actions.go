@@ -6,6 +6,10 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
+
+	"github.com/VeinsureLee/BYR-Client/core/forum"
 )
 
 // threadActionsAvailable is deliberately stricter than merely having a thread
@@ -37,6 +41,7 @@ func (a *App) threadTopActions(gtx layout.Context) layout.Dimensions {
 			if clicked {
 				a.threadMoreOpen = !a.threadMoreOpen
 				if a.threadMoreOpen {
+					a.threadMenuList = widget.List{List: layout.List{Axis: layout.Vertical}}
 					a.ensureThreadExtras()
 				}
 				a.window.Invalidate()
@@ -46,72 +51,62 @@ func (a *App) threadTopActions(gtx layout.Context) layout.Dimensions {
 	)
 }
 
+type threadMenuAction struct {
+	key, label, icon string
+	run              func(layout.Context)
+}
+
 func (a *App) threadMoreMenu(gtx layout.Context) layout.Dimensions {
 	if !a.threadMoreOpen || !a.threadActionsAvailable() {
 		return layout.Dimensions{}
 	}
+	actions := []threadMenuAction{
+		{key: "thread-share", label: "复制链接", icon: "link", run: func(gtx layout.Context) {
+			if a.core != nil {
+				a.copyText(gtx, a.core.Forum.ThreadURL(a.threadBoard(), a.current().ID))
+			}
+		}},
+		{key: "thread-refresh", label: "刷新主题", icon: "refresh", run: func(layout.Context) {
+			a.refreshCurrent()
+		}},
+	}
+	if a.threadVote != nil {
+		actions = append(actions, threadMenuAction{key: "thread-vote", label: "投票", icon: "check", run: func(layout.Context) {
+			a.openVote(a.current().ID)
+		}})
+	}
+	if a.threadBet != nil {
+		actions = append(actions, threadMenuAction{key: "thread-bet", label: "竞猜", icon: "hot", run: func(layout.Context) {
+			a.openBet(a.current().ID)
+		}})
+	}
+	if a.canManageThread() {
+		actions = append(actions, threadMenuAction{key: "thread-manage", label: "管理", icon: "edit", run: func(layout.Context) {
+			a.manageThread()
+		}})
+	}
 	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-			children := []layout.FlexChild{
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					dims, clicked := a.pill(gtx, "thread-share", "复制链接", "link", false, false)
-					if clicked {
-						a.threadMoreOpen = false
-						if a.core != nil {
-							a.copyText(gtx, a.core.Forum.ThreadURL(a.threadBoard(), a.current().ID))
-						}
-					}
-					return dims
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					dims, clicked := a.pill(gtx, "thread-refresh", "刷新主题", "refresh", false, false)
-					if clicked {
-						a.threadMoreOpen = false
-						a.refreshCurrent()
-					}
-					return dims
-				}),
+			// Reserve the pager and card padding, then let the menu scroll
+			// inside the remaining viewport. A short window therefore keeps
+			// its last action reachable instead of clipping it at height zero.
+			available := gtx.Constraints.Max.Y - gtx.Dp(unit.Dp(52)) - gtx.Dp(unit.Dp(28))
+			if available < gtx.Dp(unit.Dp(48)) {
+				available = gtx.Dp(unit.Dp(48))
 			}
-			if a.threadVote != nil {
-				children = append(children,
-					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						dims, clicked := a.pill(gtx, "thread-vote", "投票", "check", false, false)
-						if clicked {
-							a.threadMoreOpen = false
-							a.openVote(a.current().ID)
-						}
-						return dims
-					}),
-				)
+			if max := gtx.Constraints.Max.Y; available > max {
+				available = max
 			}
-			if a.threadBet != nil {
-				children = append(children,
-					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						dims, clicked := a.pill(gtx, "thread-bet", "竞猜", "hot", false, false)
-						if clicked {
-							a.threadMoreOpen = false
-							a.openBet(a.current().ID)
-						}
-						return dims
-					}),
-				)
-			}
-			if a.canManageThread() {
-				children = append(children,
-					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						dims, clicked := a.pill(gtx, "thread-manage", "管理", "edit", false, false)
-						if clicked {
-							a.manageThread()
-						}
-						return dims
-					}),
-				)
-			}
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+			gtx.Constraints.Max.Y = available
+			return material.List(a.theme, &a.threadMenuList).Layout(gtx, len(actions), func(gtx layout.Context, i int) layout.Dimensions {
+				action := actions[i]
+				dims, clicked := a.menuButton(gtx, action.key, action.label, action.icon)
+				if clicked {
+					a.threadMoreOpen = false
+					action.run(gtx)
+				}
+				return dims
+			})
 		})
 	})
 }
@@ -145,31 +140,146 @@ func (a *App) manageThread() {
 	a.openCompose(a.threadBoard(), string(root.ID), "edit")
 }
 
-func (a *App) ensureThreadExtras() {
-	if a.threadExtrasDone || a.threadExtrasBusy || a.core == nil || a.thread.ID == "" {
+type threadExtrasKey struct {
+	Generation uint64
+	Board      string
+	ID         string
+}
+
+type threadExtrasState struct {
+	Busy       bool
+	Serial     uint64
+	Cancel     context.CancelFunc
+	Vote       *forum.Vote
+	Bet        *forum.Bet
+	VoteLoaded bool
+	BetLoaded  bool
+}
+
+func (s *threadExtrasState) done() bool {
+	return s != nil && s.VoteLoaded && s.BetLoaded
+}
+
+func (a *App) currentThreadExtrasKey() (threadExtrasKey, bool) {
+	if a.core == nil || a.current().Page != PageThread || a.thread.ID == "" {
+		return threadExtrasKey{}, false
+	}
+	board, id := a.threadBoard(), a.current().ID
+	if strings.TrimSpace(board) == "" || strings.TrimSpace(id) == "" {
+		return threadExtrasKey{}, false
+	}
+	return threadExtrasKey{Generation: a.core.SessionInfo().Generation, Board: board, ID: id}, true
+}
+
+func (a *App) syncThreadExtras() {
+	key, ok := a.currentThreadExtrasKey()
+	if !ok {
+		a.threadExtrasBusy, a.threadExtrasDone = false, false
+		a.threadVote, a.threadBet = nil, nil
 		return
 	}
-	route := a.current()
-	a.threadExtrasBusy = true
-	a.run("检查主题附加功能", func(ctx context.Context) (func(), error) {
-		vote, voteErr := a.core.Forum.Vote(ctx, route.ID)
-		bet, betErr := a.core.Forum.Bet(ctx, route.ID)
-		return func() {
-			a.threadExtrasBusy = false
-			if a.current() != route {
+	state := a.threadExtras[key]
+	if state == nil {
+		a.threadExtrasBusy, a.threadExtrasDone = false, false
+		a.threadVote, a.threadBet = nil, nil
+		return
+	}
+	a.threadExtrasBusy, a.threadExtrasDone = state.Busy, state.done()
+	a.threadVote, a.threadBet = state.Vote, state.Bet
+}
+
+func (a *App) cancelThreadExtras() {
+	for _, state := range a.threadExtras {
+		if state.Cancel != nil {
+			state.Cancel()
+			state.Cancel = nil
+		}
+	}
+}
+
+// ensureThreadExtras keeps vote/bet state per account generation, canonical
+// board and thread ID. Switching threads switches the state before any request,
+// and a late response only updates its own entry. A transient failure leaves
+// that item unloaded so a later refresh can retry it while a successful item
+// stays cached.
+func (a *App) ensureThreadExtras() {
+	key, ok := a.currentThreadExtrasKey()
+	if !ok {
+		return
+	}
+	if a.threadExtras == nil {
+		a.threadExtras = make(map[threadExtrasKey]*threadExtrasState)
+	}
+	state := a.threadExtras[key]
+	if state == nil {
+		state = &threadExtrasState{}
+		a.threadExtras[key] = state
+	}
+	if state.Busy {
+		a.syncThreadExtras()
+		return
+	}
+	needVote := !state.VoteLoaded
+	needBet := !state.BetLoaded
+	if !needVote && !needBet {
+		a.syncThreadExtras()
+		return
+	}
+	state.Busy = true
+	a.threadExtrasSerial++
+	serial := a.threadExtrasSerial
+	state.Serial = serial
+	ctx, cancel := context.WithCancel(a.ctx)
+	state.Cancel = cancel
+	a.threadExtrasBusy, a.threadExtrasDone = true, false
+	a.syncThreadExtras()
+	go func() {
+		var vote forum.Vote
+		var voteErr error
+		if needVote {
+			vote, voteErr = a.core.Forum.Vote(ctx, key.ID)
+		}
+		var bet forum.Bet
+		var betErr error
+		if needBet {
+			bet, betErr = a.core.Forum.Bet(ctx, key.ID)
+		}
+		a.post(func() {
+			if a.closed.Load() || state.Serial != serial {
 				return
 			}
-			a.threadVote = nil
-			a.threadBet = nil
-			if voteErr == nil && vote.ID != "" && (vote.ArticleID == "" || string(vote.ArticleID) == route.ID) {
-				v := vote
-				a.threadVote = &v
+			cancel := state.Cancel
+			state.Cancel = nil
+			if cancel != nil {
+				cancel()
 			}
-			if betErr == nil && bet.ID != "" && (bet.ArticleID == "" || string(bet.ArticleID) == route.ID) {
-				b := bet
-				a.threadBet = &b
+			state.Busy = false
+			if needVote {
+				if voteErr == nil {
+					state.VoteLoaded = true
+					state.Vote = nil
+					if vote.ID != "" && (vote.ArticleID == "" || string(vote.ArticleID) == key.ID) {
+						v := vote
+						state.Vote = &v
+					}
+				}
 			}
-			a.threadExtrasDone = true
-		}, nil
-	})
+			if needBet {
+				if betErr == nil {
+					state.BetLoaded = true
+					state.Bet = nil
+					if bet.ID != "" && (bet.ArticleID == "" || string(bet.ArticleID) == key.ID) {
+						b := bet
+						state.Bet = &b
+					}
+				}
+			}
+			if current, ok := a.currentThreadExtrasKey(); ok && current == key {
+				a.threadExtrasBusy = false
+				a.threadExtrasDone = state.done()
+				a.threadVote, a.threadBet = state.Vote, state.Bet
+			}
+			a.window.Invalidate()
+		})
+	}()
 }

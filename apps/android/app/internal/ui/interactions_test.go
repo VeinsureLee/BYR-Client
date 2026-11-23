@@ -118,8 +118,16 @@ func TestThreadLoadSavesHistoryWithLiveAppContext(t *testing.T) {
 
 	a.openThread("Go", "42")
 	waitForIdle(t, a)
-
-	entries := a.core.Local.History("alice")
+	var entries []local.History
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		a.drain()
+		entries = a.core.Local.History("alice")
+		if len(entries) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("history entries = %+v, want one visited thread", entries)
 	}

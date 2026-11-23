@@ -372,7 +372,7 @@ func TestThreadMoreShowsOnlyConfirmedVoteAndBet(t *testing.T) {
 	a.click("thread-more").Click()
 	ops.Reset()
 	a.Layout(gtx)
-	waitForIdle(t, a)
+	waitForThreadExtras(t, a)
 	ops.Reset()
 	a.Layout(gtx)
 	for _, key := range []string{"thread-vote", "thread-bet"} {

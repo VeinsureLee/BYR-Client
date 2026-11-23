@@ -45,10 +45,28 @@ type App struct {
 	serial                  uint64
 	closed, busy, restoring bool
 	refreshing              bool
+	threadRefreshPending    bool
+	threadForceTop          bool
+	threadRefreshClearSub   bool
 	route                   Route
 	back                    []Route
 	listStates              map[listKey]*ui.ListState
+	fontScale               float32
+	windowWidth             float32
+	windowHeight            float32
+	threadReq               threadRequest
+	threadReqSerial         uint64
+	threadModels            map[string]*postModel
+	threadLoadedRoute       Route
+	threadLoadedRequest     Route
+	threadRequestPage       int
+	threadAnchorID          string
+	threadViewport          viewportKey
+	frameSerial             uint64
+	visiblePlayers          int
+	reduceMotion            bool
 	message                 string
+	historyNotice           string
 	failed                  bool
 	noticeSerial            uint64
 	pageLoading             bool
@@ -82,6 +100,8 @@ type App struct {
 	threadResourcesDone     bool
 	threadResourceBoard     string
 	threadResourceID        string
+	threadResourcesSerial   uint64
+	threadResourcesCancel   context.CancelFunc
 	user                    forum.User
 	savedAccounts           []application.SavedAccount
 	blacklist               forum.Blacklist
@@ -140,6 +160,7 @@ func (a *App) Close() {
 	if a.cancel != nil {
 		a.cancel()
 	}
+	a.cancelThreadPreflight()
 	a.saveDraft()
 	a.clearImages()
 }
@@ -252,9 +273,14 @@ func (a *App) scheduleNoticeExpiry(message string, serial uint64) {
 	})
 }
 func (a *App) navigate(r Route, push bool) {
-	if a.busy {
+	if a.busy && !a.cancelPageRead() {
 		return
 	}
+	if a.threadRefreshClearSub {
+		a.threadRefreshClearSub = false
+		a.route.Sub = ""
+	}
+	a.cancelThreadPreflight()
 	if !a.saveDraft() {
 		return
 	}
@@ -270,6 +296,7 @@ func (a *App) navigate(r Route, push bool) {
 	}
 	a.confirm = nil
 	a.message = ""
+	a.historyNotice = ""
 	a.pageError = ""
 	a.retryLoad = nil
 	a.imageView = ""
@@ -292,9 +319,17 @@ func (a *App) showLoadedUser(name string, user forum.User) {
 }
 
 func (a *App) goBack() {
-	if a.busy || len(a.back) == 0 {
+	if a.busy && !a.cancelPageRead() {
 		return
 	}
+	if len(a.back) == 0 {
+		return
+	}
+	if a.threadRefreshClearSub {
+		a.threadRefreshClearSub = false
+		a.route.Sub = ""
+	}
+	a.cancelThreadPreflight()
 	if !a.saveDraft() {
 		return
 	}
@@ -302,6 +337,7 @@ func (a *App) goBack() {
 	a.back = a.back[:len(a.back)-1]
 	a.route = r
 	a.message = ""
+	a.historyNotice = ""
 	a.pageError = ""
 	a.retryLoad = nil
 	a.load()
@@ -309,6 +345,19 @@ func (a *App) goBack() {
 func (a *App) View(c *ui.Context) {
 	p := a.Core.Local.Preferences()
 	dark := p.Theme == 2 || (p.Theme == 0 && a.SystemDark != nil && a.SystemDark())
+	systemScale := c.Preferences().TextScale
+	if systemScale <= 0 {
+		systemScale = 1
+	}
+	a.fontScale = p.FontScale * systemScale
+	if a.fontScale <= 0 {
+		a.fontScale = 1
+	}
+	a.windowWidth, a.windowHeight = c.Size()
+	a.frameSerial++
+	a.visiblePlayers = 0
+	a.reduceMotion = c.Preferences().ReduceMotion
+	defer a.commitImages()
 	c.SetTheme(forumTheme(dark, p.FontScale).WithPreferences(c.Preferences()))
 	a.shell(c)
 	if a.confirm != nil {
@@ -399,10 +448,7 @@ func (a *App) title() string {
 	case "board":
 		return a.route.Name + " · " + a.board.Description
 	case "thread":
-		if title := a.threadTitle(); title != "" {
-			return title
-		}
-		return "帖子"
+		return "主题阅读"
 	case "top":
 		if a.route.Sub == "recommend" {
 			return "版面推荐"
@@ -516,6 +562,15 @@ func (a *App) refreshCurrent() {
 	if a.busy || a.closed {
 		return
 	}
+	// A thread refresh keeps the displayed route (and therefore any back-stack
+	// entry for it) until page 1 commits. The request page is tracked
+	// separately so a failure can keep showing page 2 while retry asks page 1.
+	if a.route.Page == "thread" {
+		a.pageJump = ""
+		a.threadRefreshPending = true
+		a.loadThreadPage(1)
+		return
+	}
 	a.route.Number = 1
 	a.pageJump = ""
 	a.route.Sub = ""
@@ -525,8 +580,6 @@ func (a *App) refreshCurrent() {
 		a.refreshing = true
 		a.loadSearch()
 		return
-	case "thread":
-		a.desktopListState(a.threadListKey()).ScrollTo(0, ui.Start)
 	default:
 		if a.route.Page == "board" || a.route.Page == "timeline" {
 			a.desktopListState(a.articleListKey()).ScrollTo(0, ui.Start)
@@ -718,6 +771,9 @@ func (a *App) loginView(c *ui.Context) {
 }
 func (a *App) pager(c *ui.Context, p forum.Pagination, change func(int)) {
 	current := a.route.Number
+	if a.route.Page == "thread" {
+		current = a.threadDisplayPage()
+	}
 	if current < 1 {
 		current = 1
 	}
@@ -731,7 +787,14 @@ func (a *App) pager(c *ui.Context, p forum.Pagination, change func(int)) {
 		}
 	})
 }
-func (a *App) pageNumber(n int) { a.route.Number = n; a.load() }
+func (a *App) pageNumber(n int) {
+	if a.route.Page == "thread" {
+		a.loadThreadPage(n)
+		return
+	}
+	a.route.Number = n
+	a.load()
+}
 func formatTime(s forum.Scalar) string {
 	v, err := strconv.ParseInt(string(s), 10, 64)
 	if err != nil {

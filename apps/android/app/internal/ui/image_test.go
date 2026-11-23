@@ -59,8 +59,8 @@ func TestAndroidInlineImageUsesAvailableWidthForTallImages(t *testing.T) {
 		Constraints: layout.Constraints{Max: image.Pt(300, 120)},
 		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
 	}, "tall")
-	if dims.Size != image.Pt(300, 3000) {
-		t.Fatalf("tall inline image dimensions = %v, want full-width 300x3000", dims.Size)
+	if dims.Size.Y != 480 || dims.Size.X >= 300 {
+		t.Fatalf("tall inline image dimensions = %v, want height-capped 480", dims.Size)
 	}
 }
 

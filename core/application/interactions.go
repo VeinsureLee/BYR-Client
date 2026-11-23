@@ -116,13 +116,7 @@ func collectionIdentity(account, board, id string) collectionKey {
 // CollectionState retains successful changes when a thread response omits its
 // collection flag. It is account scoped, in memory only, and never caches errors.
 func (a *App) CollectionState(board, id string, fallback bool) bool {
-	account := a.Session().Username
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if value, known := a.collections[collectionIdentity(account, board, id)]; known {
-		return value
-	}
-	return fallback
+	return a.collectionState(a.SessionInfo().Username, board, id, fallback)
 }
 
 // RememberCollection is called for entries actually read from a collection

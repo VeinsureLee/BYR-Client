@@ -33,7 +33,19 @@ func (a *App) articleListKey() listKey {
 }
 
 func (a *App) threadListKey() listKey {
-	return listKey{Page: a.route.Page, Name: a.route.Name, ID: a.route.ID, Sub: a.route.Sub, Number: a.route.Number}
+	return listKey{Page: a.route.Page, Name: a.route.Name, ID: a.route.ID, Sub: a.route.Sub, Number: a.threadDisplayPage()}
+}
+
+// threadDisplayPage is the page whose floors are currently shown. route.Number
+// is the page being requested, which may have failed while the older page stays
+// readable; the pager and list follow the displayed page until a new result
+// commits.
+func (a *App) threadDisplayPage() int {
+	if a.route.Page == "thread" && a.threadLoadedRoute.Page == "thread" &&
+		a.threadLoadedRoute.ID == a.route.ID && a.threadLoadedRoute.Number > 0 {
+		return a.threadLoadedRoute.Number
+	}
+	return max(1, a.route.Number)
 }
 
 func (a *App) expandedPostState(key listKey) map[string]bool {

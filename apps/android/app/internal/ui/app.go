@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gioui.org/app"
+	"gioui.org/font"
 	"gioui.org/font/opentype"
 	"gioui.org/io/clipboard"
 	"gioui.org/io/key"
@@ -88,6 +89,8 @@ type App struct {
 	ready            bool
 	initErr          string
 	busy             bool
+	reading          bool
+	runSerial        uint64
 	message          string
 	failed           bool
 	noticeGeneration uint64
@@ -126,24 +129,41 @@ type App struct {
 	ipv6        widget.Bool
 	choice      string
 
-	username         widget.Editor
-	password         widget.Editor
-	remember         widget.Bool
-	searchEdit       widget.Editor
-	searchMode       string
-	searchResults    []forum.Article
-	searchPagination forum.Pagination
-	searchHasRun     bool
-	searchListQuery  string
-	expandedPosts    map[string]bool
-	expandedMail     map[string]bool
-	pinnedExpanded   bool
-	pinnedByRoute    map[string]bool
-	threadMoreOpen   bool
-	threadExtrasBusy bool
-	threadExtrasDone bool
-	threadVote       *forum.Vote
-	threadBet        *forum.Bet
+	username             widget.Editor
+	password             widget.Editor
+	remember             widget.Bool
+	searchEdit           widget.Editor
+	searchMode           string
+	searchResults        []forum.Article
+	searchPagination     forum.Pagination
+	searchHasRun         bool
+	searchListQuery      string
+	expandedPosts        map[string]bool
+	expandedMail         map[string]bool
+	pinnedExpanded       bool
+	pinnedByRoute        map[string]bool
+	threadMoreOpen       bool
+	threadMenuList       widget.List
+	threadExtrasBusy     bool
+	threadExtrasDone     bool
+	threadExtras         map[threadExtrasKey]*threadExtrasState
+	threadExtrasSerial   uint64
+	threadReq            threadReadRequest
+	threadReqSerial      uint64
+	threadRefreshPending bool
+	threadRequestPage    int
+	threadRetryPage      int
+	threadRetryRefresh   bool
+	threadModels         map[string]*postThreadContent
+	threadLoadedRoute    Route
+	threadLoadedRequest  Route
+	threadAnchors        map[listKey]threadAnchor
+	threadViewports      map[listKey]threadViewportKey
+	threadMedia          map[listKey]uint64
+	mediaGeneration      uint64
+	wideLayout           bool
+	threadVote           *forum.Vote
+	threadBet            *forum.Bet
 
 	listStates                                                                                                map[listKey]*widget.List
 	homeList, sectionList, timelineList, favoriteList, selfList, composeList, topList, recommendList, auxList widget.List
@@ -154,29 +174,34 @@ type App struct {
 	clicks       map[string]*widget.Clickable
 	actionPulses map[string]time.Time
 
-	favoriteTab     string
-	topTab          string
-	compose         composeState
-	lastClip        string
-	images          map[string]*mobileImage
-	imageViewer     string
-	imageViewerRaw  string
-	imageScale      float32
-	imagePan        image.Point
-	imageViewerTag  struct{ marker byte }
-	imageGesture    imageGestureState
-	closed          atomic.Bool
-	themed          bool
-	dark            bool
-	pageKey         string
-	sectionTab      string
-	renderPanic     string
-	startAt         time.Time
-	busySince       time.Time
-	exitArmed       bool
-	exitAt          time.Time
-	sectionSwipeTag struct{ marker byte }
-	sectionSwipe    sectionSwipeState
+	favoriteTab              string
+	topTab                   string
+	compose                  composeState
+	lastClip                 string
+	images                   map[string]*mobileImage
+	animationFrame           []*mobileImage
+	animationSeen            map[*mobileImage]bool
+	visibleAnimations        []*mobileImage
+	animationTimer           *time.Timer
+	animationTimerGeneration uint64
+	imageViewer              string
+	imageViewerRaw           string
+	imageScale               float32
+	imagePan                 image.Point
+	imageViewerTag           struct{ marker byte }
+	imageGesture             imageGestureState
+	closed                   atomic.Bool
+	themed                   bool
+	dark                     bool
+	pageKey                  string
+	sectionTab               string
+	renderPanic              string
+	startAt                  time.Time
+	busySince                time.Time
+	exitArmed                bool
+	exitAt                   time.Time
+	sectionSwipeTag          struct{ marker byte }
+	sectionSwipe             sectionSwipeState
 }
 
 type composeState struct {
@@ -204,18 +229,19 @@ func New(window invalidator) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{
 		window: window, version: "dev", theme: theme, ctx: ctx, close: cancel,
-		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, actionPulses: map[string]time.Time{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{}, expandedMail: map[string]bool{}, pinnedByRoute: map[string]bool{}, listStates: make(map[listKey]*widget.List),
+		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, actionPulses: map[string]time.Time{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{}, expandedMail: map[string]bool{}, pinnedByRoute: map[string]bool{}, threadAnchors: make(map[listKey]threadAnchor), threadViewports: make(map[listKey]threadViewportKey), threadMedia: make(map[listKey]uint64), listStates: make(map[listKey]*widget.List),
 		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai", sectionTab: "favorites", imageScale: 1,
-		homeList:      widget.List{List: layout.List{Axis: layout.Vertical}},
-		sectionList:   widget.List{List: layout.List{Axis: layout.Vertical}},
-		timelineList:  widget.List{List: layout.List{Axis: layout.Vertical}},
-		favoriteList:  widget.List{List: layout.List{Axis: layout.Vertical}},
-		selfList:      widget.List{List: layout.List{Axis: layout.Vertical}},
-		composeList:   widget.List{List: layout.List{Axis: layout.Vertical}},
-		topList:       widget.List{List: layout.List{Axis: layout.Vertical}},
-		recommendList: widget.List{List: layout.List{Axis: layout.Vertical}},
-		auxList:       widget.List{List: layout.List{Axis: layout.Vertical}},
-		moduleTabList: widget.List{List: layout.List{Axis: layout.Horizontal}},
+		homeList:       widget.List{List: layout.List{Axis: layout.Vertical}},
+		sectionList:    widget.List{List: layout.List{Axis: layout.Vertical}},
+		timelineList:   widget.List{List: layout.List{Axis: layout.Vertical}},
+		favoriteList:   widget.List{List: layout.List{Axis: layout.Vertical}},
+		selfList:       widget.List{List: layout.List{Axis: layout.Vertical}},
+		composeList:    widget.List{List: layout.List{Axis: layout.Vertical}},
+		topList:        widget.List{List: layout.List{Axis: layout.Vertical}},
+		recommendList:  widget.List{List: layout.List{Axis: layout.Vertical}},
+		auxList:        widget.List{List: layout.List{Axis: layout.Vertical}},
+		moduleTabList:  widget.List{List: layout.List{Axis: layout.Horizontal}},
+		threadMenuList: widget.List{List: layout.List{Axis: layout.Vertical}},
 	}
 	a.searchEdit.SingleLine = true
 	a.searchEdit.Submit = true
@@ -292,7 +318,7 @@ func (a *App) Back() bool {
 		a.closeImageViewer()
 		return true
 	}
-	if a.busy {
+	if a.busy && !a.cancelRead() {
 		return true
 	}
 	a.navigateBack()
@@ -376,7 +402,7 @@ func (a *App) handleSystemBack(gtx layout.Context) {
 			a.closeImageViewer()
 			continue
 		}
-		if a.busy {
+		if a.busy && !a.cancelRead() {
 			continue
 		}
 		a.navigateBack()
@@ -498,6 +524,16 @@ func (a *App) resetSessionUI() {
 	a.boards = nil
 	a.board = forum.Board{}
 	a.thread = forum.Thread{}
+	a.threadModels = nil
+	a.threadLoadedRoute = Route{}
+	a.threadLoadedRequest = Route{}
+	a.threadRefreshPending = false
+	a.threadRequestPage = 0
+	a.threadRetryPage = 0
+	a.threadRetryRefresh = false
+	a.threadAnchors = make(map[listKey]threadAnchor)
+	a.threadViewports = make(map[listKey]threadViewportKey)
+	a.threadMedia = make(map[listKey]uint64)
 	a.articles = nil
 	a.favorite = forum.Favorite{}
 	a.favoriteBoards = nil
@@ -536,6 +572,9 @@ func (a *App) resetSessionUI() {
 	a.pinnedByRoute = map[string]bool{}
 	a.pinnedExpanded = false
 	a.threadMoreOpen = false
+	a.threadMenuList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.cancelThreadExtras()
+	a.threadExtras = nil
 	a.threadExtrasBusy = false
 	a.threadExtrasDone = false
 	a.threadVote = nil
@@ -568,7 +607,7 @@ func (a *App) resetSessionUI() {
 func (a *App) canBack() bool { return len(a.stack) > 1 }
 
 func (a *App) push(r Route) bool {
-	if a.busy {
+	if a.busy && !a.cancelRead() {
 		return false
 	}
 	a.closeImageViewer()
@@ -581,7 +620,10 @@ func (a *App) push(r Route) bool {
 }
 
 func (a *App) back() {
-	if a.busy || !a.canBack() {
+	if a.busy && !a.cancelRead() {
+		return
+	}
+	if !a.canBack() {
 		return
 	}
 	a.closeImageViewer()
@@ -605,7 +647,7 @@ func (a *App) back() {
 }
 
 func (a *App) setTab(page Page) {
-	if a.busy {
+	if a.busy && !a.cancelRead() {
 		return
 	}
 	a.closeImageViewer()
@@ -644,10 +686,23 @@ func (a *App) setTab(page Page) {
 }
 
 func (a *App) run(label string, work func(context.Context) (func(), error)) {
+	a.runWith(label, work, false)
+}
+
+// runRead marks a page read as interruptible: navigating to another route can
+// cancel it instead of waiting for the network.
+func (a *App) runRead(label string, work func(context.Context) (func(), error)) {
+	a.runWith(label, work, true)
+}
+
+func (a *App) runWith(label string, work func(context.Context) (func(), error), read bool) {
 	if a.busy {
 		return
 	}
 	a.busy = true
+	a.reading = read
+	a.runSerial++
+	serial := a.runSerial
 	a.busySince = time.Now()
 	a.noticeGeneration++
 	a.message = label
@@ -677,7 +732,13 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 		}()
 		opCancel()
 		a.post(func() {
+			// A superseded request must not clear the state of the one that
+			// replaced it, nor apply its result to a newer route.
+			if serial != a.runSerial {
+				return
+			}
 			a.busy = false
+			a.reading = false
 			a.cancel = nil
 			if err != nil {
 				a.compose.loading = false
@@ -707,6 +768,24 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 			}
 		})
 	}()
+}
+
+// cancelRead supersedes an in-flight page read. The stale callback is dropped
+// by the request serial, so it cannot clear the new page's loading state.
+func (a *App) cancelRead() bool {
+	if !a.reading {
+		return false
+	}
+	if a.cancel != nil {
+		a.cancel()
+		a.cancel = nil
+	}
+	a.runSerial++
+	a.busy = false
+	a.reading = false
+	a.busySince = time.Time{}
+	a.message = ""
+	return true
 }
 
 func (a *App) fail(err error) {
@@ -769,10 +848,15 @@ func (a *App) applyTheme() {
 			a.themed = true
 			a.dark = dark
 			setPalette(dark)
-			colorHint = colorMuted
+			colorHint = colorFaint
 			a.theme.Bg = colorBg
 			a.theme.Fg = colorFg
 			a.theme.ContrastBg = colorAccent
+			if dark {
+				a.theme.ContrastFg = color.NRGBA{R: 0x10, G: 0x24, B: 0x3D, A: 0xFF}
+			} else {
+				a.theme.ContrastFg = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
+			}
 			if setter, ok := a.window.(systemBarColorSetter); ok {
 				setter.SetSystemBarColor(colorBg)
 			}
@@ -820,6 +904,7 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 	}()
 	a.drain()
 	a.beginImageLayoutFrame()
+	defer a.commitImageAnimations()
 	a.ensureStarted()
 	a.applyTheme()
 	if a.core != nil {
@@ -854,7 +939,35 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 	if len(a.stack) == 0 {
 		a.stack = []Route{{Page: PageLogin}}
 	}
-	body := func(gtx layout.Context) layout.Dimensions {
+	widthDP := float32(gtx.Constraints.Max.X)
+	if gtx.Metric.PxPerDp > 0 {
+		widthDP /= gtx.Metric.PxPerDp
+	}
+	a.wideLayout = widthDP >= 600
+	margin := unit.Dp(16)
+	if widthDP < 360 {
+		margin = unit.Dp(12)
+	}
+	if a.wideLayout {
+		margin = unit.Dp(24)
+	}
+	pageBody := func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: margin, Right: margin}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			if !a.wideLayout {
+				return a.sectionSwipeLayout(gtx, a.page)
+			}
+			maxW := gtx.Dp(unit.Dp(700))
+			if gtx.Constraints.Max.X <= maxW {
+				return a.sectionSwipeLayout(gtx, a.page)
+			}
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = 0
+				gtx.Constraints.Max.X = maxW
+				return a.sectionSwipeLayout(gtx, a.page)
+			})
+		})
+	}
+	column := func(gtx layout.Context, bottom bool) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(a.topBar),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -863,14 +976,10 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 				}
 				return a.statusBar(gtx)
 			}),
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return a.sectionSwipeLayout(gtx, a.page)
-				})
-			}),
+			layout.Flexed(1, pageBody),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				page := a.current()
-				if page.Page == PageLogin || page.Page == PageCompose ||
+				if !bottom || page.Page == PageLogin || page.Page == PageCompose ||
 					page.Page == PageThread || page.Page == PageSection && page.Sub == "pick" ||
 					page.Page == PageAccounts && (a.core == nil || a.core.Session().Token == "") {
 					return layout.Dimensions{}
@@ -879,18 +988,21 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 			}),
 		)
 	}
-	// On wide screens (foldables unfolded, tablets) keep a phone-like column
-	// centered instead of stretching desktop-style across the whole width.
 	var bodyDims layout.Dimensions
-	if maxW := gtx.Dp(unit.Dp(480)); gtx.Constraints.Max.X > maxW {
-		bodyDims = layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+	if a.wideLayout {
+		bodyDims = layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+			layout.Rigid(a.navigationRail),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Exact(image.Pt(maxW, gtx.Constraints.Max.Y))
-				return body(gtx)
+				size := image.Pt(gtx.Dp(unit.Dp(1)), gtx.Constraints.Max.Y)
+				paint.FillShape(gtx.Ops, colorBorder, clip.Rect(image.Rectangle{Max: size}).Op())
+				return layout.Dimensions{Size: size}
+			}),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return column(gtx, false)
 			}),
 		)
 	} else {
-		bodyDims = body(gtx)
+		bodyDims = column(gtx, true)
 	}
 	// A page push during this frame must arm the back filter before the frame
 	// ends; otherwise a swipe during the first loading moment reaches Android
@@ -928,8 +1040,6 @@ func (a *App) emptyOrPending(gtx layout.Context, text string) layout.Dimensions 
 	return a.empty(gtx, text)
 }
 
-// requestErrorPage keeps a failed read distinct from a successful empty
-// response and offers the same route-aware retry used by the toolbar.
 func (a *App) requestErrorPage(gtx layout.Context) layout.Dimensions {
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(24)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -953,13 +1063,64 @@ func (a *App) requestErrorPage(gtx layout.Context) layout.Dimensions {
 					dims := material.Button(a.theme, btn, "重试").Layout(gtx)
 					if clicked {
 						a.failed = false
-						a.refreshCurrent()
+						a.reloadCurrent()
 					}
 					return dims
 				}),
 			)
 		})
 	})
+}
+
+// reloadCurrent retries the current route with its existing parameters,
+// including the thread page, instead of forcing page one.
+func (a *App) reloadCurrent() {
+	if a.core == nil {
+		return
+	}
+	switch a.current().Page {
+	case PageHome:
+		a.loadHome()
+	case PageSection:
+		a.loadSectionPage()
+	case PageTop:
+		a.loadTop()
+	case PageBoard:
+		a.loadBoard()
+	case PageThread:
+		if a.threadRetryPage > 0 {
+			a.threadRefreshPending = a.threadRetryRefresh
+			a.loadThreadPage(a.threadRetryPage)
+		} else {
+			a.loadThread()
+		}
+	case PageTimeline:
+		a.loadTimeline()
+	case PageFavorites:
+		a.loadFavorites()
+	case PageSearch:
+		a.loadSearch()
+	case PageSelf:
+		a.loadSelf()
+	case PageMessages:
+		a.loadMessages()
+	case PageChat:
+		a.loadChat()
+	case PageMail:
+		a.loadMail()
+	case PageUser:
+		a.loadUser(a.current().Name)
+	case PageBlacklist:
+		a.loadBlacklist()
+	case PageAccounts:
+		a.loadAccounts()
+	case PageVote:
+		a.loadVote()
+	case PageBet:
+		a.loadBet()
+	default:
+		a.refreshCurrent()
+	}
 }
 
 func (a *App) skeleton(gtx layout.Context) layout.Dimensions {
@@ -1082,7 +1243,7 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 			return layout.Dimensions{Size: size}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						if !a.canBack() {
@@ -1096,8 +1257,9 @@ func (a *App) topBar(gtx layout.Context) layout.Dimensions {
 					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							l := material.Label(a.theme, unit.Sp(18), a.title())
-							l.Font.Weight = 700
+							l := material.Label(a.theme, unit.Sp(20), a.title())
+							l.Font.Weight = font.SemiBold
+							l.LineHeight = unit.Sp(28)
 							l.MaxLines = 1
 							l.Truncator = "…"
 							return l.Layout(gtx)
@@ -1219,6 +1381,15 @@ func (a *App) refreshCurrent() {
 		return
 	}
 	route := a.current()
+	if route.Page == PageThread {
+		// Keep the displayed thread, page and scroll position until the page 1
+		// refresh commits. A failure can then leave the old reading position
+		// intact, and a retry still asks for page 1.
+		a.threadRefreshPending = true
+		a.messageAfterLoad = ""
+		a.loadThreadPage(1)
+		return
+	}
 	route.Number = 1
 	a.stack[len(a.stack)-1].Number = 1
 	a.clearRouteModel(route)
@@ -1242,7 +1413,12 @@ func (a *App) refreshCurrent() {
 	case PageBoard:
 		a.loadBoard()
 	case PageThread:
-		a.loadThread()
+		if a.threadRetryPage > 0 {
+			a.threadRefreshPending = a.threadRetryRefresh
+			a.loadThreadPage(a.threadRetryPage)
+		} else {
+			a.loadThread()
+		}
 	case PageTimeline:
 		a.loadTimeline()
 	case PageFavorites:
@@ -1306,6 +1482,23 @@ func (a *App) statusBar(gtx layout.Context) layout.Dimensions {
 					return l.Layout(gtx)
 				}))
 				if !a.busy {
+					if a.failed {
+						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							btn := a.click("retry-status")
+							clicked := btn.Clicked(gtx)
+							dims := material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+								l := material.Caption(a.theme, "重试")
+								l.Color = fg
+								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, l.Layout)
+							})
+							if clicked {
+								a.failed = false
+								a.message = ""
+								a.reloadCurrent()
+							}
+							return dims
+						}))
+					}
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						btn := a.click("dismiss-status")
 						clicked := btn.Clicked(gtx)
@@ -1342,6 +1535,79 @@ var mobileNavItems = []mobileNavItem{
 	{page: PageCompose, key: "nav-compose", icon: "plus", label: "发帖", compose: true},
 	{page: PageMessages, key: "nav-messages", icon: "mail", label: "消息"},
 	{page: PageSelf, key: "nav-self", icon: "self", label: "我的"},
+}
+
+func (a *App) navigationRail(gtx layout.Context) layout.Dimensions {
+	width := gtx.Dp(unit.Dp(72))
+	if gtx.Constraints.Max.X > 0 && a.wideLayout {
+		// Foldables and tablets get the roomier rail.
+		if gtx.Metric.PxPerDp > 0 && float32(gtx.Constraints.Max.X)/gtx.Metric.PxPerDp >= 840 {
+			width = gtx.Dp(unit.Dp(80))
+		}
+	}
+	gtx.Constraints = layout.Exact(image.Pt(width, gtx.Constraints.Max.Y))
+	paint.FillShape(gtx.Ops, colorSurface, clip.Rect(image.Rectangle{Max: image.Pt(width, gtx.Constraints.Max.Y)}).Op())
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(a.theme, unit.Sp(13), "BYR")
+					l.Font.Weight = font.SemiBold
+					l.Color = colorAccent
+					return l.Layout(gtx)
+				})
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				children := make([]layout.FlexChild, 0, len(mobileNavItems))
+				for _, tab := range mobileNavItems {
+					tab := tab
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						btn := a.click(tab.key)
+						clicked := btn.Clicked(gtx)
+						active := a.navPage(a.current().Page) == tab.page
+						dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							m := op.Record(gtx.Ops)
+							inner := layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10), Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								fg := colorMuted
+								if active {
+									fg = colorAccent
+								}
+								return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return a.drawIcon(gtx, tab.icon, 24, fg)
+										})
+									}),
+									layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										l := material.Label(a.theme, unit.Sp(10), tab.label)
+										l.Color = fg
+										return layout.Center.Layout(gtx, l.Layout)
+									}),
+								)
+							})
+							call := m.Stop()
+							if active {
+								paint.FillShape(gtx.Ops, colorAccentSoft, clip.RRect{Rect: image.Rectangle{Max: inner.Size}, NE: 12, NW: 12, SE: 12, SW: 12}.Op(gtx.Ops))
+							}
+							call.Add(gtx.Ops)
+							return inner
+						})
+						if clicked {
+							if tab.compose {
+								a.openCompose("", "", "new")
+							} else {
+								a.setTab(tab.page)
+							}
+						}
+						return dims
+					}))
+				}
+				return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx, children...)
+			}),
+		)
+	})
 }
 
 func (a *App) bottomNav(gtx layout.Context) layout.Dimensions {
