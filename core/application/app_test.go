@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/VeinsureLee/BYR-Client/core/forum"
+	"github.com/VeinsureLee/BYR-Client/core/internal/byrhttp"
 	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
@@ -38,6 +39,16 @@ type failingDisk struct{}
 
 func (failingDisk) Load(context.Context) ([]byte, error) { return nil, nil }
 func (failingDisk) Save(context.Context, []byte) error   { return errors.New("disk full") }
+
+func testForumFactory(baseURL string, client *http.Client) ForumFactory {
+	return func(token TokenSource, ipv6 func() bool) (ForumClient, error) {
+		return byrhttp.New(byrhttp.Options{
+			BaseURL: baseURL, HTTPClient: client,
+			Token: func(ctx context.Context) (string, error) { return token(ctx) }, IPv6: ipv6,
+		})
+	}
+}
+
 func appFor(t *testing.T, handler http.HandlerFunc, store *local.Store, creds CredentialStore) *App {
 	t.Helper()
 	s := httptest.NewServer(handler)
@@ -45,7 +56,7 @@ func appFor(t *testing.T, handler http.HandlerFunc, store *local.Store, creds Cr
 	if store == nil {
 		store, _ = local.Open(context.Background(), nil)
 	}
-	a, err := New(Options{BaseURL: s.URL, Local: store, Credentials: creds})
+	a, err := New(Options{Local: store, Credentials: creds, ForumFactory: testForumFactory(s.URL, nil)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +74,7 @@ func TestLoginPersistenceExpiryAndLogout(t *testing.T) {
 	if err := a.Login(ctx, "alice", "pw", true); err != nil {
 		t.Fatal(err)
 	}
-	if creds.value.Token != "oauth-token" || a.Session().Username != "alice" {
+	if creds.value.Token != "oauth-token" || a.sessionSnapshot().Username != "alice" {
 		t.Fatal("session not persisted")
 	}
 	a.RememberCollection("Go", "42")
@@ -71,7 +82,7 @@ func TestLoginPersistenceExpiryAndLogout(t *testing.T) {
 		t.Fatal("collection state was not remembered")
 	}
 	creds.fail = true
-	if err := a.Logout(ctx); err == nil || a.Session().Token == "" {
+	if err := a.Logout(ctx); err == nil || a.sessionSnapshot().Token == "" {
 		t.Fatal("failed credential clear pretended to logout")
 	}
 	creds.fail = false
@@ -135,7 +146,7 @@ func TestPublishKeepsFailedDraftAndSeparatesCleanupFailure(t *testing.T) {
 		t.Fatalf("retried mutation: %d", posts)
 	}
 	broken, _ := local.Open(ctx, failingDisk{})
-	a.Local = broken
+	a.local = broken
 	result, err := a.Publish(ctx, p, "")
 	if err != nil || result.LocalError == nil || result.Article.ID != "42" {
 		t.Fatalf("must report published post separately from cleanup failure: %+v %v", result, err)

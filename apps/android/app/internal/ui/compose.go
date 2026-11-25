@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/local"
 )
@@ -39,8 +42,20 @@ func (a *App) prepareCompose(r Route) {
 		board:       strings.TrimSpace(r.Name),
 		boardLocked: strings.TrimSpace(r.Name) != "",
 		ready:       true,
+		session:     a.core.SessionInfo(),
 	}
 	a.compose.titleEditor.SingleLine = true
+	a.compose.titleEditor.Submit = false
+	a.compose.titleEditor.InputHint = key.HintAny
+	a.compose.contentEditor.SingleLine = false
+	a.compose.contentEditor.Submit = false
+	a.compose.contentEditor.InputHint = key.HintAny
+	a.compose.linkURL.SingleLine = true
+	a.compose.linkURL.Submit = false
+	a.compose.linkURL.InputHint = key.HintURL
+	a.compose.linkText.SingleLine = true
+	a.compose.linkText.Submit = false
+	a.compose.linkText.InputHint = key.HintAny
 	switch r.Sub {
 	case "reply":
 		a.compose.replyID = r.ID
@@ -51,7 +66,11 @@ func (a *App) prepareCompose(r Route) {
 
 	board := a.compose.board
 	key := local.DraftKey(board, a.compose.replyID, a.compose.editID)
-	if draft, exists := a.core.Local.Draft(a.core.Session().Username, key); exists {
+	draft, exists, err := a.core.LoadDraft(context.Background(), a.compose.session, key)
+	if err != nil && !errors.Is(err, application.ErrStaleSession) {
+		a.fail(err)
+	}
+	if err == nil && exists {
 		a.compose.title = draft.Title
 		a.compose.content = draft.Content
 		a.message = "已恢复本地草稿"
@@ -73,7 +92,7 @@ func (a *App) loadCompose() {
 	route := a.current()
 	a.compose.loading = true
 	a.run("加载帖子原文", func(ctx context.Context) (func(), error) {
-		article, err := a.core.Forum.Article(ctx, route.Name, route.ID)
+		article, err := a.core.ReadArticle(ctx, route.Name, route.ID)
 		return func() {
 			a.compose.loading = false
 			if a.current() != route {
@@ -113,24 +132,33 @@ func (a *App) saveComposeDraft() error {
 	board := a.composeBoard()
 	draft := local.Draft{Title: title, Content: content}
 	key := local.DraftKey(board, c.replyID, c.editID)
+	session := c.session
+	if session.Generation == 0 {
+		session = a.core.SessionInfo()
+	}
+	save := func(key string, draft local.Draft) error {
+		err := a.core.SaveDraft(context.Background(), session, key, draft)
+		if errors.Is(err, application.ErrStaleSession) {
+			return nil
+		}
+		return err
+	}
 	if strings.TrimSpace(title) == "" && strings.TrimSpace(content) == "" {
-		if err := a.core.Local.SaveDraft(context.Background(), a.core.Session().Username, key, local.Draft{}); err != nil {
+		if err := save(key, local.Draft{}); err != nil {
 			return err
 		}
 		if c.replyID == "" && c.editID == "" && board != "" {
-			return a.core.Local.SaveDraft(context.Background(), a.core.Session().Username,
-				local.DraftKey("", "", ""), local.Draft{})
+			return save(local.DraftKey("", "", ""), local.Draft{})
 		}
 		return nil
 	}
-	if err := a.core.Local.SaveDraft(context.Background(), a.core.Session().Username, key, draft); err != nil {
+	if err := save(key, draft); err != nil {
 		return err
 	}
 	// The global composer reopens without a board, so keep a boardless copy of
 	// a new post until it is published.
 	if c.replyID == "" && c.editID == "" && board != "" {
-		if err := a.core.Local.SaveDraft(context.Background(), a.core.Session().Username,
-			local.DraftKey("", "", ""), draft); err != nil {
+		if err := save(local.DraftKey("", "", ""), draft); err != nil {
 			return err
 		}
 	}
@@ -150,6 +178,80 @@ func (a *App) composeInput(gtx layout.Context, editor *widget.Editor, hint strin
 		}
 	}
 	return dims
+}
+
+func (a *App) composeLinkRow(gtx layout.Context) layout.Dimensions {
+	c := &a.compose
+	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if !c.linkOpen {
+			dims, clicked := a.secondaryButton(gtx, "compose-link-open", "插入链接")
+			if clicked {
+				c.linkOpen = true
+			}
+			return dims
+		}
+		return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(a.theme, unit.Sp(14), "插入链接")
+					l.Font.Weight = 700
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return a.inputBox(gtx, &c.linkURL, "https://...")
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return a.inputBox(gtx, &c.linkText, "链接文字（留空使用选中文本）")
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							dims, clicked := a.primaryButton(gtx, "compose-link-insert", "插入链接")
+							if clicked {
+								a.insertComposeLink()
+							}
+							return dims
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							dims, clicked := a.secondaryButton(gtx, "compose-link-cancel", "取消")
+							if clicked {
+								c.linkOpen = false
+								a.window.Invalidate()
+							}
+							return dims
+						}),
+					)
+				}),
+			)
+		})
+	})
+}
+
+func (a *App) insertComposeLink() {
+	c := &a.compose
+	rawURL := c.linkURL.Text()
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		a.fail(errors.New("请输入有效的 HTTP 或 HTTPS 链接"))
+		return
+	}
+	label := c.linkText.Text()
+	if label == "" {
+		label = c.contentEditor.SelectedText()
+	}
+	if strings.TrimSpace(label) == "" {
+		a.fail(errors.New("请输入链接文字或选择正文文本"))
+		return
+	}
+	c.contentEditor.Insert(fmt.Sprintf("[url=%s]%s[/url]", rawURL, label))
+	c.linkURL.SetText("")
+	c.linkText.SetText("")
+	c.linkOpen = false
+	a.window.Invalidate()
 }
 
 func (a *App) composePage(gtx layout.Context) layout.Dimensions {
@@ -257,6 +359,9 @@ func (a *App) composePage(gtx layout.Context) layout.Dimensions {
 			})
 		},
 		func(gtx layout.Context) layout.Dimensions {
+			return a.composeLinkRow(gtx)
+		},
+		func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -327,7 +432,7 @@ func (a *App) publish() {
 		return
 	}
 	board := a.composeBoard()
-	title := strings.TrimSpace(c.titleEditor.Text())
+	title := c.titleEditor.Text()
 	body := c.contentEditor.Text()
 	if board == "" || title == "" || strings.TrimSpace(body) == "" {
 		a.fail(errors.New("版面、标题和正文不能为空"))

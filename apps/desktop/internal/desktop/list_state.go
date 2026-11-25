@@ -27,7 +27,10 @@ func (a *App) desktopListState(key listKey) *ui.ListState {
 func (a *App) articleListKey() listKey {
 	key := listKey{Page: a.route.Page, Name: a.route.Name, Sub: a.route.Sub, Number: a.route.Number}
 	if a.route.Page == "search" {
-		key.Query = strings.TrimSpace(a.searchQuery)
+		key.Query = strings.TrimSpace(a.searchSubmittedQuery)
+		if key.Query == "" {
+			key.Query = strings.TrimSpace(a.searchQuery)
+		}
 	}
 	return key
 }

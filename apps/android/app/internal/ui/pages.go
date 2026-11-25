@@ -5,15 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/color"
 	"sort"
 	"strconv"
 	"strings"
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -67,11 +68,12 @@ func (a *App) loginPage(gtx layout.Context) layout.Dimensions {
 			}),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				// Capture the IME action key so the keyboard can submit.
-				if event, ok := a.password.Update(gtx); ok {
-					if _, submit := event.(widget.SubmitEvent); submit {
-						a.login()
-					}
+				// Login uses explicit Enter/IME submit or the visible button.
+				intent := a.applySingleLineIntent(gtx, &a.password, true)
+				if intent.RejectedPaste {
+					a.fail(errors.New("密码不能包含换行，请粘贴单行密码"))
+				} else if intent.Submitted {
+					a.login()
 				}
 				return a.inputBox(gtx, &a.password, "密码")
 			}),
@@ -134,6 +136,9 @@ func (a *App) loginPage(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) login() {
+	if a.busy {
+		return
+	}
 	u := strings.TrimSpace(a.username.Text())
 	p := a.password.Text()
 	if u == "" || p == "" {
@@ -171,10 +176,21 @@ func (a *App) textAction(gtx layout.Context, key, label string) (layout.Dimensio
 	return dims, clicked
 }
 
+// loadHomeModule dispatches the partition root to the module currently shown.
+// PageHome is shared by the favorites list and the all-sections tree, so
+// refresh and retry must not assume the tree endpoint.
+func (a *App) loadHomeModule() {
+	if a.sectionTab == "favorites" {
+		a.loadFavorites()
+		return
+	}
+	a.loadHome()
+}
+
 func (a *App) loadHome() {
 	route := a.current()
 	a.run("加载分区", func(ctx context.Context) (func(), error) {
-		root, err := a.core.Forum.Sections(ctx)
+		root, err := a.core.LoadSections(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +251,7 @@ func (a *App) loadSectionPage() {
 	}
 	if r.Name == "" {
 		a.run("加载分区", func(ctx context.Context) (func(), error) {
-			root, err := a.core.Forum.Sections(ctx)
+			root, err := a.core.LoadSections(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -244,11 +260,10 @@ func (a *App) loadSectionPage() {
 		return
 	}
 	a.run("加载分区", func(ctx context.Context) (func(), error) {
-		section, err := a.core.Forum.Section(ctx, r.Name)
+		section, err := a.core.LoadSectionTree(ctx, r.Name)
 		if err != nil {
 			return nil, err
 		}
-		a.resolveSubsections(ctx, &section)
 		return func() {
 			if a.current().Page == PageSection && a.current().Name == r.Name {
 				a.section = section
@@ -256,26 +271,6 @@ func (a *App) loadSectionPage() {
 			}
 		}, nil
 	})
-}
-
-func (a *App) resolveSubsections(ctx context.Context, section *forum.Section) {
-	a.resolveSectionTree(ctx, section, map[forum.Scalar]bool{section.Name: true})
-}
-
-func (a *App) resolveSectionTree(ctx context.Context, section *forum.Section, visited map[forum.Scalar]bool) {
-	for i := range section.Subsections {
-		sub := &section.Subsections[i]
-		if sub.Name == "" || visited[sub.Name] {
-			continue
-		}
-		visited[sub.Name] = true
-		if sub.Description == "" || len(sub.Boards) == 0 {
-			if full, err := a.core.Forum.Section(ctx, string(sub.Name)); err == nil {
-				*sub = full
-			}
-		}
-		a.resolveSectionTree(ctx, sub, visited)
-	}
 }
 
 func sectionTotals(s forum.Section) (threads, posts, online int) {
@@ -294,40 +289,59 @@ func sectionTotals(s forum.Section) (threads, posts, online int) {
 }
 
 func (a *App) homePage(gtx layout.Context) layout.Dimensions {
-	rows := []layout.Widget{a.sectionActions}
 	if a.sectionTab == "favorites" {
-		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+		title := func(gtx layout.Context) layout.Dimensions {
 			return a.sectionTitle(gtx, "收藏版面", fmt.Sprintf("%d 个版面", len(a.favoriteBoards)))
-		})
-		if len(a.favoriteBoards) == 0 {
-			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-				return a.emptyOrPending(gtx, "还没有收藏版面")
-			})
-		} else {
-			for _, board := range a.favoriteBoards {
-				board := board
-				rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-					return a.boardCard(gtx, board)
-				})
-			}
 		}
-	} else {
-		if len(a.sections) == 0 && a.busy {
+		if len(a.favoriteBoards) == 0 {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(a.sectionActions),
+				layout.Rigid(title),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return a.emptyOrPending(gtx, "还没有收藏版面")
+				}),
+			)
+		}
+		rows := []layout.Widget{a.sectionActions, title}
+		for _, board := range a.favoriteBoards {
+			board := board
+			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+				return a.boardCard(gtx, board)
+			})
+		}
+		return material.List(a.theme, &a.homeList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
+			return rows[i](gtx)
+		})
+	}
+
+	if len(a.sections) == 0 {
+		if a.busy {
 			return a.pendingPage(gtx, "正在加载分区…")
 		}
-		if len(a.sections) == 0 && a.failed {
+		if a.failed {
 			return a.requestErrorPage(gtx)
 		}
-		rows = append(rows, a.homeOverview)
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(a.sectionActions),
+			layout.Rigid(a.homeOverview),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return a.sectionTitle(gtx, "分区", "0 个分区")
+			}),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return a.empty(gtx, "暂无可浏览的分区")
+			}),
+		)
+	}
+
+	rows := []layout.Widget{a.sectionActions, a.homeOverview}
+	rows = append(rows, func(gtx layout.Context) layout.Dimensions {
+		return a.sectionTitle(gtx, "分区", fmt.Sprintf("%d 个分区", len(a.sections)))
+	})
+	for _, section := range a.sections {
+		section := section
 		rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-			return a.sectionTitle(gtx, "分区", fmt.Sprintf("%d 个分区", len(a.sections)))
+			return a.sectionEntryCard(gtx, section, false)
 		})
-		for _, section := range a.sections {
-			section := section
-			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-				return a.sectionEntryCard(gtx, section, false)
-			})
-		}
 	}
 	return material.List(a.theme, &a.homeList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
 		return rows[i](gtx)
@@ -352,67 +366,35 @@ func (a *App) sectionPage(gtx layout.Context) layout.Dimensions {
 			detail += fmt.Sprintf(" · %d 个子分区", n)
 		}
 	}
-	rows := make([]layout.Widget, 0, len(a.sections)+len(a.section.Subsections)+len(a.boards)+3)
+	header := func(gtx layout.Context) layout.Dimensions {
+		return a.sectionHeaderCard(gtx, r, title, detail, pick)
+	}
+	emptyText := ""
+	if r.Name == "" && len(a.sections) == 0 {
+		emptyText = "暂无可浏览的分区"
+	} else if r.Name != "" && len(a.section.Subsections) == 0 && len(a.boards) == 0 {
+		emptyText = "这个分区暂无可浏览的版面"
+	}
+	if emptyText != "" {
+		empty := layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return a.emptyOrPending(gtx, emptyText)
+		})
+		if pick {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(header), empty)
+		}
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(a.sectionActions), layout.Rigid(header), empty)
+	}
+
+	rows := make([]layout.Widget, 0, len(a.sections)+len(a.section.Subsections)+len(a.boards)+2)
 	if !pick {
 		rows = append(rows, a.sectionActions)
 	}
-	rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										l := material.Label(a.theme, unit.Sp(19), title)
-										l.Font.Weight = 700
-										return l.Layout(gtx)
-									}),
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										l := material.Label(a.theme, unit.Sp(11), detail)
-										l.Color = colorMuted
-										return l.Layout(gtx)
-									}),
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										if r.Name == "" {
-											return layout.Dimensions{}
-										}
-										threads, posts, online := sectionTotals(a.section)
-										l := material.Label(a.theme, unit.Sp(11),
-											fmt.Sprintf("今日主题 %d · 今日发帖 %d · 在线 %d", threads, posts, online))
-										l.Color = colorMuted
-										return l.Layout(gtx)
-									}),
-								)
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								if !pick {
-									return layout.Dimensions{}
-								}
-								return a.badgeChip(gtx, "选择发帖版面", colorAccentSoft, colorAccent)
-							}),
-						)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						l := material.Label(a.theme, unit.Sp(11), "选择分区后继续查看子分区与版面。")
-						l.Color = colorMuted
-						return l.Layout(gtx)
-					}),
-				)
-			})
-		})
-	})
+	rows = append(rows, header)
 	if r.Name == "" {
 		for _, section := range a.sections {
 			section := section
 			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
 				return a.sectionEntryCard(gtx, section, pick)
-			})
-		}
-		if len(a.sections) == 0 {
-			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-				return a.emptyOrPending(gtx, "暂无可浏览的分区")
 			})
 		}
 	} else {
@@ -428,14 +410,57 @@ func (a *App) sectionPage(gtx layout.Context) layout.Dimensions {
 				return a.sectionBoardCard(gtx, board, pick)
 			})
 		}
-		if len(a.section.Subsections) == 0 && len(a.boards) == 0 {
-			rows = append(rows, func(gtx layout.Context) layout.Dimensions {
-				return a.emptyOrPending(gtx, "这个分区暂无可浏览的版面")
-			})
-		}
 	}
 	return material.List(a.theme, &a.sectionList).Layout(gtx, len(rows), func(gtx layout.Context, i int) layout.Dimensions {
 		return rows[i](gtx)
+	})
+}
+
+func (a *App) sectionHeaderCard(gtx layout.Context, r Route, title, detail string, pick bool) layout.Dimensions {
+	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									l := material.Label(a.theme, unit.Sp(19), title)
+									l.Font.Weight = 700
+									return l.Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									l := material.Label(a.theme, unit.Sp(11), detail)
+									l.Color = colorMuted
+									return l.Layout(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									if r.Name == "" {
+										return layout.Dimensions{}
+									}
+									threads, posts, online := sectionTotals(a.section)
+									l := material.Label(a.theme, unit.Sp(11),
+										fmt.Sprintf("今日主题 %d · 今日发帖 %d · 在线 %d", threads, posts, online))
+									l.Color = colorMuted
+									return l.Layout(gtx)
+								}),
+							)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if !pick {
+								return layout.Dimensions{}
+							}
+							return a.badgeChip(gtx, "选择发帖版面", colorAccentSoft, colorAccent)
+						}),
+					)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(a.theme, unit.Sp(11), "选择分区后继续查看子分区与版面。")
+					l.Color = colorMuted
+					return l.Layout(gtx)
+				}),
+			)
+		})
 	})
 }
 
@@ -612,14 +637,16 @@ func (a *App) homeOverview(gtx layout.Context) layout.Dimensions {
 func (a *App) sectionActions(gtx layout.Context) layout.Dimensions {
 	selected := "favorites"
 	route := a.current()
-	if route.Page == PageTop {
+	if module, rooted := a.homeModuleForStack(); rooted {
+		selected = module
+	} else if route.Page == PageTop {
 		selected = "top"
 		if route.Name == "recommend" {
 			selected = "recommend"
 		}
 	} else if route.Page == PageTimeline {
 		selected = "timeline"
-	} else if route.Page == PageSection || route.Page == PageHome && a.sectionTab == "all" {
+	} else if route.Page == PageSection {
 		selected = "all"
 	}
 	items := []moduleTab{
@@ -704,7 +731,7 @@ func (a *App) openBoard(name string) {
 func (a *App) loadBoard() {
 	r := a.current()
 	a.run("加载版面", func(ctx context.Context) (func(), error) {
-		v, err := a.core.Forum.Board(ctx, r.Name, forum.Page{Number: max(1, r.Number), Size: 30})
+		v, err := a.core.LoadBoard(ctx, r.Name, forum.Page{Number: max(1, r.Number), Size: 30})
 		return func() {
 			if a.current() != r {
 				return
@@ -868,12 +895,7 @@ func (a *App) toggleBoardFavorite() {
 	}
 	b := a.board
 	a.run("更新版面收藏", func(ctx context.Context) (func(), error) {
-		var err error
-		if bool(b.IsFavorite) {
-			_, err = a.core.Forum.RemoveFavorite(ctx, b.Name, "0")
-		} else {
-			_, err = a.core.Forum.AddFavorite(ctx, b.Name, "0")
-		}
+		_, err := a.core.SetFavorite(ctx, b.Name, "0", !bool(b.IsFavorite))
 		return func() {
 			a.board.IsFavorite = forum.Flag(!bool(b.IsFavorite))
 			if bool(b.IsFavorite) {
@@ -936,11 +958,11 @@ func (a *App) loadThreadPage(page int) {
 		a.resetThreadExpanded(r)
 	}
 	a.threadMoreOpen = false
-	info := a.core.SessionInfo()
+	token := a.core.HistoryReadToken()
 	a.threadReqSerial++
-	req := threadReadRequest{Serial: a.threadReqSerial, Generation: info.Generation, Route: r}
+	req := threadReadRequest{Serial: a.threadReqSerial, Generation: token.Generation, Route: r, HistoryToken: token}
 	a.threadReq = req
-	account := info.Username
+	account := token.Username
 	a.runRead("加载主题", func(ctx context.Context) (func(), error) {
 		detail, err := a.core.ReadThread(ctx, r.Name, r.ID, forum.Page{Number: page, Size: 30})
 		if errors.Is(err, application.ErrStaleSession) {
@@ -998,7 +1020,7 @@ func (a *App) loadThreadPage(page int) {
 }
 
 func (a *App) recordThreadVisit(req threadReadRequest, detail application.ThreadDetail) {
-	err := a.core.RecordThreadVisit(a.ctx, req.Generation, detail.CanonicalBoard, req.Route.ID, detail.Thread.Title)
+	err := a.core.RecordThreadVisit(a.ctx, req.HistoryToken, detail.CanonicalBoard, req.Route.ID, detail.Thread.Title)
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, application.ErrStaleSession) {
 		return
 	}
@@ -1479,7 +1501,7 @@ func (a *App) collectThread() {
 func (a *App) loadTimeline() {
 	page := max(1, a.current().Number)
 	a.run("加载时间线", func(ctx context.Context) (func(), error) {
-		v, err := a.core.Forum.FavorPosts(ctx, forum.Page{Number: page, Size: 30})
+		v, err := a.core.LoadTimeline(ctx, forum.Page{Number: page, Size: 30})
 		sort.SliceStable(v.Articles, func(i, j int) bool {
 			return articleTime(v.Articles[i]) > articleTime(v.Articles[j])
 		})
@@ -1545,27 +1567,15 @@ func (a *App) loadFavorites() {
 	page := max(1, a.current().Number)
 	a.run("加载收藏", func(ctx context.Context) (func(), error) {
 		if tab == "collection" {
-			v, err := a.core.Forum.Collection(ctx, "", forum.Page{Number: page, Size: 30})
+			v, err := a.core.LoadCollection(ctx, "", forum.Page{Number: page, Size: 30})
 			return func() { a.collect = v; a.pagination = v.Pagination }, err
 		}
-		v, err := a.core.Forum.Favorites(ctx, "0")
+		favorite, boards, err := a.core.LoadFavoriteBoards(ctx, "0")
 		if err != nil {
 			return nil, err
 		}
-		boards := flattenFavoriteBoards(v)
-		for i := range boards {
-			detail, derr := a.core.Forum.Board(ctx, boards[i].Name, forum.Page{Size: 1})
-			if derr != nil || detail.Name == "" {
-				continue
-			}
-			detail.IsFavorite = true
-			if detail.Description == "" {
-				detail.Description = boards[i].Description
-			}
-			boards[i] = detail
-		}
 		return func() {
-			a.favorite = v
+			a.favorite = favorite
 			a.favoriteBoards = boards
 			a.pagination = forum.Pagination{}
 		}, nil
@@ -1711,10 +1721,10 @@ func flattenFavoriteBoards(f forum.Favorite) []forum.Board {
 
 func (a *App) loadSelf() {
 	a.run("加载个人资料", func(ctx context.Context) (func(), error) {
-		u, err := a.core.Forum.Self(ctx)
+		u, err := a.core.Self(ctx)
 		return func() {
 			a.user = u
-			a.history = a.core.Local.History(a.core.Session().Username)
+			a.history = a.core.RecentHistory()
 		}, err
 	})
 }
@@ -1743,7 +1753,7 @@ func (a *App) selfPage(gtx layout.Context) layout.Dimensions {
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								detail := "ID " + string(u.ID)
 								if u.ID == "" {
-									detail = a.core.Session().Username
+									detail = a.core.SessionInfo().Username
 								}
 								l := material.Label(a.theme, unit.Sp(11), detail)
 								l.Color = colorMuted
@@ -1804,7 +1814,7 @@ func (a *App) selfPage(gtx layout.Context) layout.Dimensions {
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						themeName := "浅色"
-						if a.core.Local.Preferences().Theme == 2 {
+						if a.core.Preferences().Theme == 2 {
 							themeName = "深色"
 						}
 						return a.selfRow(gtx, "self-settings", "edit", "设置", "主题 "+themeName+" · 字号 · IPv6", func() {
@@ -1986,6 +1996,12 @@ func (a *App) changePage(n int) {
 	if n < 1 {
 		n = 1
 	}
+	if a.current().Page == PageSearch {
+		// Search keeps the committed page and results until the target page
+		// succeeds, so a failed page read leaves the previous list usable.
+		a.loadSearchPage(n)
+		return
+	}
 	a.stack[len(a.stack)-1].Number = n
 	route := a.current()
 	a.clearRouteModel(route)
@@ -2008,12 +2024,112 @@ func (a *App) changePage(n int) {
 	}
 }
 
-func (a *App) empty(gtx layout.Context, text string) layout.Dimensions {
-	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		l := material.Body2(a.theme, text)
-		l.Color = color.NRGBA{R: 0x6C, G: 0x7C, B: 0x93, A: 0xFF}
-		return l.Layout(gtx)
+// centeredContent centers a block in the content viewport. When the block is
+// taller than the viewport (large text or a soft keyboard), the whole empty
+// state becomes a one-row scroll list so its text and actions stay reachable.
+func (a *App) centeredContent(gtx layout.Context, content layout.Widget) layout.Dimensions {
+	width := gtx.Constraints.Max.X
+	viewport := gtx.Constraints.Max.Y
+	measure := gtx
+	measure.Source = measure.Source.Disabled()
+	measure.Constraints = layout.Constraints{Max: image.Pt(width, 1<<20)}
+	a.measuringEmpty = true
+	macro := op.Record(gtx.Ops)
+	natural := content(measure)
+	macro.Stop()
+	a.measuringEmpty = false
+	return a.emptyList.List.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		if natural.Size.Y <= viewport {
+			gtx.Constraints.Min.Y = viewport
+			return layout.Center.Layout(gtx, content)
+		}
+		gtx.Constraints.Min.Y = natural.Size.Y
+		gtx.Constraints.Max.Y = natural.Size.Y
+		return content(gtx)
 	})
+}
+
+func (a *App) empty(gtx layout.Context, title string) layout.Dimensions {
+	icon, detail := emptyCopy(title)
+	// Fill the content viewport horizontally before centering. Gio's Center
+	// only expands to the incoming minimum, and a Flexed child receives a zero
+	// horizontal minimum, so leaving it unset puts the block at the left edge.
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	return a.centeredContent(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(24)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return a.drawIcon(gtx, icon, 32, colorMuted)
+					})
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					l := material.Label(a.theme, unit.Sp(17), title)
+					l.Font.Weight = font.SemiBold
+					l.Alignment = text.Middle
+					l.Color = a.theme.Palette.Fg
+					l.MaxLines = 2
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					l := material.Body2(a.theme, detail)
+					l.Alignment = text.Middle
+					l.Color = colorMuted
+					l.MaxLines = 3
+					return l.Layout(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func emptyCopy(title string) (icon, detail string) {
+	switch title {
+	case "还没有阅读记录":
+		return "clock", "打开主题后，会在这里显示最近阅读记录。"
+	case "黑名单为空":
+		return "user", "将用户加入黑名单后，会在这里显示。"
+	case "还没有收藏文章":
+		return "star", "在主题阅读页收藏文章后，会显示在这里。"
+	case "还没有收藏版面":
+		return "star", "在版面页收藏常用版面后，会显示在这里。"
+	case "没有找到用户":
+		return "user", "检查完整用户名或论坛 ID 后重试。"
+	case "没有找到主题":
+		return "search", "换一个标题关键词试试。"
+	case "暂无主题":
+		return "message", "这里还没有可以显示的主题。"
+	case "输入关键词开始搜索":
+		return "search", "全站标题或人物查找结果会显示在这里。"
+	case "输入完整论坛 ID 或用户名查找人物":
+		return "user", "输入完整论坛 ID 或用户名，然后点击查找人物。"
+	case "AI 搜索尚未配置":
+		return "alert", "可以改用全站搜索或人物查找。"
+	case "选择消息模块":
+		return "mail", "在上方选择私信或提醒。"
+	case "还没有私信":
+		return "mail", "给论坛用户发送私信后，会在这里显示。"
+	case "信箱是空的":
+		return "mail", "收到的站内信会显示在这里。"
+	case "还没有会话消息":
+		return "mail", "发送第一封私信开始聊天。"
+	case "暂未提醒":
+		return "clock", "有人回复或 @ 你时，会显示在这里。"
+	case "时间线为空":
+		return "clock", "论坛没有返回可显示的帖子，稍后刷新试试。"
+	case "暂无可浏览的分区":
+		return "board", "当前没有可显示的分区。"
+	case "这个分区暂无可浏览的版面":
+		return "board", "选择其他分区，或稍后重新读取。"
+	default:
+		return "alert", "内容会显示在这里。"
+	}
 }
 
 func threadID(v forum.Article) string {

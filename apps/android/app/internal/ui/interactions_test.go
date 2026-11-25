@@ -16,6 +16,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/VeinsureLee/BYR-Client/core"
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/local"
@@ -24,6 +25,7 @@ import (
 type recordedRequest struct {
 	Method string
 	Path   string
+	Query  string
 	Form   string
 }
 
@@ -39,7 +41,7 @@ func newInteractionServer(t *testing.T) *interactionServer {
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		s.mu.Lock()
-		s.requests = append(s.requests, recordedRequest{Method: r.Method, Path: r.URL.Path, Form: string(body)})
+		s.requests = append(s.requests, recordedRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Form: string(body)})
 		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -78,36 +80,39 @@ func (s *interactionServer) find(method, path string) []recordedRequest {
 }
 
 func interactionApp(t *testing.T, baseURL string) *App {
+	return interactionAppWithBackend(t, baseURL, nil)
+}
+
+func interactionAppWithBackend(t *testing.T, baseURL string, backend local.Backend) *App {
 	t.Helper()
-	store, err := local.Open(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	credentials := &testCredentials{session: application.Credential{
 		Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}}
-	core, err := application.New(application.Options{
-		BaseURL:     baseURL,
-		HTTPClient:  http.DefaultClient,
-		Local:       store,
-		Credentials: credentials,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Restore(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	coreApp := newUIFixtureCore(t, baseURL, http.DefaultClient, backend, credentials)
 	a, err := New(noopInvalidator{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.started = true
 	a.ready = true
-	a.core = core
+	a.core = coreApp
 	a.stack = []Route{{Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	a.thread = sampleThread()
 	return a
+}
+
+func newUIFixtureCore(t *testing.T, baseURL string, client *http.Client, backend local.Backend, credentials application.CredentialStore) *application.App {
+	t.Helper()
+	coreApp, err := core.Open(context.Background(), core.Options{
+		BaseURL: baseURL, HTTPClient: client, State: backend, Credentials: credentials,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := coreApp.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return coreApp
 }
 
 func TestThreadLoadSavesHistoryWithLiveAppContext(t *testing.T) {
@@ -122,7 +127,7 @@ func TestThreadLoadSavesHistoryWithLiveAppContext(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		a.drain()
-		entries = a.core.Local.History("alice")
+		entries = a.core.RecentHistory()
 		if len(entries) == 1 {
 			break
 		}
@@ -262,14 +267,13 @@ func TestSelfSettingsEntryOpensSettings(t *testing.T) {
 	ops.Reset()
 	a.Layout(gtx)
 	defer func() {
-		prefs := a.core.Local.Preferences()
-		prefs.Theme = 0
-		_ = a.core.Local.SetPreferences(context.Background(), prefs)
+		theme := 0
+		_ = a.core.UpdatePreferences(context.Background(), application.PreferencePatch{Theme: &theme})
 		setPalette(false)
 		a.dark, a.themed = false, false
 		a.theme.Bg, a.theme.Fg = colorBg, colorFg
 	}()
-	if got := a.core.Local.Preferences().Theme; got != 2 {
+	if got := a.core.Preferences().Theme; got != 2 {
 		t.Fatalf("theme preference = %d, want dark", got)
 	}
 }

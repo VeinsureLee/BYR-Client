@@ -16,14 +16,12 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
-	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/resources/fonts"
 )
 
 const TotalRows = 2004
 
 type View struct {
-	Core            *forum.Client
 	Theme           *material.Theme
 	Editor          widget.Editor
 	Selection       widget.Selectable
@@ -35,10 +33,6 @@ type View struct {
 }
 
 func New() (*View, error) {
-	client, err := forum.New(forum.Options{})
-	if err != nil {
-		return nil, err
-	}
 	faces, err := opentype.ParseCollection(fonts.Regular)
 	if err != nil {
 		return nil, err
@@ -47,7 +41,7 @@ func New() (*View, error) {
 	theme.Shaper = text.NewShaper(text.WithCollection(faces), text.NoSystemFonts())
 	theme.Face = faces[0].Font.Typeface
 	theme.Bg = color.NRGBA{R: 248, G: 249, B: 252, A: 255}
-	view := &View{Core: client, Theme: theme, FontLicense: fonts.License, List: widget.List{List: layout.List{Axis: layout.Vertical}}}
+	view := &View{Theme: theme, FontLicense: fonts.License, List: widget.List{List: layout.List{Axis: layout.Vertical}}}
 	view.Editor.SetText("中文输入验证：请尝试拼音、选词、换行和修改光标位置。")
 	return view, nil
 }
@@ -67,7 +61,7 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(material.H6(v.Theme, "Gio 技术验证 · 非正式客户端").Layout),
 						layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-						layout.Rigid(material.Body2(v.Theme, "仅验证共享 Go 核心接入、中文输入、文本选择、2000 段长列表和自定义绘制；不登录、不访问论坛。").Layout),
+						layout.Rigid(material.Body2(v.Theme, "仅验证中文输入、文本选择、2000 段长列表和自定义绘制；不登录、不访问论坛或协议端点。").Layout),
 					)
 				case 1:
 					return material.Editor(v.Theme, &v.Editor, "输入验证").Layout(gtx)

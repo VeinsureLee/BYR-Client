@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/VeinsureLee/BYR-Client/core"
 	"github.com/VeinsureLee/BYR-Client/core/application"
-	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
@@ -18,20 +18,17 @@ type Config struct {
 }
 
 type Services struct {
-	Forum *forum.Client
-	App   *application.App
+	App *application.App
 }
 
 // New opens local state and wires dependencies. Session restoration and network
 // calls start explicitly after window creation, so tests can construct it offline.
 func New(config Config) (Services, error) {
-	store, err := local.Open(context.Background(), config.Storage)
+	app, err := core.Open(context.Background(), core.Options{
+		BaseURL: config.BaseURL, HTTPClient: config.HTTPClient, State: config.Storage, Credentials: config.Credentials,
+	})
 	if err != nil {
 		return Services{}, err
 	}
-	app, err := application.New(application.Options{BaseURL: config.BaseURL, HTTPClient: config.HTTPClient, Local: store, Credentials: config.Credentials})
-	if err != nil {
-		return Services{}, err
-	}
-	return Services{Forum: app.Forum, App: app}, nil
+	return Services{App: app}, nil
 }

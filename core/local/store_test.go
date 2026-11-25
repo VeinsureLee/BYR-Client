@@ -2,10 +2,13 @@ package local
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/VeinsureLee/BYR-Client/core/appearance"
 )
 
 type memoryDisk struct {
@@ -142,5 +145,90 @@ func TestUnsupportedOrCorruptDataIsNotOverwritten(t *testing.T) {
 		if string(disk.data) != data {
 			t.Fatal("input overwritten")
 		}
+	}
+}
+
+func TestColorSchemeDefaultsAndPreferencePatchPreserveStateV1(t *testing.T) {
+	ctx := context.Background()
+	legacy := []byte(`{"version":1,"preferences":{"theme":2,"fontScale":1.2,"ipv6":true},"accounts":{"alice":{"drafts":{},"history":[{"Board":"Go","ID":"42","Title":"old"}]}}}`)
+	disk := &memoryDisk{data: append([]byte(nil), legacy...)}
+	store, err := Open(ctx, disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefs := store.Preferences()
+	if prefs.Theme != 2 || prefs.FontScale != 1.2 || !prefs.IPv6 || prefs.ColorScheme != string(appearance.BYRBlue) {
+		t.Fatalf("legacy v1 preferences = %+v", prefs)
+	}
+
+	pine := string(appearance.Pine)
+	if err := store.UpdatePreferences(ctx, PreferencePatch{ColorScheme: &pine}); err != nil {
+		t.Fatal(err)
+	}
+	ipv6 := false
+	if err := store.UpdatePreferences(ctx, PreferencePatch{IPv6: &ipv6}); err != nil {
+		t.Fatal(err)
+	}
+	prefs = store.Preferences()
+	if prefs.ColorScheme != pine || prefs.Theme != 2 || prefs.FontScale != 1.2 || prefs.IPv6 {
+		t.Fatalf("targeted patches overwrote unrelated preferences: %+v", prefs)
+	}
+	var saved document
+	if err := json.Unmarshal(disk.data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Version != 1 || saved.Accounts["alice"].History[0].ID != "42" {
+		t.Fatalf("preference patch changed the v1 document/history: %+v", saved)
+	}
+	restored, err := Open(ctx, disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := restored.Preferences(); got.ColorScheme != pine || got.Theme != 2 || got.FontScale != 1.2 || got.IPv6 {
+		t.Fatalf("reopened v1 preferences = %+v", got)
+	}
+}
+
+func TestVersionOneDraftAttachmentFixtureRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	fixture := []byte(`{"version":1,"preferences":{"theme":1,"fontScale":1,"ipv6":false},"accounts":{"alice":{"drafts":{"composeDraft.Go.new":{"Title":"包含附件","Content":"正文","attachments":[{"file":[{"name":"diagram.png","url":"/api/attachment/Go/99","size":"123","thumbnail_small":"/thumb.png","thumbnail_middle":"/middle.png"}],"remain_space":"456","remain_count":3}]}},"history":[]}}}`)
+	disk := &memoryDisk{data: fixture}
+	store, err := Open(ctx, disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := DraftKey("Go", "", "")
+	draft, found := store.Draft("alice", key)
+	if !found || draft.Title != "包含附件" || len(draft.Attachments) != 1 || len(draft.Attachments[0].Files) != 1 {
+		t.Fatalf("legacy attachment draft = %+v found=%v", draft, found)
+	}
+	file := draft.Attachments[0].Files[0]
+	if file.Name != "diagram.png" || file.URL != "/api/attachment/Go/99" || file.Size != "123" ||
+		file.ThumbnailSmall != "/thumb.png" || file.ThumbnailMiddle != "/middle.png" ||
+		draft.Attachments[0].RemainSpace != "456" || draft.Attachments[0].RemainCount != 3 {
+		t.Fatalf("legacy attachment metadata = %+v / %+v", file, draft.Attachments[0])
+	}
+	plum := string(appearance.Plum)
+	if err := store.UpdatePreferences(ctx, PreferencePatch{ColorScheme: &plum}); err != nil {
+		t.Fatal(err)
+	}
+	var saved document
+	if err := json.Unmarshal(disk.data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Version != 1 {
+		t.Fatalf("attachment preference update changed state version to %d", saved.Version)
+	}
+	restored, err := Open(ctx, disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, found := restored.Draft("alice", key)
+	if !found || len(got.Attachments) != 1 || got.Attachments[0].Files[0].URL != file.URL ||
+		got.Attachments[0].RemainSpace != "456" || got.Attachments[0].RemainCount != 3 {
+		t.Fatalf("v1 attachment draft after rewrite = %+v found=%v", got, found)
+	}
+	if prefs := restored.Preferences(); prefs.ColorScheme != plum || prefs.Theme != 1 || prefs.FontScale != 1 {
+		t.Fatalf("v1 preferences after attachment roundtrip = %+v", prefs)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/VeinsureLee/BYR-Client/core/appearance"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 )
 
@@ -18,15 +19,17 @@ type Backend interface {
 	Save(context.Context, []byte) error
 }
 type Preferences struct {
-	Theme     int     `json:"theme"`
-	FontScale float32 `json:"fontScale"`
-	IPv6      bool    `json:"ipv6"`
+	Theme       int     `json:"theme"`
+	ColorScheme string  `json:"colorScheme,omitempty"`
+	FontScale   float32 `json:"fontScale"`
+	IPv6        bool    `json:"ipv6"`
 }
 
 func (p Preferences) Normalized() Preferences {
 	if p.Theme < 0 || p.Theme > 2 {
 		p.Theme = 0
 	}
+	p.ColorScheme = string(appearance.Normalize(appearance.Scheme(p.ColorScheme)))
 	if p.FontScale == 0 {
 		p.FontScale = 1
 	}
@@ -37,6 +40,15 @@ func (p Preferences) Normalized() Preferences {
 		p.FontScale = 1.4
 	}
 	return p
+}
+
+// PreferencePatch changes only the settings named by non-nil fields. This
+// prevents a stale settings-page snapshot from overwriting an unrelated choice.
+type PreferencePatch struct {
+	Theme       *int
+	ColorScheme *string
+	FontScale   *float32
+	IPv6        *bool
 }
 
 type Draft struct {
@@ -107,6 +119,24 @@ func (s *Store) Preferences() Preferences {
 }
 func (s *Store) SetPreferences(ctx context.Context, p Preferences) error {
 	return s.change(ctx, func(d *document) { d.Preferences = p.Normalized() })
+}
+func (s *Store) UpdatePreferences(ctx context.Context, patch PreferencePatch) error {
+	return s.change(ctx, func(d *document) {
+		p := d.Preferences
+		if patch.Theme != nil {
+			p.Theme = *patch.Theme
+		}
+		if patch.ColorScheme != nil {
+			p.ColorScheme = *patch.ColorScheme
+		}
+		if patch.FontScale != nil {
+			p.FontScale = *patch.FontScale
+		}
+		if patch.IPv6 != nil {
+			p.IPv6 = *patch.IPv6
+		}
+		d.Preferences = p.Normalized()
+	})
 }
 func accountKey(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
 func (s *Store) Draft(account, key string) (Draft, bool) {

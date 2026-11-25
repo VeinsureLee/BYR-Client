@@ -114,7 +114,9 @@ func (a *App) restoreRoute(route Route) {
 	a.clearRouteModel(route)
 	switch route.Page {
 	case PageHome:
-		a.loadHome()
+		a.loadHomeModule()
+	case PageSection:
+		a.loadSectionPage()
 	case PageBoard:
 		a.loadBoard()
 	case PageThread:
@@ -152,10 +154,23 @@ func (a *App) restoreRoute(route Route) {
 func (a *App) clearRouteModel(route Route) {
 	switch route.Page {
 	case PageHome:
-		a.sections = nil
-		a.section = forum.Section{}
-		a.boards = nil
-		a.pagination = forum.Pagination{}
+		if a.sectionTab == "favorites" {
+			a.favorite = forum.Favorite{}
+			a.favoriteBoards = nil
+			a.pagination = forum.Pagination{}
+		} else {
+			a.sections = nil
+			a.section = forum.Section{}
+			a.boards = nil
+			a.pagination = forum.Pagination{}
+		}
+	case PageSection:
+		if route.Name == "" {
+			a.sections = nil
+		} else {
+			a.section = forum.Section{}
+			a.boards = nil
+		}
 	case PageBoard:
 		a.board = forum.Board{Name: route.Name}
 		a.resetBoardPinnedExpanded(route)

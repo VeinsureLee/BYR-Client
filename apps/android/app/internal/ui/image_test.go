@@ -6,7 +6,10 @@ import (
 	"image"
 	"image/color"
 	"image/gif"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"gioui.org/io/input"
 	"gioui.org/layout"
@@ -176,6 +179,63 @@ func TestAndroidFailedImageStillRendersFallback(t *testing.T) {
 	}, "broken")
 	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
 		t.Fatalf("failed image rendered no fallback: %v", dims.Size)
+	}
+}
+
+func TestClearImageCacheCancelsRequestsStopsGIFAndRejectsLateResult(t *testing.T) {
+	started := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(requestCanceled)
+	}))
+	defer server.Close()
+
+	a := interactionApp(t, server.URL)
+	defer a.Close()
+	entry := a.imageEntry(server.URL + "/late.png")
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("image request did not start")
+	}
+	if entry.cancel == nil {
+		t.Fatal("pending image request has no cancellation handle")
+	}
+	gifEntry := &mobileImage{
+		raw: []byte("cached GIF"), img: image.NewRGBA(image.Rect(0, 0, 1, 1)),
+		frames: []image.Image{image.NewRGBA(image.Rect(0, 0, 1, 1))},
+	}
+	a.images["cached-gif"] = gifEntry
+	a.visibleAnimations = []*mobileImage{gifEntry}
+	a.animationFrame = []*mobileImage{gifEntry}
+	a.animationTimer = time.NewTimer(time.Hour)
+	mediaGeneration := a.mediaGeneration
+	cacheGeneration := a.imageCacheGeneration
+
+	a.clearImageCache()
+	if a.mediaGeneration != mediaGeneration+1 || a.imageCacheGeneration != cacheGeneration+1 || len(a.images) != 0 {
+		t.Fatalf("clear generations/cache = media:%d cache:%d entries:%d", a.mediaGeneration, a.imageCacheGeneration, len(a.images))
+	}
+	if entry.cancel != nil || gifEntry.raw != nil || gifEntry.img != nil || len(gifEntry.frames) != 0 ||
+		len(a.visibleAnimations) != 0 || len(a.animationFrame) != 0 || a.animationTimer != nil {
+		t.Fatalf("media resources survived clear: pending=%+v gif=%+v visible=%d frame=%d timer=%v",
+			entry, gifEntry, len(a.visibleAnimations), len(a.animationFrame), a.animationTimer)
+	}
+	select {
+	case <-requestCanceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("clearing the image cache did not cancel the HTTP request")
+	}
+	select {
+	case update := <-a.updates:
+		update()
+	case <-time.After(3 * time.Second):
+		t.Fatal("late image result did not return to the UI queue")
+	}
+	if len(a.images) != 0 || !entry.loading || entry.err != nil || entry.raw != nil || entry.img != nil {
+		t.Fatalf("late result repopulated cleared cache: entries=%d old-entry=%+v", len(a.images), entry)
 	}
 }
 

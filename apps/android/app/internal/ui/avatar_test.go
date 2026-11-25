@@ -2,7 +2,6 @@ package ui
 
 import (
 	"bytes"
-	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
-	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
 func TestAvatarLoadsForumFaceImage(t *testing.T) {
@@ -46,27 +44,10 @@ func TestAvatarLoadsForumFaceImage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	store, err := local.Open(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	credentials := &testCredentials{session: application.Credential{
-		Username:  "alice",
-		Token:     "token",
-		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}}
-	core, err := application.New(application.Options{
-		BaseURL:     server.URL,
-		HTTPClient:  server.Client(),
-		Local:       store,
-		Credentials: credentials,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Restore(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	core := newUIFixtureCore(t, server.URL, server.Client(), nil, credentials)
 	a, err := New(noopInvalidator{})
 	if err != nil {
 		t.Fatal(err)
@@ -144,22 +125,8 @@ func TestAvatarLoadsAnimatedGIFFrames(t *testing.T) {
 	}))
 	defer server.Close()
 
-	store, err := local.Open(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, err := application.New(application.Options{
-		BaseURL:     server.URL,
-		HTTPClient:  server.Client(),
-		Local:       store,
-		Credentials: &testCredentials{session: application.Credential{Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix()}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Restore(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	core := newUIFixtureCore(t, server.URL, server.Client(), nil,
+		&testCredentials{session: application.Credential{Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix()}})
 	a, err := New(noopInvalidator{})
 	if err != nil {
 		t.Fatal(err)

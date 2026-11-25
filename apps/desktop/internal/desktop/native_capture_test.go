@@ -15,8 +15,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// Explicit opt-in native backend regression using a local fixture by default.
-// Live mode only permits allowlisted reads and masks the account display name.
+// Explicit opt-in native backend regression using a local fixture only.
 func captureNativeWindows(dir string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -47,10 +46,6 @@ func captureNativeWindows(dir string) error {
 	defer server.Close()
 	config := bootstrap.Config{BaseURL: server.URL, Credentials: &testCredentials{session: application.Credential{Username: "native-test", Token: "local-fixture"}}}
 	pages := []string{"home", "top", "timeline", "favorites", "compose", "search", "contacts", "self", "settings"}
-	if os.Getenv("BYR_NATIVE_LIVE_READS") == "1" {
-		config = bootstrap.Config{Credentials: savedReadOnlyCredential{HideName: true}, HTTPClient: &http.Client{Timeout: 10 * time.Second, Transport: diagnosticTransport{}}}
-		pages = []string{"home", "top"}
-	}
 	services, err := bootstrap.New(config)
 	if err != nil {
 		return err

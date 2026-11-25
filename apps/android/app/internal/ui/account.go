@@ -12,6 +12,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
+	"github.com/VeinsureLee/BYR-Client/core/appearance"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/local"
 	"github.com/VeinsureLee/BYR-Client/core/resources/fonts"
@@ -141,7 +142,7 @@ func (a *App) openUser(name string) {
 
 func (a *App) loadUser(name string) {
 	a.run("加载用户资料", func(ctx context.Context) (func(), error) {
-		u, err := a.core.Forum.User(ctx, name)
+		u, err := a.core.LookupUser(ctx, name)
 		return func() {
 			if a.current().Page == PageUser && a.current().Name == name {
 				a.user = u
@@ -154,7 +155,7 @@ func (a *App) openHistory() {
 	if !a.push(Route{Page: PageHistory}) {
 		return
 	}
-	a.history = a.core.Local.History(a.core.Session().Username)
+	a.history = a.core.RecentHistory()
 }
 
 func (a *App) openBlacklist() {
@@ -168,7 +169,7 @@ func (a *App) openBlacklist() {
 func (a *App) loadBlacklist() {
 	page := max(1, a.current().Number)
 	a.run("加载黑名单", func(ctx context.Context) (func(), error) {
-		v, err := a.core.Forum.Blacklist(ctx, page)
+		v, err := a.core.LoadBlacklist(ctx, page)
 		return func() { a.blacklist = v; a.pagination = v.Pagination }, err
 	})
 }
@@ -177,7 +178,7 @@ func (a *App) openSettings() {
 	if !a.push(Route{Page: PageSettings}) {
 		return
 	}
-	a.ipv6.Value = a.core.Local.Preferences().IPv6
+	a.ipv6.Value = a.core.Preferences().IPv6
 }
 
 func (a *App) openVote(id string) {
@@ -194,7 +195,7 @@ func (a *App) loadVote() {
 	a.choice = ""
 	a.vote = forum.Vote{}
 	a.run("加载投票", func(ctx context.Context) (func(), error) {
-		v, err := a.core.Forum.Vote(ctx, id)
+		v, err := a.core.LoadVote(ctx, id)
 		return func() { a.vote = v }, err
 	})
 }
@@ -215,7 +216,7 @@ func (a *App) loadBet() {
 	a.choice = ""
 	a.bet = forum.Bet{}
 	a.run("加载竞猜", func(ctx context.Context) (func(), error) {
-		v, err := a.core.Forum.Bet(ctx, id)
+		v, err := a.core.LoadBet(ctx, id)
 		return func() { a.bet = v }, err
 	})
 }
@@ -295,7 +296,7 @@ func (a *App) userPage(gtx layout.Context) layout.Dimensions {
 								if clicked && !a.busy {
 									id := string(u.ID)
 									a.run("加入黑名单", func(ctx context.Context) (func(), error) {
-										_, err := a.core.Forum.AddBlacklist(ctx, id)
+										_, err := a.core.AddBlacklist(ctx, id)
 										return func() { a.message = "已加入黑名单"; a.failed = false }, err
 									})
 								}
@@ -323,7 +324,7 @@ func (a *App) userPage(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) historyPage(gtx layout.Context) layout.Dimensions {
-	entries := a.core.Local.History(a.core.Session().Username)
+	entries := a.core.RecentHistory()
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -345,10 +346,7 @@ func (a *App) historyPage(gtx layout.Context) layout.Dimensions {
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						dims, clicked := a.pill(gtx, "history-clear", "清空", "trash", true, true)
 						if clicked && len(entries) > 0 && !a.busy {
-							a.run("清空阅读历史", func(ctx context.Context) (func(), error) {
-								err := a.core.Local.ClearHistory(ctx, a.core.Session().Username)
-								return func() { a.history = nil }, err
-							})
+							a.confirmClearHistory()
 						}
 						return dims
 					}),
@@ -416,7 +414,7 @@ func (a *App) blacklistPage(gtx layout.Context) layout.Dimensions {
 										a.fail(errors.New("请输入用户名"))
 									} else if !a.busy {
 										a.run("添加黑名单", func(ctx context.Context) (func(), error) {
-											_, err := a.core.Forum.AddBlacklist(ctx, id)
+											_, err := a.core.AddBlacklist(ctx, id)
 											return func() { a.blacklistIn.SetText(""); a.loadBlacklist() }, err
 										})
 									}
@@ -461,7 +459,7 @@ func (a *App) blacklistPage(gtx layout.Context) layout.Dimensions {
 								if clicked && !a.busy {
 									id := string(u.ID)
 									a.run("移出黑名单", func(ctx context.Context) (func(), error) {
-										_, err := a.core.Forum.RemoveBlacklist(ctx, id)
+										_, err := a.core.RemoveBlacklist(ctx, id)
 										return func() { a.loadBlacklist() }, err
 									})
 								}
@@ -477,8 +475,8 @@ func (a *App) blacklistPage(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
-	p := a.core.Local.Preferences()
-	return material.List(a.theme, &a.auxList).Layout(gtx, 3, func(gtx layout.Context, i int) layout.Dimensions {
+	p := a.core.Preferences()
+	return material.List(a.theme, &a.auxList).Layout(gtx, 4, func(gtx layout.Context, i int) layout.Dimensions {
 		switch i {
 		case 0:
 			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -490,7 +488,7 @@ func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
 					}),
 					layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						l := material.Label(a.theme, unit.Sp(11), "主题")
+						l := material.Label(a.theme, unit.Sp(11), "显示模式")
 						l.Color = colorMuted
 						return l.Layout(gtx)
 					}),
@@ -500,7 +498,8 @@ func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
 								dims, clicked := a.pill(gtx, "settings-theme:light", "浅色", "", p.Theme != 2, false)
 								if clicked && !a.busy {
 									p.Theme = 1
-									a.savePreferences(p)
+									theme := p.Theme
+									a.savePreferences(local.PreferencePatch{Theme: &theme})
 								}
 								return dims
 							}),
@@ -509,11 +508,34 @@ func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
 								dims, clicked := a.pill(gtx, "settings-theme:dark", "深色", "", p.Theme == 2, false)
 								if clicked && !a.busy {
 									p.Theme = 2
-									a.savePreferences(p)
+									theme := p.Theme
+									a.savePreferences(local.PreferencePatch{Theme: &theme})
 								}
 								return dims
 							}),
 						)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						l := material.Label(a.theme, unit.Sp(11), "配色")
+						l.Color = colorMuted
+						return l.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						children := make([]layout.FlexChild, 0, 6)
+						for _, scheme := range appearance.Schemes() {
+							scheme := scheme
+							children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								dims, clicked := a.schemeOption(gtx, scheme, p.ColorScheme == string(scheme))
+								if clicked && !a.busy {
+									value := string(scheme)
+									p.ColorScheme = value
+									a.savePreferences(local.PreferencePatch{ColorScheme: &value})
+								}
+								return dims
+							}))
+							children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout))
+						}
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						l := material.Label(a.theme, unit.Sp(11), "字号")
@@ -530,7 +552,8 @@ func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
 								dims, clicked := a.pill(gtx, fmt.Sprintf("settings-font:%d", index), labels[index], "", p.FontScale == sizes[index], false)
 								if clicked && !a.busy {
 									p.FontScale = sizes[index]
-									a.savePreferences(p)
+									scale := p.FontScale
+									a.savePreferences(local.PreferencePatch{FontScale: &scale})
 								}
 								return dims
 							}))
@@ -558,7 +581,8 @@ func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
 							dims := material.CheckBox(a.theme, &a.ipv6, "使用 IPv6 论坛地址").Layout(gtx)
 							if a.ipv6.Value != p.IPv6 && !a.busy {
 								p.IPv6 = a.ipv6.Value
-								a.savePreferences(p)
+								ipv6 := p.IPv6
+								a.savePreferences(local.PreferencePatch{IPv6: &ipv6})
 							}
 							return dims
 						}),
@@ -570,6 +594,8 @@ func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
 					)
 				})
 			})
+		case 2:
+			return a.storageSettings(gtx)
 		default:
 			return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -590,7 +616,7 @@ func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
 								dims, clicked := a.pill(gtx, "settings-version", "论坛发布信息", "clock", false, false)
 								if clicked && !a.busy {
 									a.run("查询发布信息", func(ctx context.Context) (func(), error) {
-										v, err := a.core.Forum.Version(ctx, false)
+										v, err := a.core.Version(ctx, false)
 										return func() {
 											var text strings.Builder
 											for _, version := range v.Versions {
@@ -628,8 +654,42 @@ func (a *App) settingsPage(gtx layout.Context) layout.Dimensions {
 	})
 }
 
-func (a *App) savePreferences(p local.Preferences) {
-	if err := a.core.Local.SetPreferences(context.Background(), p); err != nil {
+func (a *App) storageSettings(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return a.card(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Label(a.theme, unit.Sp(15), "存储与缓存")
+					l.Font.Weight = 700
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					l := material.Body2(a.theme, "清除可重新获取的图片和动画缓存；不会删除已保存图片、草稿、账号或偏好。")
+					l.Color = colorMuted
+					return l.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					dims, clicked := a.menuButton(gtx, "settings-clear-cache", "清除缓存", "trash")
+					if clicked && !a.busy {
+						a.clearCache()
+					}
+					return dims
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					dims, clicked := a.menuButton(gtx, "settings-clear-history", "清空最近阅读", "trash")
+					if clicked && !a.busy {
+						a.confirmClearHistory()
+					}
+					return dims
+				}),
+			)
+		})
+	})
+}
+
+func (a *App) savePreferences(patch local.PreferencePatch) {
+	if err := a.core.UpdatePreferences(context.Background(), patch); err != nil {
 		a.fail(err)
 		return
 	}
@@ -711,7 +771,7 @@ func (a *App) votePage(gtx layout.Context) layout.Dimensions {
 									id := a.current().ID
 									choice := a.choice
 									a.run("提交投票", func(ctx context.Context) (func(), error) {
-										updated, err := a.core.Forum.SubmitVote(ctx, id, choice)
+										updated, err := a.core.SubmitVote(ctx, id, choice)
 										return func() {
 											a.vote = updated
 											a.message = "投票已提交"
@@ -803,7 +863,7 @@ func (a *App) betPage(gtx layout.Context) layout.Dimensions {
 								} else {
 									id, choice := a.current().ID, a.choice
 									a.run("提交竞猜", func(ctx context.Context) (func(), error) {
-										updated, err := a.core.Forum.SubmitBet(ctx, id, choice, score)
+										updated, err := a.core.SubmitBet(ctx, id, choice, score)
 										return func() {
 											a.bet = updated
 											a.message = "竞猜已提交"

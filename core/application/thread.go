@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/VeinsureLee/BYR-Client/core/forum"
-	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
 // ErrStaleSession reports a result or history write bound to a session that has
@@ -66,7 +65,7 @@ func (a *App) ReadThread(ctx context.Context, board, id string, page forum.Page)
 		return ThreadDetail{}, err
 	}
 	ctx = withCredential(ctx, credential)
-	v, err := a.Forum.Thread(ctx, board, id, page)
+	v, err := a.forum.Thread(ctx, board, id, page)
 	if err != nil {
 		return ThreadDetail{}, err
 	}
@@ -101,17 +100,6 @@ func (a *App) ReadThread(ctx context.Context, board, id string, page forum.Page)
 	}
 	v.Collect = forum.Flag(collected)
 	return ThreadDetail{Thread: v, CanonicalBoard: canonical}, nil
-}
-
-// RecordThreadVisit appends a visit for the session generation that loaded the
-// thread. Stale generations are rejected so switching accounts cannot write one
-// account's reading history into another's state.
-func (a *App) RecordThreadVisit(ctx context.Context, generation uint64, board, id, title string) error {
-	info := a.SessionInfo()
-	if generation == 0 || info.Generation != generation || !info.Authenticated {
-		return ErrStaleSession
-	}
-	return a.Local.Visit(ctx, info.Username, local.History{Board: board, ID: id, Title: title})
 }
 
 // canonicalThreadBoard follows the response thread board, then the first floor

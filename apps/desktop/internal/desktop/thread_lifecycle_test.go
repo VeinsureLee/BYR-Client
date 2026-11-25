@@ -25,7 +25,7 @@ func TestDesktopThreadReadRecordsHistoryAfterBody(t *testing.T) {
 	h.has("你好 北邮")
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		entries := h.app.Core.Local.History("alice")
+		entries := h.app.Core.RecentHistory()
 		if len(entries) == 1 {
 			if entries[0].Board != "Go" || entries[0].ID != "42" || entries[0].Title == "" {
 				t.Fatalf("history entry = %+v", entries[0])
@@ -80,13 +80,8 @@ func TestDesktopQuickThreadSwitchKeepsNewestRoute(t *testing.T) {
 }
 
 func TestDesktopHistoryFailureKeepsThreadReadable(t *testing.T) {
-	h := newHarness(t)
+	h := newHarnessWithStorage(t, failingDisk{})
 	h.login()
-	store, err := local.Open(context.Background(), failingDisk{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.app.Core.Local = store
 	h.app.navigate(Route{Page: "thread", Name: "Go", ID: "42", Number: 1}, true)
 	h.idle()
 	deadline := time.Now().Add(2 * time.Second)
@@ -331,9 +326,8 @@ func TestDesktopLongTitleScrollsWithFloorsAtNarrowWindow(t *testing.T) {
 	h := newHarness(t)
 	h.login()
 	h.goTo(Route{Page: "thread", Name: "Go", ID: "42", Number: 1})
-	prefs := h.app.Core.Local.Preferences()
-	prefs.FontScale = 1.4
-	if err := h.app.Core.Local.SetPreferences(context.Background(), prefs); err != nil {
+	scale := float32(1.4)
+	if err := h.app.Core.UpdatePreferences(context.Background(), local.PreferencePatch{FontScale: &scale}); err != nil {
 		t.Fatal(err)
 	}
 	h.app.thread.Title = strings.Repeat("测试", 80)

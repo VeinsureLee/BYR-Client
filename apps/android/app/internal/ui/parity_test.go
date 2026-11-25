@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"image"
 	"image/color"
 	"io"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
-	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
 type recordingSystemBarWindow struct{ colors []color.NRGBA }
@@ -36,19 +34,12 @@ func TestSystemBarsFollowLightAndDarkTheme(t *testing.T) {
 	}()
 	window := &recordingSystemBarWindow{}
 	a.window = window
-	prefs := a.core.Local.Preferences()
-	prefs.Theme = 2
-	if err := a.core.Local.SetPreferences(context.Background(), prefs); err != nil {
-		t.Fatal(err)
-	}
+	setThemePreferenceForTest(t, a, 2)
 	a.applyTheme()
 	if len(window.colors) != 1 || window.colors[0] != colorBg {
 		t.Fatalf("dark system bar colors = %+v, want dark surface %v", window.colors, colorBg)
 	}
-	prefs.Theme = 1
-	if err := a.core.Local.SetPreferences(context.Background(), prefs); err != nil {
-		t.Fatal(err)
-	}
+	setThemePreferenceForTest(t, a, 1)
 	a.applyTheme()
 	if len(window.colors) != 2 || window.colors[1] != colorBg {
 		t.Fatalf("light system bar colors = %+v, want light surface %v", window.colors, colorBg)
@@ -108,22 +99,10 @@ func parityServer(t *testing.T) *httptest.Server {
 
 func parityApp(t *testing.T, baseURL string) *App {
 	t.Helper()
-	store, err := local.Open(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	credentials := &testCredentials{session: application.Credential{
 		Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}}
-	core, err := application.New(application.Options{
-		BaseURL: baseURL, HTTPClient: http.DefaultClient, Local: store, Credentials: credentials,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Restore(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	core := newUIFixtureCore(t, baseURL, http.DefaultClient, nil, credentials)
 	a, err := New(noopInvalidator{})
 	if err != nil {
 		t.Fatal(err)
@@ -384,11 +363,7 @@ func TestDarkThemeAppliesPalette(t *testing.T) {
 		a.theme.Bg = colorBg
 		a.theme.Fg = colorFg
 	}()
-	prefs := a.core.Local.Preferences()
-	prefs.Theme = 2
-	if err := a.core.Local.SetPreferences(context.Background(), prefs); err != nil {
-		t.Fatal(err)
-	}
+	setThemePreferenceForTest(t, a, 2)
 	a.stack = []Route{{Page: PageSelf}}
 	var router input.Router
 	var ops op.Ops
@@ -481,8 +456,8 @@ func TestModuleTabsFitNarrowScreens(t *testing.T) {
 				if dims.Size.X > gtx.Constraints.Max.X {
 					t.Fatalf("module strip overflow: got %v, max %v", dims.Size, gtx.Constraints.Max)
 				}
-				if dims.Size.Y <= 0 || dims.Size.Y > gtx.Constraints.Max.Y {
-					t.Fatalf("module strip height=%d, constraints=%v", dims.Size.Y, gtx.Constraints.Max)
+				if dims.Size.Y < gtx.Dp(unit.Dp(48)) || dims.Size.Y > gtx.Constraints.Max.Y {
+					t.Fatalf("module strip height=%d, want at least 48dp and within constraints=%v", dims.Size.Y, gtx.Constraints.Max)
 				}
 			})
 		}

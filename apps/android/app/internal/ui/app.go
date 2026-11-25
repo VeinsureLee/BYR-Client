@@ -7,7 +7,6 @@ import (
 	"image"
 	"image/color"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -27,7 +26,8 @@ import (
 	"gioui.org/widget/material"
 	"golang.org/x/exp/shiny/materialdesign/icons"
 
-	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/platform"
+	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/bootstrap"
+	"github.com/VeinsureLee/BYR-Client/core/appearance"
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/VeinsureLee/BYR-Client/core/local"
@@ -138,6 +138,10 @@ type App struct {
 	searchPagination     forum.Pagination
 	searchHasRun         bool
 	searchListQuery      string
+	searchIncomplete     bool
+	searchFailedBoards   int
+	searchRetryQuery     string
+	searchRetryPage      int
 	expandedPosts        map[string]bool
 	expandedMail         map[string]bool
 	pinnedExpanded       bool
@@ -161,13 +165,14 @@ type App struct {
 	threadViewports      map[listKey]threadViewportKey
 	threadMedia          map[listKey]uint64
 	mediaGeneration      uint64
+	imageCacheGeneration uint64
 	wideLayout           bool
 	threadVote           *forum.Vote
 	threadBet            *forum.Bet
 
 	listStates                                                                                                map[listKey]*widget.List
 	homeList, sectionList, timelineList, favoriteList, selfList, composeList, topList, recommendList, auxList widget.List
-	moduleTabList                                                                                             widget.List
+	emptyList, moduleTabList                                                                                  widget.List
 	moduleTabsKey, moduleTabsSelected                                                                         string
 	messageAfterLoad                                                                                          string
 
@@ -193,6 +198,7 @@ type App struct {
 	closed                   atomic.Bool
 	themed                   bool
 	dark                     bool
+	colorScheme              string
 	pageKey                  string
 	sectionTab               string
 	renderPanic              string
@@ -202,13 +208,23 @@ type App struct {
 	exitAt                   time.Time
 	sectionSwipeTag          struct{ marker byte }
 	sectionSwipe             sectionSwipeState
+	homeSnapshots            map[string]*homeNavigationSnapshot
+	lastHomeModule           string
+	homeRestorePending       *homeNavigationSnapshot
+	homeRestoreWait          bool
+	confirmation             *confirmationDialog
+	confirmationTag          struct{}
+	measuringEmpty           bool
+	retryAction              func()
 }
 
 type composeState struct {
 	board, title, content, replyID, editID string
+	session                                application.SessionInfo
 	titleEditor, contentEditor             widget.Editor
+	linkURL, linkText                      widget.Editor
 	anonymous, signature, email, outgo     widget.Bool
-	boardLocked, ready, loading            bool
+	boardLocked, ready, loading, linkOpen  bool
 	publishing, submitted                  bool
 	publishedID                            string
 }
@@ -229,7 +245,7 @@ func New(window invalidator) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{
 		window: window, version: "dev", theme: theme, ctx: ctx, close: cancel,
-		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, actionPulses: map[string]time.Time{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{}, expandedMail: map[string]bool{}, pinnedByRoute: map[string]bool{}, threadAnchors: make(map[listKey]threadAnchor), threadViewports: make(map[listKey]threadViewportKey), threadMedia: make(map[listKey]uint64), listStates: make(map[listKey]*widget.List),
+		updates: make(chan func(), 128), clicks: map[string]*widget.Clickable{}, actionPulses: map[string]time.Time{}, images: map[string]*mobileImage{}, expandedPosts: map[string]bool{}, expandedMail: map[string]bool{}, pinnedByRoute: map[string]bool{}, threadAnchors: make(map[listKey]threadAnchor), threadViewports: make(map[listKey]threadViewportKey), threadMedia: make(map[listKey]uint64), listStates: make(map[listKey]*widget.List), homeSnapshots: make(map[string]*homeNavigationSnapshot),
 		stack: []Route{{Page: PageLogin}}, favoriteTab: "boards", topTab: "top", searchMode: "ai", sectionTab: "favorites", imageScale: 1,
 		homeList:       widget.List{List: layout.List{Axis: layout.Vertical}},
 		sectionList:    widget.List{List: layout.List{Axis: layout.Vertical}},
@@ -240,11 +256,14 @@ func New(window invalidator) (*App, error) {
 		topList:        widget.List{List: layout.List{Axis: layout.Vertical}},
 		recommendList:  widget.List{List: layout.List{Axis: layout.Vertical}},
 		auxList:        widget.List{List: layout.List{Axis: layout.Vertical}},
+		emptyList:      widget.List{List: layout.List{Axis: layout.Vertical}},
 		moduleTabList:  widget.List{List: layout.List{Axis: layout.Horizontal}},
 		threadMenuList: widget.List{List: layout.List{Axis: layout.Vertical}},
 	}
 	a.searchEdit.SingleLine = true
-	a.searchEdit.Submit = true
+	// Search submits only through its visible button. Gio's Submit flag treats
+	// a newline inside an EditEvent as an IME action and truncates the suffix.
+	a.searchEdit.Submit = false
 	a.searchEdit.InputHint = key.HintAny
 	a.username.SingleLine = true
 	// Email-type IME keeps English usernames free of sentence capitalization
@@ -253,7 +272,14 @@ func New(window invalidator) (*App, error) {
 	a.password.SingleLine = true
 	a.password.Mask = '•'
 	a.password.InputHint = key.HintPassword
-	a.password.Submit = true
+	// Login is submitted by the visible button, not by candidate confirmation.
+	a.password.Submit = false
+	a.forwardIn.SingleLine = true
+	a.forwardIn.InputHint = key.HintEmail
+	a.blacklistIn.SingleLine = true
+	a.blacklistIn.InputHint = key.HintEmail
+	a.scoreIn.SingleLine = true
+	a.scoreIn.InputHint = key.HintNumeric
 	iconData := map[string][]byte{
 		"home": icons.ActionHome, "timeline": icons.ActionDateRange,
 		"favorite": icons.ActionFavoriteBorder, "favorite_on": icons.ActionFavorite,
@@ -299,7 +325,7 @@ func (a *App) Close() {
 	if a.closed.Swap(true) {
 		return
 	}
-	a.stopImageAnimations()
+	a.clearImageCache()
 	a.imageViewer = ""
 	a.imageViewerRaw = ""
 	a.imageScale = 1
@@ -394,6 +420,11 @@ func (a *App) handleSystemBack(gtx layout.Context) {
 		if !ok || ke.State != key.Press {
 			continue
 		}
+		if a.confirmation != nil {
+			a.confirmation = nil
+			a.window.Invalidate()
+			continue
+		}
 		if a.current().Page == PageCompose && (gtx.Focused(&a.compose.titleEditor) || gtx.Focused(&a.compose.contentEditor)) {
 			gtx.Execute(key.FocusCmd{})
 			continue
@@ -455,32 +486,17 @@ func (a *App) start() {
 			a.post(func() { a.initErr = fmt.Sprintf("客户端启动失败：%v", r) })
 		}
 	}()
-	dir, err := platform.DataDir()
-	if err != nil {
-		a.post(func() { a.initErr = "无法打开应用数据目录：" + err.Error() })
-		return
-	}
-	store, err := local.Open(a.ctx, platform.FileState{Path: filepath.Join(dir, "state.json")})
+	services, err := bootstrap.New(a.ctx, bootstrap.Config{BaseURL: os.Getenv("BYR_BASE_URL")})
 	if err != nil {
 		a.post(func() { a.initErr = err.Error() })
-		return
-	}
-	creds := platform.FileCredentials{Path: filepath.Join(dir, "session.json")}
-	core, err := application.New(application.Options{BaseURL: os.Getenv("BYR_BASE_URL"), Local: store, Credentials: creds})
-	if err != nil {
-		a.post(func() { a.initErr = err.Error() })
-		return
-	}
-	if err = core.Restore(a.ctx); err != nil {
-		a.post(func() { a.initErr = "恢复登录失败：" + err.Error() })
 		return
 	}
 	a.post(func() {
-		a.dir = dir
-		a.core = core
+		a.dir = services.DataDir
+		a.core = services.App
 		a.initErr = ""
 		a.ready = true
-		if core.Session().Token != "" {
+		if services.App.SessionInfo().Authenticated {
 			a.showTopRoot()
 		} else {
 			a.resetSessionUI()
@@ -491,6 +507,7 @@ func (a *App) start() {
 func (a *App) showHomeRoot() {
 	a.stack = []Route{{Page: PageHome}}
 	a.sectionTab = "favorites"
+	a.lastHomeModule = "favorites"
 	a.favoriteTab = "boards"
 	if a.core != nil {
 		a.loadFavorites()
@@ -518,7 +535,13 @@ func (a *App) resetSessionUI() {
 	a.cancel = nil
 	a.message = ""
 	a.failed = false
+	a.confirmation = nil
+	a.retryAction = nil
 	a.stack = []Route{{Page: PageLogin}}
+	a.homeSnapshots = make(map[string]*homeNavigationSnapshot)
+	a.lastHomeModule = "favorites"
+	a.homeRestorePending = nil
+	a.homeRestoreWait = false
 	a.sections = nil
 	a.section = forum.Section{}
 	a.boards = nil
@@ -558,8 +581,7 @@ func (a *App) resetSessionUI() {
 	a.forwardIn.SetText("")
 	a.choice = ""
 	a.lastClip = ""
-	a.stopImageAnimations()
-	a.images = map[string]*mobileImage{}
+	a.clearImageCache()
 	a.imageViewer = ""
 	a.imageViewerRaw = ""
 	a.imageScale = 1
@@ -589,6 +611,7 @@ func (a *App) resetSessionUI() {
 	a.topList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.recommendList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
+	a.emptyList = widget.List{List: layout.List{Axis: layout.Vertical}}
 	a.moduleTabList = newHorizontalModuleTabList()
 	a.moduleTabsKey = ""
 	a.moduleTabsSelected = ""
@@ -597,6 +620,10 @@ func (a *App) resetSessionUI() {
 	a.searchPagination = forum.Pagination{}
 	a.searchHasRun = false
 	a.searchListQuery = ""
+	a.searchIncomplete = false
+	a.searchFailedBoards = 0
+	a.searchRetryQuery = ""
+	a.searchRetryPage = 0
 	a.username.SetText("")
 	a.password.SetText("")
 	a.searchEdit.SetText("")
@@ -647,6 +674,7 @@ func (a *App) back() {
 }
 
 func (a *App) setTab(page Page) {
+	wasBusy := a.busy
 	if a.busy && !a.cancelRead() {
 		return
 	}
@@ -658,11 +686,25 @@ func (a *App) setTab(page Page) {
 			return
 		}
 	}
+	if module, rooted := a.homeModuleForStack(); rooted {
+		a.saveHomeSnapshot(module, !wasBusy && !a.failed)
+	}
+	a.homeRestorePending = nil
+	a.homeRestoreWait = false
+	if page == PageHome {
+		target := a.lastHomeModule
+		if target == "" {
+			target = "favorites"
+		}
+		if a.restoreHomeSnapshot(target) {
+			return
+		}
+		a.showHomeRoot()
+		return
+	}
 	switch page {
 	case PageSearch:
 		a.stack = []Route{{Page: PageSearch}}
-	case PageHome:
-		a.showHomeRoot()
 	case PageTop:
 		a.stack = []Route{{Page: PageTop}}
 		a.loadTop()
@@ -699,6 +741,7 @@ func (a *App) runWith(label string, work func(context.Context) (func(), error), 
 	if a.busy {
 		return
 	}
+	a.retryAction = nil
 	a.busy = true
 	a.reading = read
 	a.runSerial++
@@ -730,6 +773,9 @@ func (a *App) runWith(label string, work func(context.Context) (func(), error), 
 			}()
 			done, err = work(workCtx)
 		}()
+		if errors.Is(err, application.ErrStaleSession) {
+			err = context.Canceled
+		}
 		opCancel()
 		a.post(func() {
 			// A superseded request must not clear the state of the one that
@@ -761,6 +807,7 @@ func (a *App) runWith(label string, work func(context.Context) (func(), error), 
 			if done != nil {
 				done()
 			}
+			a.finishHomeSnapshotReload()
 			if a.messageAfterLoad != "" && !a.failed {
 				message := a.messageAfterLoad
 				a.messageAfterLoad = ""
@@ -835,6 +882,9 @@ func (a *App) scheduleNoticeExpiry(message string, generation uint64) {
 }
 
 func (a *App) click(key string) *widget.Clickable {
+	if a.measuringEmpty {
+		return new(widget.Clickable)
+	}
 	if a.clicks[key] == nil {
 		a.clicks[key] = new(widget.Clickable)
 	}
@@ -843,20 +893,20 @@ func (a *App) click(key string) *widget.Clickable {
 
 func (a *App) applyTheme() {
 	if a.ready && a.core != nil {
-		dark := a.core.Local.Preferences().Theme == 2
-		if !a.themed || a.dark != dark {
+		preferences := a.core.Preferences()
+		dark := preferences.Theme == 2
+		scheme := appearance.Normalize(appearance.Scheme(preferences.ColorScheme))
+		schemeID := string(scheme)
+		if !a.themed || a.dark != dark || a.colorScheme != schemeID {
 			a.themed = true
 			a.dark = dark
-			setPalette(dark)
+			a.colorScheme = schemeID
+			setPalette(dark, scheme)
 			colorHint = colorFaint
 			a.theme.Bg = colorBg
 			a.theme.Fg = colorFg
 			a.theme.ContrastBg = colorAccent
-			if dark {
-				a.theme.ContrastFg = color.NRGBA{R: 0x10, G: 0x24, B: 0x3D, A: 0xFF}
-			} else {
-				a.theme.ContrastFg = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
-			}
+			a.theme.ContrastFg = colorAccentText
 			if setter, ok := a.window.(systemBarColorSetter); ok {
 				setter.SetSystemBarColor(colorBg)
 			}
@@ -874,6 +924,7 @@ func (a *App) syncPageState() {
 		// Rebuild list state between pages. Resetting a list from inside its own
 		// item callback corrupts layout, so this runs only at frame start.
 		a.auxList = widget.List{List: layout.List{Axis: layout.Vertical}}
+		a.emptyList = widget.List{List: layout.List{Axis: layout.Vertical}}
 		a.moduleTabList = newHorizontalModuleTabList()
 		a.moduleTabsKey = ""
 		a.moduleTabsSelected = ""
@@ -908,7 +959,7 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 	a.ensureStarted()
 	a.applyTheme()
 	if a.core != nil {
-		if scale := a.core.Local.Preferences().FontScale; scale > 0 && scale != 1 {
+		if scale := a.core.Preferences().FontScale; scale > 0 && scale != 1 {
 			gtx.Metric.PxPerSp *= scale
 		}
 	}
@@ -917,6 +968,7 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 	}
 	if len(a.stack) > 0 {
 		a.syncPageState()
+		a.applyHomeSnapshotAfterLayout()
 	}
 	if a.renderPanic != "" {
 		return a.recoveryPage(gtx)
@@ -981,7 +1033,7 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 				page := a.current()
 				if !bottom || page.Page == PageLogin || page.Page == PageCompose ||
 					page.Page == PageThread || page.Page == PageSection && page.Sub == "pick" ||
-					page.Page == PageAccounts && (a.core == nil || a.core.Session().Token == "") {
+					page.Page == PageAccounts && (a.core == nil || !a.core.SessionInfo().Authenticated) {
 					return layout.Dimensions{}
 				}
 				return a.bottomNav(gtx)
@@ -1003,6 +1055,9 @@ func (a *App) Layout(gtx layout.Context) (dims layout.Dimensions) {
 		)
 	} else {
 		bodyDims = column(gtx, true)
+	}
+	if a.confirmation != nil {
+		a.confirmationOverlay(gtx)
 	}
 	// A page push during this frame must arm the back filter before the frame
 	// ends; otherwise a swipe during the first loading moment reaches Android
@@ -1041,17 +1096,21 @@ func (a *App) emptyOrPending(gtx layout.Context, text string) layout.Dimensions 
 }
 
 func (a *App) requestErrorPage(gtx layout.Context) layout.Dimensions {
-	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return a.centeredContent(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(24)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					l := material.H6(a.theme, "内容加载失败")
+					l.Alignment = text.Middle
 					l.Color = colorDanger
 					return l.Layout(gtx)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					l := material.Body2(a.theme, a.message)
+					l.Alignment = text.Middle
 					l.Color = colorMuted
 					l.MaxLines = 4
 					return l.Layout(gtx)
@@ -1080,7 +1139,10 @@ func (a *App) reloadCurrent() {
 	}
 	switch a.current().Page {
 	case PageHome:
-		a.loadHome()
+		if a.sectionTab == "favorites" {
+			a.messageAfterLoad = "刷新成功"
+		}
+		a.loadHomeModule()
 	case PageSection:
 		a.loadSectionPage()
 	case PageTop:
@@ -1099,7 +1161,11 @@ func (a *App) reloadCurrent() {
 	case PageFavorites:
 		a.loadFavorites()
 	case PageSearch:
-		a.loadSearch()
+		if a.searchRetryPage > 0 && a.searchRetryQuery != "" {
+			a.loadSearchPageFor(a.searchRetryQuery, a.searchRetryPage)
+		} else {
+			a.loadSearch()
+		}
 	case PageSelf:
 		a.loadSelf()
 	case PageMessages:
@@ -1390,22 +1456,31 @@ func (a *App) refreshCurrent() {
 		a.loadThreadPage(1)
 		return
 	}
-	route.Number = 1
-	a.stack[len(a.stack)-1].Number = 1
-	a.clearRouteModel(route)
+	// Favorites boards have no page number and are replaced only after the
+	// refresh succeeds. Keep the loaded list visible while waiting or failed.
+	preserveFavorites := route.Page == PageHome && a.sectionTab == "favorites"
+	if !preserveFavorites {
+		route.Number = 1
+		a.stack[len(a.stack)-1].Number = 1
+		a.clearRouteModel(route)
+		a.resetRoutePosition(route)
+	}
 	if route.Page == PageSearch {
 		a.searchResults = nil
 		a.searchPagination = forum.Pagination{}
 		a.searchHasRun = true
+		a.searchIncomplete = false
+		a.searchFailedBoards = 0
+		a.searchRetryQuery = ""
+		a.searchRetryPage = 0
 	}
-	a.resetRoutePosition(route)
 	a.messageAfterLoad = "刷新成功"
 	if route.Page == PageSearch && (a.searchMode != "all" && a.searchMode != "user" || strings.TrimSpace(a.searchEdit.Text()) == "") {
 		a.messageAfterLoad = ""
 	}
 	switch route.Page {
 	case PageHome:
-		a.loadHome()
+		a.loadHomeModule()
 	case PageSection:
 		a.loadSectionPage()
 	case PageTop:
@@ -1494,7 +1569,11 @@ func (a *App) statusBar(gtx layout.Context) layout.Dimensions {
 							if clicked {
 								a.failed = false
 								a.message = ""
-								a.reloadCurrent()
+								if a.retryAction != nil {
+									a.retryAction()
+								} else {
+									a.reloadCurrent()
+								}
 							}
 							return dims
 						}))
@@ -1510,6 +1589,7 @@ func (a *App) statusBar(gtx layout.Context) layout.Dimensions {
 						if clicked {
 							a.message = ""
 							a.failed = false
+							a.retryAction = nil
 							a.window.Invalidate()
 						}
 						return dims
@@ -1863,7 +1943,7 @@ func (a *App) inputBox(gtx layout.Context, editor *widget.Editor, hint string) l
 	if min := gtx.Dp(unit.Dp(48)); size.Y < min {
 		size.Y = min
 	}
-	borderColor := colorBorder
+	borderColor := colorInputBorder
 	if gtx.Focused(editor) {
 		borderColor = a.theme.ContrastBg
 	}
@@ -1880,6 +1960,22 @@ func (a *App) primaryButton(gtx layout.Context, key, label string) (layout.Dimen
 	return a.primaryButtonState(gtx, key, label, true)
 }
 
+func centeredTextOffset(container, text image.Point) image.Point {
+	return image.Pt((container.X-text.X)/2, (container.Y-text.Y)/2)
+}
+
+func (a *App) measureButtonLabel(gtx layout.Context, label string, fg color.NRGBA, size image.Point) (layout.Dimensions, op.CallOp) {
+	macro := op.Record(gtx.Ops)
+	labelGtx := gtx
+	labelGtx.Constraints.Min = image.Point{}
+	labelGtx.Constraints.Max = size
+	textLabel := material.Label(a.theme, unit.Sp(15), label)
+	textLabel.Color = fg
+	textLabel.Alignment = text.Middle
+	dims := textLabel.Layout(labelGtx)
+	return dims, macro.Stop()
+}
+
 func (a *App) primaryButtonState(gtx layout.Context, key, label string, enabled bool) (layout.Dimensions, bool) {
 	btn := a.click(key)
 	clicked := btn.Clicked(gtx)
@@ -1890,18 +1986,13 @@ func (a *App) primaryButtonState(gtx layout.Context, key, label string, enabled 
 		bg = colorBorder
 		fg = colorMuted
 	} else if btn.Pressed() {
-		bg = pressedSurface(bg)
+		bg = colorAccentPress
 	}
 	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(size)
 		paint.FillShape(gtx.Ops, bg, clip.RRect{Rect: image.Rectangle{Max: size}, NE: 12, NW: 12, SE: 12, SW: 12}.Op(gtx.Ops))
-		labelMacro := op.Record(gtx.Ops)
-		l := material.Label(a.theme, unit.Sp(15), label)
-		l.Color = fg
-		l.Alignment = text.Middle
-		labelDims := l.Layout(gtx)
-		labelCall := labelMacro.Stop()
-		op.Offset(image.Pt((size.X-labelDims.Size.X)/2, (size.Y-labelDims.Size.Y)/2)).Add(gtx.Ops)
+		labelDims, labelCall := a.measureButtonLabel(gtx, label, fg, size)
+		op.Offset(centeredTextOffset(size, labelDims.Size)).Add(gtx.Ops)
 		labelCall.Add(gtx.Ops)
 		return layout.Dimensions{Size: size}
 	})

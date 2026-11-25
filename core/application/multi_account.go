@@ -41,7 +41,7 @@ func (a *App) SavedAccounts(ctx context.Context) ([]SavedAccount, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	session := a.Session()
+	session := a.sessionSnapshot()
 	store, supportsAccounts := a.credentials.(AccountCredentialStore)
 	var saved []Credential
 	if supportsAccounts {

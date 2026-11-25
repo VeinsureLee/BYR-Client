@@ -36,18 +36,35 @@ func (a *App) homeView(c *ui.Context) {
 		ui.Column(c).Width(224).Shrink(0).FillHeight().Background(c.Theme().Surface).
 			Border(1, c.Theme().Border).Radius(12).Padding(12).Gap(4).Children(func() {
 			ui.Text(c, "分区").FontSize(a.textSize(c, 12)).FontWeight(600).TextColor(c.Theme().TextMuted).Padding(2, 8)
-			ui.Scroll(c).FillWidth().Grow(1).Children(func() {
-				ui.Column(c).FillWidth().Gap(2).Children(func() {
-					// Subsections live in the board pane as navigable cards; the
-					// sidebar keeps only the root sections.
-					for _, s := range a.sections {
-						a.sectionButton(c, s)
-					}
+			if len(a.sections) == 0 {
+				emptyState(c, "board", "暂无可浏览的分区", "当前没有可显示的分区。")
+			} else {
+				ui.Scroll(c).FillWidth().Grow(1).Children(func() {
+					ui.Column(c).FillWidth().Gap(2).Children(func() {
+						// Subsections live in the board pane as navigable cards; the
+						// sidebar keeps only the root sections.
+						for _, s := range a.sections {
+							a.sectionButton(c, s)
+						}
+					})
 				})
-			})
+			}
 		})
 		a.homeContent(c)
 	})
+}
+
+func (a *App) homeScrollState() *ui.ScrollState {
+	if a.homeScrolls == nil {
+		a.homeScrolls = make(map[string]*ui.ScrollState)
+	}
+	key := string(a.section.Name) + "\x00" + a.boardFilter
+	state := a.homeScrolls[key]
+	if state == nil {
+		state = &ui.ScrollState{}
+		a.homeScrolls[key] = state
+	}
+	return state
 }
 
 func (a *App) homeContent(c *ui.Context) {
@@ -73,7 +90,18 @@ func (a *App) homeContent(c *ui.Context) {
 				a.navigate(Route{Page: "top", Sub: "recommend"}, true)
 			})
 		})
-		ui.Scroll(c).Grow(1).FillWidth().Children(func() {
+		hasBoard := false
+		for _, board := range a.boards {
+			if has(board.Name+" "+board.Description, a.boardFilter) {
+				hasBoard = true
+				break
+			}
+		}
+		if !hasBoard && len(a.section.Subsections) == 0 {
+			emptyState(c, "board", "没有匹配的版面", "换一个关键词，或选择其他分区。")
+			return
+		}
+		ui.Scroll(c).Grow(1).FillWidth().TrackScroll(a.homeScrollState()).Children(func() {
 			ui.Column(c).FillWidth().Gap(10).Children(func() {
 				if len(a.section.Subsections) > 0 {
 					ui.Text(c, "子分区").FontSize(a.textSize(c, 12)).FontWeight(600).TextColor(c.Theme().TextMuted).Padding(2, 4)
@@ -83,15 +111,10 @@ func (a *App) homeContent(c *ui.Context) {
 						}
 					})
 				}
-				n := 0
 				for _, b := range a.boards {
 					if has(b.Name+" "+b.Description, a.boardFilter) {
 						a.boardRow(c, b)
-						n++
 					}
-				}
-				if n == 0 && len(a.section.Subsections) == 0 {
-					emptyState(c, "board", "没有匹配的版面", "换一个关键词，或选择其他分区。")
 				}
 			})
 		})
@@ -181,55 +204,17 @@ func (a *App) sectionButton(c *ui.Context, s forum.Section) {
 }
 func (a *App) loadSection(name string) {
 	a.loadData("加载分区", func(ctx context.Context) (func(), error) {
-		v, err := a.Core.Forum.Section(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		a.resolveSubsections(ctx, &v)
-		return func() { a.section = v; a.boards = v.Boards }, nil
+		v, err := a.Core.LoadSection(ctx, name)
+		return func() { a.section = v; a.boards = v.Boards }, err
 	})
 }
 func (a *App) loadAllBoards() {
 	a.loadData("加载全部版面", func(ctx context.Context) (func(), error) {
-		var out []forum.Board
-		seen := map[string]bool{}
-		visited := map[forum.Scalar]bool{}
-		var visit func(forum.Section) error
-		visit = func(s forum.Section) error {
-			if visited[s.Name] {
-				return nil
-			}
-			visited[s.Name] = true
-			v, err := a.Core.Forum.Section(ctx, string(s.Name))
-			if err != nil {
-				return err
-			}
-			for _, b := range v.Boards {
-				if !seen[b.Name] {
-					seen[b.Name] = true
-					out = append(out, b)
-				}
-			}
-			for _, sub := range v.Subsections {
-				if err := visit(sub); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		roots, err := a.Core.Forum.Sections(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, s := range roots.Sections {
-			if err = visit(s); err != nil {
-				return nil, err
-			}
-		}
+		out, err := a.Core.LoadAllBoards(ctx)
 		return func() {
 			a.boards = out
 			a.section = forum.Section{}
-		}, nil
+		}, err
 	})
 }
 func (a *App) boardRow(c *ui.Context, b forum.Board) {
@@ -282,12 +267,7 @@ func (a *App) boardView(c *ui.Context) {
 			a.action(c, label, "star", tone, func() {
 				b := a.board
 				a.run("更新版面收藏", func(ctx context.Context) (func(), error) {
-					var err error
-					if bool(b.IsFavorite) {
-						_, err = a.Core.Forum.RemoveFavorite(ctx, b.Name, "0")
-					} else {
-						_, err = a.Core.Forum.AddFavorite(ctx, b.Name, "0")
-					}
+					_, err := a.Core.SetFavorite(ctx, b.Name, "0", !bool(b.IsFavorite))
 					return func() {
 						a.board.IsFavorite = forum.Flag(!bool(b.IsFavorite))
 						if bool(b.IsFavorite) {
@@ -312,7 +292,7 @@ func (a *App) boardView(c *ui.Context) {
 }
 func (a *App) boardArticleList(c *ui.Context, articles []forum.Article) {
 	if len(articles) == 0 {
-		emptyState(c, "message", "暂无主题", "这里还没有可显示的主题，稍后刷新试试。")
+		a.emptyRequestState(c, "message", "暂无主题", "这里还没有可显示的主题，稍后刷新试试。")
 		return
 	}
 	pinned := make([]forum.Article, 0, len(articles))
@@ -433,7 +413,7 @@ func (a *App) articleList(c *ui.Context, articles []forum.Article) {
 		return
 	}
 	if len(articles) == 0 {
-		emptyState(c, "message", "暂无主题", "这里还没有可显示的主题，稍后刷新试试。")
+		a.emptyRequestState(c, "message", "暂无主题", "这里还没有可显示的主题，稍后刷新试试。")
 		return
 	}
 	key := a.articleListKey()
@@ -460,7 +440,7 @@ func (a *App) timelineView(c *ui.Context) {
 		}
 	})
 	if len(a.articles) == 0 {
-		emptyState(c, "clock", "时间线为空", "论坛没有返回可显示的帖子，稍后刷新试试。")
+		a.emptyRequestState(c, "clock", "时间线为空", "论坛没有返回可显示的帖子，稍后刷新试试。")
 		return
 	}
 	a.articleList(c, a.articles)
@@ -471,14 +451,26 @@ func (a *App) loadFavorites() {
 	a.loadData("加载收藏", func(ctx context.Context) (func(), error) {
 		switch r.Sub {
 		case "collection":
-			v, err := a.Core.Forum.Collection(ctx, "", forum.Page{Number: r.Number})
+			v, err := a.Core.LoadCollection(ctx, "", forum.Page{Number: r.Number})
 			return func() { a.collection = v }, err
 		default:
-			v, err := a.Core.Forum.Favorites(ctx, "0")
+			v, err := a.Core.LoadFavorites(ctx, "0")
 			return func() { a.favorites = v }, err
 		}
 	})
 }
+func favoriteTreeEmpty(f forum.Favorite) bool {
+	if len(f.Sections) > 0 || len(f.Boards) > 0 {
+		return false
+	}
+	for _, child := range f.SubFavorites {
+		if !favoriteTreeEmpty(child) {
+			return false
+		}
+	}
+	return true
+}
+
 func (a *App) favoritesView(c *ui.Context) {
 	ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
 		for _, v := range []struct{ key, label, icon string }{
@@ -499,7 +491,7 @@ func (a *App) favoritesView(c *ui.Context) {
 	switch a.route.Sub {
 	case "collection":
 		if len(a.collection.Entries) == 0 {
-			emptyState(c, "star", "还没有收藏文章", "在帖子阅读页点击收藏，文章就会出现在这里。")
+			a.emptyRequestState(c, "star", "还没有收藏文章", "在帖子阅读页点击收藏，文章就会出现在这里。")
 			return
 		}
 		ui.Scroll(c).FillWidth().Grow(1).Children(func() {
@@ -531,6 +523,10 @@ func (a *App) favoritesView(c *ui.Context) {
 		})
 		a.pager(c, a.collection.Pagination, a.pageNumber)
 	default:
+		if favoriteTreeEmpty(a.favorites) {
+			a.emptyRequestState(c, "star", "还没有收藏版面", "在版面页点击收藏，常用版面会集中在这里。")
+			return
+		}
 		ui.Scroll(c).FillWidth().Grow(1).Children(func() {
 			ui.Column(c).FillWidth().Gap(6).Children(func() {
 				var tree func(forum.Favorite)
@@ -553,9 +549,6 @@ func (a *App) favoritesView(c *ui.Context) {
 					}
 				}
 				tree(a.favorites)
-				if len(a.favorites.Boards)+len(a.favorites.Sections)+len(a.favorites.SubFavorites) == 0 {
-					emptyState(c, "star", "还没有收藏版面", "在版面页点击收藏，常用版面会集中在这里。")
-				}
 			})
 		})
 	}

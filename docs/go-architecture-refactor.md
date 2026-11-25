@@ -1,5 +1,7 @@
 # BYR Client Go 接口与包组织优化设计
 
+`2484f85` 之后的边界和迁移路线见 [0.6.3 API 与界面解耦](#063-api-与界面解耦)。主题读取合同已经落地，本文的协议路径表可用于行为对照。
+
 基线为 `cc7fe4d`（0.6.3）。建议沿用现有分层与手动构造注入，先把主题读取、全站搜索、消息和草稿的业务规则集中到共享应用层，再按调用边界整理文件。桌面和 Android 各自控制页面、返回栈、渲染和系统交互。两端继续直接编译共享 Go 核心。
 
 ## 代码审查与参考
@@ -135,3 +137,109 @@ func (a *App) RecordThreadVisit(ctx context.Context, generation uint64, board, i
 | 界面契约 | 延用桌面返回位置、Android 返回与 IME、文章收藏、目标楼层和草稿测试。若将「繁忙时禁止一切导航」改成「只锁写目标」，更新专项行为用例以覆盖读取时返回和过期丢弃。 |
 
 本次已通过四个主模块及 Gio 探针的 test/vet、核心 race 测试和 `android/arm64` 核心交叉编译。Android 尺寸、真实输入法、滚动和系统返回验收见 [UI 设计的验证边界](ui-redesign.md#实施与验收)。现有 `docs/architecture.md` 中 Android 待选型的段落早于 Gio 生产模块，以当前 Go 源码、构建配置和本设计的基线说明核对。
+
+## 0.6.3 API 与界面解耦
+
+推荐沿用**共享应用层、协议与存储适配器、各端独立界面**，通过显式构造注入组装。现有搜索、主题读取和发布方法已提供这个方向的基础。先收口真实的调用路径，再移动包。每一批都能单独回归和构建。
+
+### 当前边界与调整理由
+
+在 `core`、桌面、Android 生产模块、`tools` 和 Gio 探针的目录中分别设置 `GOWORK=off`，用 `go list -mod=readonly ./...` 盘点包与直接导入。核心保持标准库依赖，MyGo 和 Gio 已处于不同模块。可利用现有边界继续收敛应用内部的依赖。
+
+| 优先级 | 源码证据 | 影响与调整 |
+| --- | --- | --- |
+| P1 | `application.App` 公开 `Forum`、`Local`，`Session()` 还能返回含 token 的凭据。`ReadThread` 和 `RecordThreadVisit` 已共享会话代际、版面规范和历史合同。 | 将私信、分区版面、偏好、历史、媒体逐个迁到 `App` 用例。多个端点组成的用例绑定同一会话，UI 通过 `SessionInfo` 获得身份，用完一组入口再收起相应底层入口。 [应用构造及凭据](../core/application/app.go#L39-L89) · [现行主题读取](../core/application/thread.go#L56-L114) |
+| P1 | 双端写信页面选择 `SendMail` 或 `ReplyMail` 端点。Android 设置直接序列化 `Local.Preferences`，清空历史回调即时再读用户名。 | 独立的应用方法接受发送动作、信件标识与纯文本快照；历史清空绑定确认时的账号。页面只在收到结果后决定导航、焦点和是否保留内容。 [桌面写信](../apps/desktop/internal/desktop/mail.go#L270-L292) · [Android 写信](../apps/android/app/internal/ui/mail.go#L779-L806) · [Android 历史](../apps/android/app/internal/ui/account.go#L325-L364) |
+| P1 | 桌面图片回调检查当前条目身份，Android 回调写入捕获的条目并推进 `mediaGeneration`，请求由窗口上下文启动。 | 清缓存、切号和关窗都要取消旧代资源任务。UI 按账号与媒体缓存代际调度和提交，应用层提供带会话约束的资源读取，协议层继续掌握哪些源站可以携带认证。 [桌面回调](../apps/desktop/internal/desktop/images.go#L43-L84) · [Android 回调](../apps/android/app/internal/ui/images.go#L184-L228) · [媒体协议](../core/forum/media.go#L14-L75) |
+| P2 | 桌面已有 `bootstrap.New`，返回值仍暴露 `Forum`。Android 的 `ui.start` 同时准备平台目录、JSON 状态、凭据、HTTP 配置、会话与首屏。 | 将 Android 平台组装移入 `internal/bootstrap`，保留异步初始化及可恢复错误。桌面保留现有组装入口。网络默认值和地址校验放在组装或协议边界，字号、配色和镜像开关由本地偏好管理。 [桌面组装](../apps/desktop/internal/bootstrap/bootstrap.go#L12-L37) · [Android 启动](../apps/android/app/internal/ui/app.go#L443-L487) |
+| P2 | `core/forum` 同时提供 HTTP 实现、线上容错 DTO 和 UI／本地文件使用的附件等数据。`core/content` 与 `core/local` 已依赖这些值。 | 先在包内按主题、信箱、搜索、分区等组织端点。待调用换完，把传输及线上格式移入核心私有包，稳定数据类型留在 `core/forum`。用历史状态文件验证附件序列化。 [请求入口](../core/forum/client.go#L141-L181) · [正文依赖](../core/content/body.go#L11-L48) · [草稿格式](../core/local/store.go#L42-L74) |
+| P2 | Android `setTab` 直接重建分区栈，多个页面共用一个可变模型，当前 `restoreRoute` 需先清除再加载。 | 壳层负责来源标签、路由、页码和滚动锚点，每项读取只更新所属快照。搜索和提醒可打开同一主题，来源不同的页面位置仍独立。API 接收资源标识和分页参数。 [切换标签](../apps/android/app/internal/ui/app.go#L649-L683) · [路由恢复](../apps/android/app/internal/ui/route_state.go#L107-L174) |
+
+### 请求路径与状态归属
+
+以搜索页为第一条新切片。MyGo 和 Gio 把输入事件变成一次 `Search` 或 `LookupUser` 意图，在界面线程捕获关键词、模式、页码与当前会话。`application` 决定校验、数据来源、并发上限、分页与部分结果，协议适配器负责路径、编码、认证、解码及服务端错误。回调只在 UI 线程提交，匹配会话代际、路由身份和请求序号后更新相应结果。改变主题、空态排版和列表宽度只重新渲染快照。 [现行搜索合同](../core/application/search.go#L17-L80) · [现行 Android 搜索](../apps/android/app/internal/ui/search.go) · [现行桌面搜索](../apps/desktop/internal/desktop/search.go)
+
+界面消费方在替身测试确实需要时声明小接口，下例以搜索为限。建议在同一个 `App` 上新增 `LookupUser`，继续复用现有标题搜索合同。应用层接入 HTTP 适配器时也按实际用例声明需要的读取或写入能力。各能力可由同一客户端实现和复用同一传输。
+
+```go
+// 放在需要替身的搜索界面包内。
+type searchService interface {
+    Search(context.Context, application.SearchRequest) (application.SearchResult, error)
+    LookupUser(context.Context, string) (forum.User, error)
+}
+```
+
+| 边界 | 责任和结果 |
+| --- | --- |
+| MyGo／Gio 页面 | 负责控件实例、输入组合态、按键、占位、可访问性、对齐、重试入口、分页跳转和锚点。每种结果有明确显示分支，包括尚未请求、第一次加载、有旧值时更新、成功空结果、部分结果、可重试失败。 |
+| `core/application` | 保留 `ReadThread`、`Search`、`Publish`、`React` 等现有用例。按需求逐步加 `LookupUser`、分区／版面查询、信件发送／回复、偏好更新及账号历史管理。消费方可直接依赖具体 `App`，用例测试用窄依赖替身或现有本地 HTTP 夹具。纯文本发送、分页限制、权限、写操作互斥及已发布但清理失败的语义在此收拢。 |
+| HTTP 适配器 | 单一 transport 处理 OAuth、URL、镜像、分页参数、表单、JSON 兼容、认证来源、取消及安全上限。线上 `Scalar`／`Flag`／对象或数组的容错在此转换。应用取得可判定的未认证、解码或请求失败等错误，页面据此反馈。 |
+| 本地适配与平台 | `local.Store` 事务保持 `state.json` v1 的历史、草稿和偏好兼容。偏好只更新本次操作的字段，避免配色与 IPv6 设置相互覆盖。凭据、目录、磁盘、保存图片、系统栏和窗口调度由各端平台适配。网络图片解码及缓存淘汰由对应端的媒体状态负责。 |
+
+请求开始前固定账号和会话代际，并复用 `ReadThread` 的凭据绑定方式。`Token` 对绑定的旧快照继续执行过期校验，界面处理未认证时只使用非敏感状态。会话切换后的旧结果与旧错误均丢弃。请求辅助数据和媒体可以独立取消。发送、回复、评价、删除和发布以具体操作目标互斥，用户离开后已执行的结果仍可查验，超时结果按未知状态处理。保留写请求只由明确动作发起的约定。 [Token 校验](../core/application/app.go#L71-L88) · [代际绑定](../core/application/thread.go#L48-L87)
+
+使用已有 `ReadThread` 作回归样板。实际显示的主题页和显式刷新的目标页分开；等待和失败保留已显示正文、规范版面和锚点，成功提交第一页时再清除提醒目标并回到顶部。分区返回也先恢复页面身份，再按当前数据状态决定是否请求。历史清空串行化当前账号的历史事务，丢弃清除之前已排队但未应用的访问记录；之后新打开主题可产生新记录。媒体清理通过媒体任务代际独立处理。 [界面行为及回归清单](ui-redesign.md#063-体验修订)
+
+### 目录结构
+
+应用程序保留各自 `go.mod`、资源目录和打包入口。`core` 继续被两个生产模块共享。把首批重构集中在包的职责和文件名，独立子包在接口稳定且拥有独立状态后提取。
+
+```text
+core/
+  open.go                    # 目标组装入口 core.Open，创建共享应用和私有适配器
+  application/               # session、browse、thread、search、messages、publish、preferences、history
+  forum/                     # 共享版面、主题、信件、附件等业务值与标识
+  internal/byrhttp/           # HTTP 客户端及协议 DTO，按功能分文件
+  local/                     # 本地文档与事务，draft、history、preferences 分文件
+  content/                   # UBB、文本和选区操作
+  appearance/                # 两端共用的配色 ID、语义色和默认值
+  resources/                 # 字体、表情与许可
+apps/desktop/
+  main.go                    # 启动、创建窗口、接入生命周期
+  internal/bootstrap/         # 组装核心，注入配置和平台适配器
+  internal/platform/          # 数据目录、凭据、文件与系统服务
+  internal/desktop/           # shell、navigation、tasks、style、各功能页
+apps/android/app/
+  main.go                    # 创建窗口、事件循环、insets 和生命周期
+  internal/bootstrap/         # 从 UI 提出的启动组装
+  internal/platform/          # 私有目录、凭据与保存图片
+  internal/ui/                # app、shell、navigation、tasks、input、style、各功能页
+tools/dev/                   # 现有开发和构建命令入口
+tools/internal/buildflow/     # 各模块检查与打包
+```
+
+```mermaid
+flowchart LR
+    Entrypoint[桌面／Android 入口] --> Bootstrap[各端 bootstrap]
+    Entrypoint --> View[各端 UI]
+    Bootstrap --> Platform[各端 platform]
+    Bootstrap --> Open[core.Open 组装]
+    Open --> App[core/application 用例]
+    Open --> HTTP[core/internal/byrhttp 协议]
+    Open --> Local[core/local 文档]
+    View --> App
+    View --> Values[core/forum 业务值]
+    View --> Style[core/appearance 语义色]
+    App --> Values
+    App --> Local
+    HTTP --> Values
+    Local --> Values
+```
+
+图中箭头表示包依赖。`core.Open` 仅做装配，构造一个 HTTP 客户端和本地存储，再注入应用层消费的能力。`core/internal/byrhttp` 仅供 `core` 模块树内使用，两个应用通过共享装配入口取得 `App`。`forum` 中的共享值尽量沿用已有字段和语义，只有线上形状或持久化合同确有差异时才引入转换。配色表可用标准库色值；各端实例将其转换为主题和自绘组件状态。近期 `App`、路由和页面留在同一本端 UI 包，以文件和具体状态所有者缩短导航跨度。
+
+组装时先准备本地存储和凭据适配器，由应用层初始化会话状态。`core.Open` 可注入一个协议客户端构造函数，应用层把绑定令牌解析和 IPv6 偏好的读取回调传给它，再获得所需的用例依赖。构造过程不联网，恢复会话与首个页面请求由生命周期显式发起。应用层提供供页面判断的业务错误，协议解析失败的诊断细节沿用现有脱敏路径。
+
+`go.work` 继续聚合 `core`、`apps/desktop` 和 `tools`。Android 生产模块、Gio 探针继续通过 `GOWORK=off` 与相对 `replace` 独立编译。MyGo 的 `main: "."`、`gogio … .`、二进制名与 APK 标识保持原有入口。将来增加独立可执行命令时使用对应模块的 `cmd/<name>`；现有入口迁移可独立评估并同步打包、CI、资源路径及运行文档。邻近的 `_test.go` 和 `testdata/` 存放应用、协议、UI 对应的夹具。 [工作区](../go.work) · [桌面入口配置](../apps/desktop/mygo.json#L7) · [Android 打包](../tools/internal/buildflow/android_production.go#L63-L70) · [构建流程](build.md)
+
+### 迁移与验收
+
+| 批次 | 改动和通过条件 |
+| --- | --- |
+| 1. 界面行为补齐 | 按 UI 文档补输入、空态、分区、缓存和外观。主题刷新、分页、点赞、提醒锚点、编辑草稿和账号迁移为回归基线。界面修复可使用现有用例独立交付。 |
+| 2. 贯通搜索与启动 | 双端搜索通过 `application` 查询人物与标题，错误、部分结果和旧响应有独立测试。Android 组装移出 UI，测试可注入临时目录、HTTP 和凭据替身；首屏、过期凭据、启动失败及恢复路径通过。 |
+| 3. 逐功能收口 | 私信、分区／收藏、媒体、偏好／历史按功能提交。每个提交从两个真实页面入口走同一用例，用 `httptest` 核对已支持的请求和编码。清空历史和媒体缓存验证切号、取消、持久化失败、旧回调交错。完成后将 `App.Forum`、`App.Local` 私有化，组装结果只给页面必须的服务，UI 登录判断迁到 `SessionInfo`。 |
+| 4. 移动协议与拆大文件 | 先在现有包内分文件，并让 Gio 探针改用适合其离线验证目的的核心入口。全部生产调用收口后，将 HTTP 和协议测试作为一个兼容批次移到 `core/internal/byrhttp`，接到 `core.Open`。避免旧 `forum` 包向回导入该实现而形成环。附件、草稿和历史用旧 `state.json` 夹具验证。继续按职责拆 UI 壳层、导航、任务和功能文件。 |
+| 5. 固化依赖与发布验证 | 扩展现有架构测试，生产 UI 依赖共享用例与业务值，请求适配器仅由核心组装引入，核心继续隔离 UI 和平台。用 `go list -deps` 检查两端独立依赖，运行 `go run ./tools/dev check`、`go run ./tools/dev check --scope gio-probe`、`go run ./tools/dev check android-core`。在可以运行 race detector 的环境复验核心切号、历史和草稿并发，再按构建文档出双端预览，按 UI 验收表走原生窗口和真机输入。 [现有架构检查](../core/architecture_test.go#L14) |
+
+当前基线的专项离线检查已通过，包括既有的顺序输入模拟，以及桌面刷新错误状态下的末楼和分页点击、双端版面别名和部分刷新位置用例。这些结果记录当前行为，新增的原生输入、空态、分区、缓存和配色按各批次的验收重新验证。

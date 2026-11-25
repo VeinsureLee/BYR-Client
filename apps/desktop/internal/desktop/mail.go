@@ -49,7 +49,7 @@ func (a *App) messageTabs(c *ui.Context) {
 					kind = "at"
 				}
 				a.run("全部标为已读", func(ctx context.Context) (func(), error) {
-					_, err := a.Core.Forum.ReadAllRefers(ctx, kind)
+					_, err := a.Core.MarkAllRefersRead(ctx, kind)
 					return func() {
 						a.load()
 						a.notice("已全部读")
@@ -62,7 +62,7 @@ func (a *App) messageTabs(c *ui.Context) {
 func (a *App) contactsView(c *ui.Context) {
 	a.messageTabs(c)
 	if len(a.contacts) == 0 {
-		emptyState(c, "message", "还没有私信", "在用户资料页可以给站内联系人发私信。")
+		a.emptyRequestState(c, "message", "还没有私信", "在用户资料页可以给站内联系人发私信。")
 		return
 	}
 	ui.Scroll(c).FillWidth().Grow(1).Children(func() {
@@ -135,7 +135,7 @@ func (a *App) chatView(c *ui.Context) {
 		a.action(c, "发送私信", "send", filled, func() { a.navigate(Route{Page: "mail-compose", Name: a.route.Name}, true) })
 	})
 	if len(a.chat) == 0 {
-		emptyState(c, "message", "还没有会话消息", "发送第一封私信开始聊天。")
+		a.emptyRequestState(c, "message", "还没有会话消息", "发送第一封私信开始聊天。")
 		return
 	}
 	ui.Scroll(c).FillWidth().Grow(1).Children(func() {
@@ -187,7 +187,7 @@ func (a *App) mailboxView(c *ui.Context) {
 		}
 	})
 	if len(a.mailbox.Mails) == 0 {
-		emptyState(c, "mail", "信箱是空的", "这里会显示收到的站内信。")
+		a.emptyRequestState(c, "mail", "信箱是空的", "这里会显示收到的站内信。")
 		return
 	}
 	ui.Scroll(c).FillWidth().Grow(1).Children(func() {
@@ -239,14 +239,14 @@ func (a *App) mailView(c *ui.Context) {
 			a.action(c, "删除信件", "trash", destructive, func() {
 				a.confirm = &confirmation{text: "确定删除这封站内信？", run: func() {
 					a.run("删除信件", func(ctx context.Context) (func(), error) {
-						_, err := a.Core.Forum.DeleteMail(ctx, r.Name, r.ID)
+						_, err := a.Core.DeleteMail(ctx, r.Name, r.ID)
 						return func() { a.navigate(Route{Page: "contacts"}, false) }, err
 					})
 				}}
 			})
 		})
 		ui.Row(c).FillWidth().Gap(8).Children(func() {
-			ui.TextInput(c, &a.forward).Label("转发目标").Placeholder("转发给用户名").Grow(1)
+			themedTextInput(c, &a.forward).Label("转发目标").Placeholder("转发给用户名").Grow(1)
 			a.action(c, "转发信件", "send", quiet, func() {
 				target := strings.TrimSpace(a.forward)
 				if target == "" {
@@ -254,7 +254,7 @@ func (a *App) mailView(c *ui.Context) {
 					return
 				}
 				a.run("转发信件", func(ctx context.Context) (func(), error) {
-					_, err := a.Core.Forum.ForwardMail(ctx, r.Name, r.ID, target)
+					_, err := a.Core.ForwardMail(ctx, r.Name, r.ID, target)
 					return func() { a.forward = ""; a.notice("信件已转发") }, err
 				})
 			})
@@ -270,9 +270,9 @@ func (a *App) mailComposeView(c *ui.Context) {
 	ui.Column(c).FillWidth().Grow(1).Padding(16).Gap(10).
 		Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
 		ui.Text(c, "写站内信").FontSize(18).Bold()
-		ui.TextInput(c, &e.To).Label("收件人").Placeholder("收件人用户名").ReadOnly(e.Mode == "reply").FillWidth().Disabled(a.busy)
-		ui.TextInput(c, &e.Title).Label("信件标题").Placeholder("标题").FillWidth().Disabled(a.busy)
-		ui.TextArea(c, &e.Content).Label("信件正文").Placeholder("站内信正文").FillWidth().Grow(1).MinHeight(180).Disabled(a.busy)
+		themedTextInput(c, &e.To).Label("收件人").Placeholder("收件人用户名").ReadOnly(e.Mode == "reply").FillWidth().Disabled(a.busy)
+		themedTextInput(c, &e.Title).Label("信件标题").Placeholder("标题").FillWidth().Disabled(a.busy)
+		themedTextArea(c, &e.Content).Label("信件正文").Placeholder("站内信正文").FillWidth().Grow(1).MinHeight(180).Disabled(a.busy)
 		ui.Row(c).Gap(8).Children(func() {
 			if ui.PrimaryButton(c, "发送信件").Disabled(a.busy).Clicked() {
 				v := *e
@@ -283,9 +283,9 @@ func (a *App) mailComposeView(c *ui.Context) {
 				a.run("发送信件", func(ctx context.Context) (func(), error) {
 					var err error
 					if v.Mode == "reply" {
-						_, err = a.Core.Forum.ReplyMail(ctx, v.Box, v.ID, v.Title, v.Content)
+						_, err = a.Core.ReplyMail(ctx, v.Box, v.ID, v.Title, v.Content)
 					} else {
-						_, err = a.Core.Forum.SendMail(ctx, v.To, v.Title, v.Content)
+						_, err = a.Core.SendMail(ctx, v.To, v.Title, v.Content)
 					}
 					return func() { a.mailEditor = mailEditor{}; a.navigate(Route{Page: "chat", Name: v.To}, true) }, err
 				})
@@ -297,7 +297,7 @@ func (a *App) mailComposeView(c *ui.Context) {
 func (a *App) refersView(c *ui.Context) {
 	a.messageTabs(c)
 	if len(a.refers.Articles) == 0 {
-		emptyState(c, "clock", "没有新的提醒", "有人回复或 @ 你时，会显示在这里。")
+		a.emptyRequestState(c, "clock", "没有新的提醒", "有人回复或 @ 你时，会显示在这里。")
 		return
 	}
 	ui.Scroll(c).FillWidth().Grow(1).Children(func() {
@@ -314,7 +314,7 @@ func (a *App) refersView(c *ui.Context) {
 						textLink(c, title, func() {
 							kind := a.route.Name
 							a.run("读取提醒", func(ctx context.Context) (func(), error) {
-								_, err := a.Core.Forum.ReadRefer(ctx, kind, string(v.Index))
+								_, err := a.Core.MarkReferRead(ctx, kind, string(v.Index))
 								return func() {
 									id := v.GroupID
 									if id == "" {

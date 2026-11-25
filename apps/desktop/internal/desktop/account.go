@@ -6,7 +6,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/VeinsureLee/BYR-Client/core/appearance"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
+	"github.com/VeinsureLee/BYR-Client/core/local"
 	"github.com/VeinsureLee/BYR-Client/core/resources/fonts"
 	"github.com/egoist/mygo/ui"
 )
@@ -125,7 +127,7 @@ func (a *App) userView(c *ui.Context) {
 							a.action(c, "加入黑名单", "alert", destructive, func() {
 								a.confirm = &confirmation{text: "将 " + u.DisplayName() + " 加入黑名单？", run: func() {
 									a.run("加入黑名单", func(ctx context.Context) (func(), error) {
-										_, err := a.Core.Forum.AddBlacklist(ctx, string(u.ID))
+										_, err := a.Core.AddBlacklist(ctx, string(u.ID))
 										return func() { a.notice("已加入黑名单") }, err
 									})
 								}}
@@ -151,20 +153,13 @@ func (a *App) logout() {
 	}}
 }
 func (a *App) historyView(c *ui.Context) {
-	account := a.Core.Session().Username
-	entries := a.Core.Local.History(account)
+	entries := a.Core.RecentHistory()
 	ui.Row(c).FillWidth().Wrap().Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Text(c, "最近阅读").FontSize(16).Bold()
 			ui.Textf(c, "保留最近 %d 条阅读记录", len(entries)).FontSize(12).TextColor(c.Theme().TextMuted)
 		})
-		a.action(c, "清空阅读历史", "trash", destructive, func() {
-			a.confirm = &confirmation{text: "清空此账号的本地阅读历史？", run: func() {
-				if err := a.Core.Local.ClearHistory(context.Background(), account); err != nil {
-					a.fail(err)
-				}
-			}}
-		})
+		a.action(c, "清空阅读历史", "trash", destructive, a.requestClearHistory)
 	})
 	if len(entries) == 0 {
 		emptyState(c, "clock", "还没有阅读记录", "打开主题后会在这里留下最近阅读记录。")
@@ -185,26 +180,50 @@ func (a *App) historyView(c *ui.Context) {
 		})
 	})
 }
+func (a *App) requestClearHistory() {
+	info := a.Core.SessionInfo()
+	generation := info.Generation
+	clear := func() {
+		if a.Core.SessionInfo().Generation != generation {
+			a.retryLoad = nil
+			a.fail(fmt.Errorf("账号已切换，未清空最近阅读"))
+			return
+		}
+		a.run("清空阅读历史", func(ctx context.Context) (func(), error) {
+			err := a.Core.ClearHistory(ctx, generation)
+			return func() {
+				a.retryLoad = nil
+				a.notice("最近阅读已清空")
+			}, err
+		})
+	}
+	a.retryLoad = clear
+	a.confirm = &confirmation{
+		text: fmt.Sprintf("只清空当前账号 %s 的本机最近阅读记录；草稿、偏好和其他账号数据会保留。", info.Username),
+		run:  clear,
+	}
+}
+
 func (a *App) blacklistView(c *ui.Context) {
 	ui.Column(c).FillWidth().Padding(12).Gap(8).
 		Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(12).Children(func() {
 		ui.Text(c, "添加黑名单").FontSize(14).Bold()
 		ui.Row(c).FillWidth().Gap(8).Children(func() {
-			ui.TextInput(c, &a.forward).Label("拉黑用户名").Placeholder("用户名").Grow(1)
+			themedTextInput(c, &a.blacklistUser).Label("拉黑用户名").Placeholder("用户名").Grow(1)
 			a.action(c, "添加到黑名单", "plus", filled, func() {
-				id := strings.TrimSpace(a.forward)
+				id := strings.TrimSpace(a.blacklistUser)
 				if id == "" {
 					return
 				}
 				a.run("添加黑名单", func(ctx context.Context) (func(), error) {
-					_, err := a.Core.Forum.AddBlacklist(ctx, id)
-					return func() { a.forward = ""; a.load() }, err
+					_, err := a.Core.AddBlacklist(ctx, id)
+					return func() { a.blacklistUser = ""; a.load() }, err
 				})
 			})
 		})
 	})
 	if len(a.blacklist.Users) == 0 {
-		emptyState(c, "user", "黑名单为空", "被拉黑的用户会显示在这里。")
+		a.emptyRequestState(c, "user", "黑名单为空", "被拉黑的用户会显示在这里。")
 		return
 	}
 	ui.Scroll(c).FillWidth().Grow(1).Children(func() {
@@ -223,7 +242,7 @@ func (a *App) blacklistView(c *ui.Context) {
 					})
 					a.action(c, "移出黑名单", "close", destructive, func() {
 						a.run("移出黑名单", func(ctx context.Context) (func(), error) {
-							_, err := a.Core.Forum.RemoveBlacklist(ctx, string(u.ID))
+							_, err := a.Core.RemoveBlacklist(ctx, string(u.ID))
 							return func() { a.load() }, err
 						})
 					})
@@ -234,22 +253,55 @@ func (a *App) blacklistView(c *ui.Context) {
 	a.pager(c, a.blacklist.Pagination, a.pageNumber)
 }
 func (a *App) settingsView(c *ui.Context) {
-	p := a.Core.Local.Preferences()
-	save := func() {
-		if err := a.Core.Local.SetPreferences(context.Background(), p); err != nil {
+	p := a.Core.Preferences()
+	save := func(patch local.PreferencePatch) {
+		if err := a.Core.UpdatePreferences(context.Background(), patch); err != nil {
 			a.fail(err)
 		}
+	}
+	dark := p.Theme == 2
+	if p.Theme == 0 && a.SystemDark != nil {
+		dark = a.SystemDark()
 	}
 	ui.Scroll(c).FillWidth().Grow(1).Children(func() {
 		ui.Column(c).FillWidth().Gap(12).Children(func() {
 			ui.Column(c).FillWidth().Padding(16).Gap(10).
 				Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
 				ui.Text(c, "外观").FontSize(16).Bold()
-				ui.Text(c, "主题").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "显示模式").FontSize(12).TextColor(c.Theme().TextMuted)
 				ui.Row(c).FillWidth().Wrap().Gap(12).Children(func() {
 					for i, label := range []string{"跟随系统", "浅色", "深色"} {
 						if ui.Radio(c, &p.Theme, i, label).Changed() {
-							save()
+							theme := p.Theme
+							save(local.PreferencePatch{Theme: &theme})
+						}
+					}
+				})
+				ui.Text(c, "配色").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
+					for _, scheme := range appearance.Schemes() {
+						scheme := scheme
+						selected := p.ColorScheme == string(scheme)
+						palette := appearance.Resolve(scheme, dark)
+						border, background := c.Theme().Border, c.Theme().SurfaceHover
+						if selected {
+							border, background = c.Theme().Accent, accentSurface(c)
+						}
+						e := ui.ButtonBase(c.Key("appearance-scheme-"+string(scheme))).
+							Label("选择配色 "+appearance.Name(scheme)).Row().AlignItems(ui.Center).
+							Padding(6, 10).Gap(6).Radius(8).MinHeight(40).Selected(selected).
+							Background(background).Border(1, border).TextColor(c.Theme().Text)
+						e.Children(func() {
+							ui.Text(c, "●").FontSize(18).Bold().TextColor(ui.Hex(appearance.Hex(palette.Accent)))
+							ui.Text(c, appearance.Name(scheme)).FontSize(12).SingleLine()
+							if selected {
+								ui.Text(c, "✓").Bold().TextColor(c.Theme().Accent)
+							}
+						})
+						if e.Disabled(a.busy).Clicked() {
+							value := string(scheme)
+							p.ColorScheme = value
+							save(local.PreferencePatch{ColorScheme: &value})
 						}
 					}
 				})
@@ -258,12 +310,14 @@ func (a *App) settingsView(c *ui.Context) {
 					ui.Text(c, "字号").Grow(1)
 					a.action(c, "减小字号", "back", quiet, func() {
 						p.FontScale -= .1
-						save()
+						value := p.FontScale
+						save(local.PreferencePatch{FontScale: &value})
 					})
 					ui.Textf(c, "%.0f%%", p.FontScale*100).FontSize(13).Bold()
 					a.action(c, "增大字号", "next", quiet, func() {
 						p.FontScale += .1
-						save()
+						value := p.FontScale
+						save(local.PreferencePatch{FontScale: &value})
 					})
 				})
 			})
@@ -271,9 +325,22 @@ func (a *App) settingsView(c *ui.Context) {
 				Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
 				ui.Text(c, "网络").FontSize(16).Bold()
 				if ui.Checkbox(c, &p.IPv6, "使用 IPv6 论坛地址").Changed() {
-					save()
+					value := p.IPv6
+					save(local.PreferencePatch{IPv6: &value})
 				}
 				ui.Text(c, "切换后会在下一次请求生效。").FontSize(12).TextColor(c.Theme().TextMuted)
+			})
+			ui.Column(c).FillWidth().Padding(16).Gap(10).
+				Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
+				ui.Text(c, "存储与缓存").FontSize(16).Bold()
+				ui.Text(c, "清除可重新获取的图片缓存和动画；不会清除已保存图片、草稿、账号或偏好。")
+				ui.Row(c).FillWidth().Wrap().Gap(8).Children(func() {
+					a.action(c, "清除缓存", "trash", quiet, func() {
+						a.clearImages()
+						a.notice("已清除缓存")
+					})
+					a.action(c, "清空最近阅读", "trash", destructive, a.requestClearHistory)
+				})
 			})
 			ui.Column(c).FillWidth().Padding(16).Gap(10).
 				Background(c.Theme().Surface).Border(1, c.Theme().Border).Radius(14).Children(func() {
@@ -282,7 +349,7 @@ func (a *App) settingsView(c *ui.Context) {
 				ui.Row(c).FillWidth().Wrap().Gap(6).Children(func() {
 					a.action(c, "查看论坛发布信息", "clock", quiet, func() {
 						a.run("查询发布信息", func(ctx context.Context) (func(), error) {
-							v, err := a.Core.Forum.Version(ctx, false)
+							v, err := a.Core.Version(ctx, false)
 							return func() {
 								var text strings.Builder
 								for _, version := range v.Versions {
@@ -327,7 +394,7 @@ func (a *App) voteView(c *ui.Context) {
 		if ui.PrimaryButton(c, "提交投票").Disabled(a.busy || a.choice == "" || bool(v.IsEnd) || bool(v.IsDeleted)).Clicked() {
 			id, choice := a.route.ID, a.choice
 			a.run("提交投票", func(ctx context.Context) (func(), error) {
-				updated, err := a.Core.Forum.SubmitVote(ctx, id, choice)
+				updated, err := a.Core.SubmitVote(ctx, id, choice)
 				return func() { a.vote = updated; a.notice("投票已提交") }, err
 			})
 		}
@@ -356,7 +423,7 @@ func (a *App) betView(c *ui.Context) {
 			})
 		}
 		ui.Row(c).FillWidth().Wrap().Gap(8).AlignItems(ui.End).Children(func() {
-			ui.TextInput(c, &a.score).Label("竞猜积分").Placeholder("积分").Width(180).Disabled(a.busy)
+			themedTextInput(c, &a.score).Label("竞猜积分").Placeholder("积分").Width(180).Disabled(a.busy)
 			if ui.PrimaryButton(c, "提交竞猜").Disabled(a.busy || a.choice == "").Clicked() {
 				id, choice := a.route.ID, a.choice
 				score, err := strconv.Atoi(a.score)
@@ -365,7 +432,7 @@ func (a *App) betView(c *ui.Context) {
 					return
 				}
 				a.run("提交竞猜", func(ctx context.Context) (func(), error) {
-					updated, err := a.Core.Forum.SubmitBet(ctx, id, choice, score)
+					updated, err := a.Core.SubmitBet(ctx, id, choice, score)
 					return func() { a.bet = updated; a.notice("竞猜已提交") }, err
 				})
 			}

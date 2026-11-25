@@ -109,7 +109,7 @@ func (a *App) loadMessages() {
 	a.run("加载消息", func(ctx context.Context) (func(), error) {
 		switch tab {
 		case "inbox", "outbox":
-			v, err := a.core.Forum.Mailbox(ctx, tab, forum.Page{Number: page, Size: 30})
+			v, err := a.core.LoadMailbox(ctx, tab, forum.Page{Number: page, Size: 30})
 			return func() {
 				if a.current() != route {
 					return
@@ -118,7 +118,7 @@ func (a *App) loadMessages() {
 				a.pagination = v.Pagination
 			}, err
 		case "refers":
-			v, err := a.core.Forum.Refers(ctx, kind, forum.Page{Number: page, Size: 30})
+			v, err := a.core.LoadRefers(ctx, kind, forum.Page{Number: page, Size: 30})
 			return func() {
 				if a.current() != route {
 					return
@@ -184,7 +184,7 @@ func (a *App) openMail(box, id string) {
 func (a *App) loadMail() {
 	route := a.current()
 	a.run("加载站内信", func(ctx context.Context) (func(), error) {
-		v, err := a.core.Forum.Mail(ctx, route.Name, route.ID)
+		v, err := a.core.ReadMail(ctx, route.Name, route.ID)
 		return func() {
 			if a.current().Page == PageMail && a.current().ID == route.ID {
 				a.mail = v
@@ -208,6 +208,10 @@ func (a *App) openMailCompose(to, box, id, mode string) {
 	a.mailEditor.toEditor.InputHint = key.HintEmail
 	a.mailEditor.titleEditor.InputHint = key.HintAny
 	a.mailEditor.contentEditor.InputHint = key.HintAny
+	a.mailEditor.toEditor.Submit = false
+	a.mailEditor.titleEditor.Submit = false
+	a.mailEditor.contentEditor.SingleLine = false
+	a.mailEditor.contentEditor.Submit = false
 	a.mailEditor.toEditor.SetText(route.Name)
 	if mode == "reply" {
 		title := a.mail.Title
@@ -382,7 +386,7 @@ func (a *App) readAllRefers() {
 	}
 	kind := a.referKind()
 	a.run("全部标为已读", func(ctx context.Context) (func(), error) {
-		_, err := a.core.Forum.ReadAllRefers(ctx, kind)
+		_, err := a.core.MarkAllRefersRead(ctx, kind)
 		return func() {
 			a.refers = forum.Refers{}
 			a.pagination = forum.Pagination{}
@@ -448,7 +452,7 @@ func (a *App) openRefer(refer forum.ReferEntry) {
 		return
 	}
 	a.run("读取提醒", func(ctx context.Context) (func(), error) {
-		_, err := a.core.Forum.ReadRefer(ctx, kind, string(refer.Index))
+		_, err := a.core.MarkReferRead(ctx, kind, string(refer.Index))
 		return func() {
 			targetID := string(refer.ID)
 			route := Route{Page: PageThread, Name: board, ID: id, Sub: targetID, Number: max(1, (int(refer.Pos)-1)/30+1)}
@@ -658,7 +662,7 @@ func (a *App) mailPage(gtx layout.Context) layout.Dimensions {
 								if clicked && !a.busy {
 									id := a.current().ID
 									a.run("删除信件", func(ctx context.Context) (func(), error) {
-										_, err := a.core.Forum.DeleteMail(ctx, box, id)
+										_, err := a.core.DeleteMail(ctx, box, id)
 										return func() {
 											a.stack = []Route{{Page: PageMessages, Sub: box, Number: 1}}
 											a.loadMessages()
@@ -697,7 +701,7 @@ func (a *App) mailPage(gtx layout.Context) layout.Dimensions {
 										} else {
 											id := a.current().ID
 											a.run("转发信件", func(ctx context.Context) (func(), error) {
-												_, err := a.core.Forum.ForwardMail(ctx, box, id, target)
+												_, err := a.core.ForwardMail(ctx, box, id, target)
 												return func() {
 													a.forwardIn.SetText("")
 													a.message = "信件已转发"
@@ -779,7 +783,7 @@ func (a *App) mailComposePage(gtx layout.Context) layout.Dimensions {
 func (a *App) sendMail() {
 	e := a.mailEditor
 	to := strings.TrimSpace(e.toEditor.Text())
-	title := strings.TrimSpace(e.titleEditor.Text())
+	title := e.titleEditor.Text()
 	content := e.contentEditor.Text()
 	if to == "" || strings.TrimSpace(content) == "" {
 		a.fail(errors.New("收件人和正文不能为空"))
@@ -792,9 +796,9 @@ func (a *App) sendMail() {
 	a.run("发送信件", func(ctx context.Context) (func(), error) {
 		var err error
 		if mode == "reply" {
-			_, err = a.core.Forum.ReplyMail(ctx, box, id, title, content)
+			_, err = a.core.ReplyMail(ctx, box, id, title, content)
 		} else {
-			_, err = a.core.Forum.SendMail(ctx, to, title, content)
+			_, err = a.core.SendMail(ctx, to, title, content)
 		}
 		return func() {
 			a.mailEditor = mailEditor{to: to, mode: "send"}

@@ -34,9 +34,9 @@ func (a *App) React(ctx context.Context, board string, article forum.Article, ki
 	var r forum.Reaction
 	var err error
 	if kind == Like {
-		r, err = a.Forum.Like(ctx, board, string(article.ID))
+		r, err = a.forum.Like(ctx, board, string(article.ID))
 	} else {
-		r, err = a.Forum.VoteDown(ctx, board, string(article.ID))
+		r, err = a.forum.VoteDown(ctx, board, string(article.ID))
 	}
 	duplicate := false
 	if err != nil {
@@ -122,7 +122,7 @@ func (a *App) CollectionState(board, id string, fallback bool) bool {
 // RememberCollection is called for entries actually read from a collection
 // page; opening one therefore immediately shows the correct selected star.
 func (a *App) RememberCollection(board, id string) {
-	a.rememberCollection(a.Session().Username, board, id, true)
+	a.rememberCollection(a.sessionSnapshot().Username, board, id, true)
 }
 
 func (a *App) rememberCollection(account, board, id string, collected bool) {
@@ -135,12 +135,12 @@ func (a *App) rememberCollection(account, board, id string, collected bool) {
 }
 
 func (a *App) SetCollected(ctx context.Context, board, id string, collected bool) (bool, error) {
-	account := a.Session().Username
+	account := a.sessionSnapshot().Username
 	var err error
 	if collected {
-		_, err = a.Forum.AddCollection(ctx, board, id)
+		_, err = a.forum.AddCollection(ctx, board, id)
 	} else {
-		_, err = a.Forum.RemoveCollection(ctx, board, id)
+		_, err = a.forum.RemoveCollection(ctx, board, id)
 	}
 	var api *forum.APIError
 	if collected && errors.As(err, &api) && api.Code == "0318" {

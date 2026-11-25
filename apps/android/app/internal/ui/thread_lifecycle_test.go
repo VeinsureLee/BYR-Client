@@ -20,7 +20,6 @@ import (
 	"gioui.org/unit"
 
 	"github.com/VeinsureLee/BYR-Client/core/forum"
-	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
 func waitForThreadExtras(t *testing.T, a *App) {
@@ -109,13 +108,8 @@ func TestAndroidHistoryFailureKeepsThreadReadable(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":"0000"}`))
 	}))
 	defer server.Close()
-	a := interactionApp(t, server.URL)
+	a := interactionAppWithBackend(t, server.URL, failingMobileDisk{})
 	defer a.Close()
-	store, err := local.Open(context.Background(), failingMobileDisk{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.core.Local = store
 	a.stack = []Route{{Page: PageHome}}
 	a.openThread("Go", "42")
 	waitForIdle(t, a)
@@ -577,21 +571,17 @@ func TestAndroidThemePreferenceAppliesDesignPalette(t *testing.T) {
 	a := previewAppWithCore(t)
 	defer a.Close()
 	defer setPalette(false)
-	prefs := a.core.Local.Preferences()
-	prefs.Theme = 2
-	if err := a.core.Local.SetPreferences(context.Background(), prefs); err != nil {
-		t.Fatal(err)
-	}
+	setThemePreferenceForTest(t, a, 2)
 	a.thread = sampleThread()
 	a.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	renderAppAt(t, a, 840, 900, 1)
 	if !a.dark {
 		t.Fatal("theme preference did not select the dark palette")
 	}
-	wantBg := color.NRGBA{R: 0x11, G: 0x14, B: 0x18, A: 0xFF}
-	wantSurface := color.NRGBA{R: 0x19, G: 0x1E, B: 0x25, A: 0xFF}
-	wantFg := color.NRGBA{R: 0xEF, G: 0xF2, B: 0xF6, A: 0xFF}
-	wantMuted := color.NRGBA{R: 0xBC, G: 0xC7, B: 0xD5, A: 0xFF}
+	wantBg := color.NRGBA{R: 0x12, G: 0x16, B: 0x1C, A: 0xFF}
+	wantSurface := color.NRGBA{R: 0x1A, G: 0x20, B: 0x28, A: 0xFF}
+	wantFg := color.NRGBA{R: 0xED, G: 0xF1, B: 0xF6, A: 0xFF}
+	wantMuted := color.NRGBA{R: 0xBE, G: 0xCA, B: 0xDB, A: 0xFF}
 	if colorBg != wantBg || colorSurface != wantSurface || colorFg != wantFg || colorMuted != wantMuted {
 		t.Fatalf("dark palette = bg:%v surface:%v fg:%v muted:%v", colorBg, colorSurface, colorFg, colorMuted)
 	}

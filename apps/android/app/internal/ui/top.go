@@ -19,14 +19,14 @@ func (a *App) loadTop() {
 	a.topTab = tab
 	a.run("加载热门讨论", func(ctx context.Context) (func(), error) {
 		if recommend {
-			v, err := a.core.Forum.Recommendations(ctx)
+			v, err := a.core.LoadRecommendations(ctx)
 			return func() {
 				if a.current() == route {
 					a.articles = v.Articles
 				}
 			}, err
 		}
-		v, err := a.core.Forum.TopTen(ctx)
+		v, err := a.core.LoadTopTen(ctx)
 		return func() {
 			if a.current() == route {
 				a.articles = v.Articles

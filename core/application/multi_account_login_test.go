@@ -26,7 +26,7 @@ func TestRememberedLoginAddsAccountWithoutReplacingOthers(t *testing.T) {
 		t.Fatalf("active account = %q, want bob", store.active)
 	}
 	restarted := appFor(t, handler, nil, store)
-	if got := restarted.Session(); got.Username != "bob" || got.Token != "bob-token" {
+	if got := restarted.sessionSnapshot(); got.Username != "bob" || got.Token != "bob-token" {
 		t.Fatalf("restored active account = %+v", got)
 	}
 }

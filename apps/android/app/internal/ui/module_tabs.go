@@ -25,7 +25,7 @@ type moduleTab struct {
 const moduleTabGroupSeparator = "\x00"
 
 // moduleTabs lays out a fixed-height horizontal list. Children keep their
-// intrinsic width (with a 40dp minimum touch target), so a narrow phone scrolls
+// intrinsic width (with a 48dp minimum touch target), so a narrow phone scrolls
 // the strip instead of compressing labels or allowing them to paint outside
 // the window.
 func (a *App) moduleTabs(gtx layout.Context, items []moduleTab, selected string, onSelect func(string)) layout.Dimensions {
@@ -53,10 +53,7 @@ func (a *App) moduleTabs(gtx layout.Context, items []moduleTab, selected string,
 		a.moduleTabsSelected = selected
 	}
 
-	height := gtx.Dp(unit.Dp(40))
-	if maxY := gtx.Constraints.Max.Y; maxY > 0 && maxY < height {
-		height = maxY
-	}
+	height := gtx.Dp(unit.Dp(48))
 	gtx.Constraints.Min.Y = height
 	gtx.Constraints.Max.Y = height
 	a.moduleTabList.Gap = gtx.Dp(unit.Dp(6))
@@ -80,37 +77,41 @@ func (a *App) moduleTab(gtx layout.Context, group, key, label string, selected b
 	btn := a.click(clickKey)
 	clicked := btn.Clicked(gtx)
 	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		labelStyle := material.Label(a.theme, unit.Sp(12), label)
-		_, fg := moduleTabColors(selected)
-		labelStyle.Color = fg
-
-		labelGtx := gtx
-		labelGtx.Constraints.Min = image.Point{}
-		labelGtx.Constraints.Max = image.Pt(1<<30, labelGtx.Constraints.Max.Y)
-		macro := op.Record(gtx.Ops)
-		labelDims := labelStyle.Layout(labelGtx)
-		labelCall := macro.Stop()
-
-		minWidth := gtx.Dp(unit.Dp(40))
-		minHeight := gtx.Dp(unit.Dp(40))
-		width := labelDims.Size.X + gtx.Dp(unit.Dp(24))
-		if width < minWidth {
-			width = minWidth
-		}
-		height := labelDims.Size.Y + gtx.Dp(unit.Dp(10))
-		if height < minHeight {
-			height = minHeight
-		}
-		size := image.Pt(width, height)
+		dims, labelCall := a.measureModuleTabLabel(gtx, label, selected)
+		size := moduleTabSize(gtx, dims.Size)
 		bg, _ := moduleTabColors(selected)
 		paint.FillShape(gtx.Ops, bg, clip.RRect{
 			Rect: image.Rectangle{Max: size}, NE: 16, NW: 16, SE: 16, SW: 16,
 		}.Op(gtx.Ops))
-		op.Offset(image.Pt((size.X-labelDims.Size.X)/2, (size.Y-labelDims.Size.Y)/2)).Add(gtx.Ops)
+		op.Offset(centeredTextOffset(size, dims.Size)).Add(gtx.Ops)
 		labelCall.Add(gtx.Ops)
 		return layout.Dimensions{Size: size}
 	})
 	return dims, clicked
+}
+
+func (a *App) measureModuleTabLabel(gtx layout.Context, label string, selected bool) (layout.Dimensions, op.CallOp) {
+	labelStyle := material.Label(a.theme, unit.Sp(12), label)
+	_, fg := moduleTabColors(selected)
+	labelStyle.Color = fg
+	labelGtx := gtx
+	labelGtx.Constraints.Min = image.Point{}
+	labelGtx.Constraints.Max = image.Pt(1<<30, labelGtx.Constraints.Max.Y)
+	macro := op.Record(gtx.Ops)
+	dims := labelStyle.Layout(labelGtx)
+	return dims, macro.Stop()
+}
+
+func moduleTabSize(gtx layout.Context, label image.Point) image.Point {
+	width := label.X + gtx.Dp(unit.Dp(24))
+	if min := gtx.Dp(unit.Dp(48)); width < min {
+		width = min
+	}
+	height := label.Y + gtx.Dp(unit.Dp(10))
+	if min := gtx.Dp(unit.Dp(48)); height < min {
+		height = min
+	}
+	return image.Pt(width, height)
 }
 
 // Keep the existing click identifiers stable while giving moduleTab.Key a

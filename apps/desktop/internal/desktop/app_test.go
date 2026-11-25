@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/VeinsureLee/BYR-Client/apps/desktop/internal/bootstrap"
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
+	"github.com/VeinsureLee/BYR-Client/core/local"
 	"github.com/VeinsureLee/BYR-Client/core/resources/fonts"
 	"github.com/egoist/mygo/ui"
 )
@@ -25,8 +27,8 @@ func TestMain(m *testing.M) {
 	if err := ui.RegisterFont(fonts.Regular, fonts.Family); err != nil {
 		panic(err)
 	}
-	if os.Getenv("BYR_DIAGNOSE_SAVED_SESSION") == "1" {
-		if err := diagnoseLiveSession(); err != nil {
+	if os.Getenv("BYR_DIAGNOSE_FIXTURE") == "1" {
+		if err := diagnoseFixture(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -65,6 +67,11 @@ func (*testDevice) Pick(context.Context) (string, []byte, error) {
 }
 func (*testDevice) Save(string, []byte) error { return nil }
 
+type recordedForm struct {
+	path   string
+	values url.Values
+}
+
 type harness struct {
 	app       *App
 	view      *ui.Tester
@@ -72,13 +79,20 @@ type harness struct {
 	mu        sync.Mutex
 	requests  []string
 	queries   []string
+	forms     []recordedForm
+	authForms []recordedForm
 	t         *testing.T
 	device    *testDevice
 	overrides map[string]string
 	gates     map[string]chan struct{}
+	// searchBodies overrides /open/search/article.json per board, so tests can
+	// make one board succeed while another fails.
+	searchBodies map[string]string
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { return newHarnessWithStorage(t, nil) }
+
+func newHarnessWithStorage(t *testing.T, storage local.Backend) *harness {
 	t.Helper()
 	h := &harness{updates: make(chan func(), 256), t: t, device: &testDevice{}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +100,23 @@ func newHarness(t *testing.T) *harness {
 		h.requests = append(h.requests, r.Method+" "+r.URL.Path)
 		h.queries = append(h.queries, r.URL.RawQuery)
 		h.mu.Unlock()
+		if r.Method == http.MethodPost && (r.URL.Path == "/open/mail/send.json" || r.URL.Path == "/oauth2/official") {
+			if err := r.ParseForm(); err != nil {
+				h.t.Errorf("parse form for %s: %v", r.URL.Path, err)
+			}
+			values := make(url.Values, len(r.PostForm))
+			for key, value := range r.PostForm {
+				values[key] = append([]string(nil), value...)
+			}
+			form := recordedForm{path: r.URL.Path, values: values}
+			h.mu.Lock()
+			if r.URL.Path == "/oauth2/official" {
+				h.authForms = append(h.authForms, form)
+			} else {
+				h.forms = append(h.forms, form)
+			}
+			h.mu.Unlock()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		body := `{"code":"0000"}`
 		switch r.URL.Path {
@@ -158,9 +189,13 @@ func newHarness(t *testing.T) *harness {
 		h.mu.Lock()
 		override, ok := h.overrides[r.URL.Path]
 		gate := h.gates[r.URL.Path]
+		boardBody, boardOK := h.searchBodies[r.URL.Query().Get("board")]
 		h.mu.Unlock()
 		if ok {
 			body = override
+		}
+		if r.URL.Path == "/open/search/article.json" && boardOK {
+			body = boardBody
 		}
 		if gate != nil {
 			<-gate
@@ -168,7 +203,7 @@ func newHarness(t *testing.T) *harness {
 		io.WriteString(w, body)
 	}))
 	t.Cleanup(server.Close)
-	services, err := bootstrap.New(bootstrap.Config{BaseURL: server.URL, Credentials: &testCredentials{}})
+	services, err := bootstrap.New(bootstrap.Config{BaseURL: server.URL, Credentials: &testCredentials{}, Storage: storage})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,25 +355,48 @@ func TestCaptureMigratedScreens(t *testing.T) {
 	h.click("Go 讨论 · Go")
 	h.click("测试主题")
 	capture("thread")
+	h.goTo(Route{Page: "search"})
+	h.typeIn("搜索关键词", "北邮")
+	h.click("开始搜索")
+	capture("search")
+	h.goTo(Route{Page: "contacts"})
+	h.app.contacts = nil
+	h.app.message = ""
+	h.app.failed = false
+	capture("messages-empty")
+	h.goTo(Route{Page: "thread", Name: "Go", ID: "42", Number: 1})
+	h.mu.Lock()
+	if h.overrides == nil {
+		h.overrides = make(map[string]string)
+	}
+	h.overrides["/open/threads/Go/42.json"] = `{"invalid":`
+	h.mu.Unlock()
+	h.click("刷新")
+	capture("thread-refresh-error")
+	h.mu.Lock()
+	delete(h.overrides, "/open/threads/Go/42.json")
+	h.mu.Unlock()
+	h.app.failed = false
+	h.app.message = ""
+	h.app.retryLoad = nil
 	for _, size := range [][2]int{{720, 480}, {1100, 760}, {1440, 900}} {
 		h.view.SetSize(size[0], size[1])
 		capture(fmt.Sprintf("thread-%dx%d", size[0], size[1]))
 	}
-	prefs := h.app.Core.Local.Preferences()
-	prefs.Theme, prefs.FontScale = 2, 1
-	if err := h.app.Core.Local.SetPreferences(context.Background(), prefs); err != nil {
+	theme, scale := 2, float32(1)
+	if err := h.app.Core.UpdatePreferences(context.Background(), application.PreferencePatch{Theme: &theme, FontScale: &scale}); err != nil {
 		t.Fatal(err)
 	}
 	h.view.SetSize(1100, 760)
 	capture("thread-dark")
-	prefs.Theme, prefs.FontScale = 1, 1.3
-	if err := h.app.Core.Local.SetPreferences(context.Background(), prefs); err != nil {
+	theme, scale = 1, 1.3
+	if err := h.app.Core.UpdatePreferences(context.Background(), application.PreferencePatch{Theme: &theme, FontScale: &scale}); err != nil {
 		t.Fatal(err)
 	}
 	h.view.SetSize(720, 480)
 	capture("thread-large-font")
-	prefs.FontScale = 1.4
-	if err := h.app.Core.Local.SetPreferences(context.Background(), prefs); err != nil {
+	scale = 1.4
+	if err := h.app.Core.UpdatePreferences(context.Background(), application.PreferencePatch{FontScale: &scale}); err != nil {
 		t.Fatal(err)
 	}
 	h.app.thread.Title = strings.Repeat("测试", 80)
@@ -348,8 +406,8 @@ func TestCaptureMigratedScreens(t *testing.T) {
 	h.view.Frame()
 	capture("thread-long-title-720x480-large-font-scrolled")
 	h.app.desktopListState(h.app.threadListKey()).ScrollTo(0, ui.Start)
-	prefs.Theme, prefs.FontScale = 1, 1
-	if err := h.app.Core.Local.SetPreferences(context.Background(), prefs); err != nil {
+	theme, scale = 1, 1
+	if err := h.app.Core.UpdatePreferences(context.Background(), application.PreferencePatch{Theme: &theme, FontScale: &scale}); err != nil {
 		t.Fatal(err)
 	}
 	h.view.SetSize(1200, 900)
@@ -367,6 +425,16 @@ func TestCaptureMigratedScreens(t *testing.T) {
 	capture("self")
 	h.goTo(Route{Page: "settings"})
 	capture("settings")
+	h.click("清除缓存")
+	capture("settings-cache-cleared")
+	if err := h.app.Core.RecordThreadVisit(context.Background(), h.app.Core.HistoryReadToken(), "Go", "42", "测试主题"); err != nil {
+		t.Fatal(err)
+	}
+	h.goTo(Route{Page: "history"})
+	h.click("清空阅读历史")
+	capture("history-clear-confirm")
+	h.click("确认")
+	capture("history-empty")
 }
 func TestConstructingUIIsOffline(t *testing.T) {
 	h := newHarness(t)
@@ -776,15 +844,16 @@ func TestLoginBrowseReplyAndDraftLifecycle(t *testing.T) {
 	}
 	h.typeIn("帖子正文", "回复正文")
 	key := "composeDraft.Go.42"
-	if d, ok := h.app.Core.Local.Draft("alice", key); !ok || d.Content != "回复正文" {
-		t.Fatalf("draft not saved: %+v %t", d, ok)
+	draft, ok, err := h.app.Core.LoadDraft(context.Background(), h.app.Core.SessionInfo(), key)
+	if err != nil || !ok || draft.Content != "回复正文" {
+		t.Fatalf("draft not saved: %+v %t %v", draft, ok, err)
 	}
 	h.click("提交帖子")
 	if h.app.route.Page != "thread" {
 		t.Fatalf("publish failed %s", h.app.message)
 	}
-	if _, ok := h.app.Core.Local.Draft("alice", key); ok {
-		t.Fatal("published draft recreated during navigation")
+	if _, ok, err := h.app.Core.LoadDraft(context.Background(), h.app.Core.SessionInfo(), key); err != nil || ok {
+		t.Fatalf("published draft still exists: found=%v error=%v", ok, err)
 	}
 	for _, r := range h.app.back {
 		if r.Page == "compose" {
@@ -1048,13 +1117,13 @@ func TestCloseAfterServerPublishBeforeUIUpdateCannotRecreateDraft(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("publish did not complete")
 	}
-	if _, ok := h.app.Core.Local.Draft("alice", "composeDraft.Go.new"); ok {
-		t.Fatal("server success did not remove draft")
+	if _, ok, err := h.app.Core.LoadDraft(context.Background(), h.app.Core.SessionInfo(), "composeDraft.Go.new"); err != nil || ok {
+		t.Fatalf("server success did not remove draft: found=%v error=%v", ok, err)
 	}
 	h.app.Close()
 	done()
-	if _, ok := h.app.Core.Local.Draft("alice", "composeDraft.Go.new"); ok {
-		t.Fatal("window close recreated an already published draft")
+	if _, ok, err := h.app.Core.LoadDraft(context.Background(), h.app.Core.SessionInfo(), "composeDraft.Go.new"); err != nil || ok {
+		t.Fatalf("window close recreated an already published draft: found=%v error=%v", ok, err)
 	}
 }
 func TestCloseCancelsPendingReadAndDiscardsQueuedResult(t *testing.T) {

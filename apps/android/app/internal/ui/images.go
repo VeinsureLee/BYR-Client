@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/gif"
 	_ "image/jpeg"
@@ -32,14 +33,17 @@ const (
 )
 
 type mobileImage struct {
-	loading bool
-	err     error
-	raw     []byte
-	img     image.Image
-	frames  []image.Image
-	delays  []time.Duration
-	started time.Time
-	w, h    int
+	loading           bool
+	err               error
+	raw               []byte
+	img               image.Image
+	frames            []image.Image
+	delays            []time.Duration
+	started           time.Time
+	w, h              int
+	cancel            context.CancelFunc
+	cacheGeneration   uint64
+	accountGeneration uint64
 
 	animationMu sync.Mutex
 }
@@ -181,6 +185,26 @@ func (m *mobileImage) frameDelay(index int) time.Duration {
 	return 100 * time.Millisecond
 }
 
+func (a *App) clearImageCache() {
+	a.imageCacheGeneration++
+	a.mediaGeneration++
+	for _, entry := range a.images {
+		if entry.cancel != nil {
+			entry.cancel()
+			entry.cancel = nil
+		}
+		entry.raw = nil
+		entry.img = nil
+		entry.frames = nil
+		entry.delays = nil
+	}
+	a.images = map[string]*mobileImage{}
+	a.stopImageAnimations()
+	if a.window != nil && !a.closed.Load() {
+		a.window.Invalidate()
+	}
+}
+
 func (a *App) imageEntry(raw string) *mobileImage {
 	if a.images == nil {
 		a.images = map[string]*mobileImage{}
@@ -188,7 +212,16 @@ func (a *App) imageEntry(raw string) *mobileImage {
 	if e := a.images[raw]; e != nil {
 		return e
 	}
-	e := &mobileImage{loading: true}
+	imageCtx, cancel := context.WithCancel(a.ctx)
+	cacheGeneration := a.imageCacheGeneration
+	accountGeneration := uint64(0)
+	if a.core != nil && !strings.HasPrefix(raw, "emoji:") {
+		accountGeneration = a.core.SessionInfo().Generation
+	}
+	e := &mobileImage{
+		loading: true, cancel: cancel, cacheGeneration: cacheGeneration,
+		accountGeneration: accountGeneration,
+	}
 	a.images[raw] = e
 	go func() {
 		var err error
@@ -199,9 +232,9 @@ func (a *App) imageEntry(raw string) *mobileImage {
 		case a.core == nil:
 			err = contentError("客户端尚未启动")
 		default:
-			// FetchAsset remains the only network path for images. It resolves
-			// trusted origins and injects tokens only where forum.Client allows it.
-			b, err = a.core.Forum.FetchAsset(a.ctx, raw)
+			// FetchAsset remains the only network path for images. The core-private
+			// protocol adapter handles trusted origins and token injection.
+			b, err = a.core.FetchAsset(imageCtx, raw)
 		}
 
 		var decoded *mobileImage
@@ -212,6 +245,19 @@ func (a *App) imageEntry(raw string) *mobileImage {
 			}
 		}
 		a.post(func() {
+			if a.closed.Load() || a.images[raw] != e || e.cacheGeneration != a.imageCacheGeneration ||
+				(accountGeneration != 0 && a.core != nil && a.core.SessionInfo().Generation != accountGeneration) {
+				if a.images[raw] == e {
+					delete(a.images, raw)
+				}
+				if e.cancel != nil {
+					e.cancel()
+					e.cancel = nil
+				}
+				return
+			}
+			e.cancel = nil
+			cancel()
 			e.loading = false
 			e.err = err
 			if decoded != nil {

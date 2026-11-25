@@ -63,7 +63,7 @@ func (a *App) threadMoreMenu(gtx layout.Context) layout.Dimensions {
 	actions := []threadMenuAction{
 		{key: "thread-share", label: "复制链接", icon: "link", run: func(gtx layout.Context) {
 			if a.core != nil {
-				a.copyText(gtx, a.core.Forum.ThreadURL(a.threadBoard(), a.current().ID))
+				a.copyText(gtx, a.core.ThreadURL(a.threadBoard(), a.current().ID))
 			}
 		}},
 		{key: "thread-refresh", label: "刷新主题", icon: "refresh", run: func(layout.Context) {
@@ -119,7 +119,7 @@ func (a *App) canManageThread() bool {
 	if !ok || root.ID == "" {
 		return false
 	}
-	username := strings.TrimSpace(a.core.Session().Username)
+	username := strings.TrimSpace(a.core.SessionInfo().Username)
 	if username == "" {
 		return false
 	}
@@ -237,12 +237,12 @@ func (a *App) ensureThreadExtras() {
 		var vote forum.Vote
 		var voteErr error
 		if needVote {
-			vote, voteErr = a.core.Forum.Vote(ctx, key.ID)
+			vote, voteErr = a.core.LoadVote(ctx, key.ID)
 		}
 		var bet forum.Bet
 		var betErr error
 		if needBet {
-			bet, betErr = a.core.Forum.Bet(ctx, key.ID)
+			bet, betErr = a.core.LoadBet(ctx, key.ID)
 		}
 		a.post(func() {
 			if a.closed.Load() || state.Serial != serial {

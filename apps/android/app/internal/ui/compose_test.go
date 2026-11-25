@@ -19,6 +19,15 @@ import (
 	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
+func loadComposeDraft(t *testing.T, a *App, key string) (local.Draft, bool) {
+	t.Helper()
+	draft, found, err := a.core.LoadDraft(context.Background(), a.compose.session, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft, found
+}
+
 func TestComposeOpensReadyAndRendersWithoutNetwork(t *testing.T) {
 	a := composeTestApp(t, "")
 	defer a.Close()
@@ -101,7 +110,7 @@ func TestBackFromComposeSavesDraft(t *testing.T) {
 	if got := a.current().Page; got != PageBoard {
 		t.Fatalf("page after back = %v, want board", got)
 	}
-	draft, ok := a.core.Local.Draft(a.core.Session().Username, local.DraftKey("Go", "", ""))
+	draft, ok := loadComposeDraft(t, a, local.DraftKey("Go", "", ""))
 	if !ok || draft.Title != "草稿标题" || draft.Content != "草稿正文" {
 		t.Fatalf("draft was not saved: ok=%v draft=%+v", ok, draft)
 	}
@@ -117,7 +126,7 @@ func TestClearingComposeRemovesSavedDrafts(t *testing.T) {
 	if err := a.saveComposeDraft(); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := a.core.Local.Draft(a.core.Session().Username, local.DraftKey("Go", "", "")); !ok {
+	if _, ok := loadComposeDraft(t, a, local.DraftKey("Go", "", "")); !ok {
 		t.Fatal("draft was not stored before clearing")
 	}
 
@@ -127,7 +136,7 @@ func TestClearingComposeRemovesSavedDrafts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{local.DraftKey("Go", "", ""), local.DraftKey("", "", "")} {
-		if _, ok := a.core.Local.Draft(a.core.Session().Username, key); ok {
+		if _, ok := loadComposeDraft(t, a, key); ok {
 			t.Fatalf("clearing composer retained draft %q", key)
 		}
 	}
@@ -153,7 +162,7 @@ func TestComposeInputAutosavesChangedText(t *testing.T) {
 	router.Queue(key.EditEvent{Range: key.Range{Start: 0, End: 0}, Text: "自动保存标题"})
 	ops.Reset()
 	a.composePage(gtx)
-	draft, ok := a.core.Local.Draft(a.core.Session().Username, local.DraftKey("Go", "", ""))
+	draft, ok := loadComposeDraft(t, a, local.DraftKey("Go", "", ""))
 	if !ok || draft.Title != "自动保存标题" {
 		t.Fatalf("changed editor text was not autosaved: ok=%v draft=%+v", ok, draft)
 	}
@@ -199,24 +208,8 @@ func TestPublishFailureUnlocksComposer(t *testing.T) {
 
 func composeTestApp(t *testing.T, baseURL string) *App {
 	t.Helper()
-	store, err := local.Open(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	credentials := &testCredentials{session: application.Credential{
-		Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix(),
-	}}
-	options := application.Options{BaseURL: baseURL, Local: store, Credentials: credentials}
-	if baseURL != "" {
-		options.HTTPClient = http.DefaultClient
-	}
-	core, err := application.New(options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Restore(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	credentials := &testCredentials{session: application.Credential{Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix()}}
+	core := newUIFixtureCore(t, baseURL, http.DefaultClient, nil, credentials)
 	a, err := New(noopInvalidator{})
 	if err != nil {
 		t.Fatal(err)
