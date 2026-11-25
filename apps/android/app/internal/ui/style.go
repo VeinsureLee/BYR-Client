@@ -14,64 +14,55 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
+	"github.com/VeinsureLee/BYR-Client/core/appearance"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 )
 
 var (
 	colorSurface     = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
-	colorBorder      = color.NRGBA{R: 0xDD, G: 0xE3, B: 0xEA, A: 0xFF}
-	colorMuted       = color.NRGBA{R: 0x47, G: 0x55, B: 0x69, A: 0xFF}
-	colorFaint       = color.NRGBA{R: 0x55, G: 0x62, B: 0x77, A: 0xFF}
-	colorAccent      = color.NRGBA{R: 0x0A, G: 0x5C, B: 0xBF, A: 0xFF}
-	colorAccentSoft  = color.NRGBA{R: 0xE7, G: 0xF0, B: 0xFB, A: 0xFF}
+	colorBorder      = color.NRGBA{R: 0xDC, G: 0xE3, B: 0xEB, A: 0xFF}
+	colorInputBorder = color.NRGBA{R: 0x75, G: 0x85, B: 0x9A, A: 0xFF}
+	colorMuted       = color.NRGBA{R: 0x46, G: 0x56, B: 0x6A, A: 0xFF}
+	colorFaint       = color.NRGBA{R: 0x56, G: 0x66, B: 0x7A, A: 0xFF}
+	colorAccent      = color.NRGBA{R: 0x25, G: 0x5D, B: 0xA8, A: 0xFF}
+	colorAccentHover = color.NRGBA{R: 0x21, G: 0x54, B: 0x97, A: 0xFF}
+	colorAccentPress = color.NRGBA{R: 0x1D, G: 0x4A, B: 0x86, A: 0xFF}
+	colorAccentText  = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
+	colorAccentSoft  = color.NRGBA{R: 0xE5, G: 0xEF, B: 0xFD, A: 0xFF}
 	colorDanger      = color.NRGBA{R: 0xA3, G: 0x2D, B: 0x29, A: 0xFF}
 	colorDangerSoft  = color.NRGBA{R: 0xFC, G: 0xEC, B: 0xEA, A: 0xFF}
 	colorSuccess     = color.NRGBA{R: 0x22, G: 0x64, B: 0x56, A: 0xFF}
 	colorSuccessSoft = color.NRGBA{R: 0xE8, G: 0xF5, B: 0xEE, A: 0xFF}
 	colorWarning     = color.NRGBA{R: 0x85, G: 0x53, B: 0x00, A: 0xFF}
 	colorWarningSoft = color.NRGBA{R: 0xFF, G: 0xF3, B: 0xD8, A: 0xFF}
-	colorBg          = color.NRGBA{R: 0xF6, G: 0xF7, B: 0xF9, A: 0xFF}
-	colorFg          = color.NRGBA{R: 0x18, G: 0x20, B: 0x2A, A: 0xFF}
-	colorPill        = color.NRGBA{R: 0xEE, G: 0xF1, B: 0xF5, A: 0xFF}
+	colorBg          = color.NRGBA{R: 0xF4, G: 0xF6, B: 0xF8, A: 0xFF}
+	colorFg          = color.NRGBA{R: 0x18, G: 0x21, B: 0x2D, A: 0xFF}
+	colorPill        = color.NRGBA{R: 0xED, G: 0xF1, B: 0xF5, A: 0xFF}
 )
 
-// setPalette switches the shared surfaces between the light and dark desktop
-// themes. Colors are package values because every mobile widget consumes the
-// same small set; keeping one palette avoids per-widget theme plumbing.
-func setPalette(dark bool) {
-	if dark {
-		colorSurface = color.NRGBA{R: 0x19, G: 0x1E, B: 0x25, A: 0xFF}
-		colorBorder = color.NRGBA{R: 0x30, G: 0x39, B: 0x46, A: 0xFF}
-		colorMuted = color.NRGBA{R: 0xBC, G: 0xC7, B: 0xD5, A: 0xFF}
-		colorFaint = color.NRGBA{R: 0xA5, G: 0xB2, B: 0xC3, A: 0xFF}
-		colorAccent = color.NRGBA{R: 0x9C, G: 0xC5, B: 0xFF, A: 0xFF}
-		colorAccentSoft = color.NRGBA{R: 0x20, G: 0x2F, B: 0x43, A: 0xFF}
-		colorDanger = color.NRGBA{R: 0xFF, G: 0xB4, B: 0xAA, A: 0xFF}
-		colorDangerSoft = color.NRGBA{R: 0x38, G: 0x26, B: 0x28, A: 0xFF}
-		colorSuccess = color.NRGBA{R: 0x8B, G: 0xD6, B: 0xB3, A: 0xFF}
-		colorSuccessSoft = color.NRGBA{R: 0x20, G: 0x35, B: 0x2D, A: 0xFF}
-		colorWarning = color.NRGBA{R: 0xF3, G: 0xCB, B: 0x80, A: 0xFF}
-		colorWarningSoft = color.NRGBA{R: 0x37, G: 0x2E, B: 0x21, A: 0xFF}
-		colorBg = color.NRGBA{R: 0x11, G: 0x14, B: 0x18, A: 0xFF}
-		colorFg = color.NRGBA{R: 0xEF, G: 0xF2, B: 0xF6, A: 0xFF}
-		colorPill = color.NRGBA{R: 0x22, G: 0x29, B: 0x33, A: 0xFF}
-		return
+// setPalette maps shared semantic tokens into the Android drawing helpers.
+// The palette data itself is UI-independent and each App selects it from prefs.
+func setPalette(dark bool, schemes ...appearance.Scheme) {
+	scheme := appearance.BYRBlue
+	if len(schemes) > 0 {
+		scheme = schemes[0]
 	}
-	colorSurface = color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
-	colorBorder = color.NRGBA{R: 0xDD, G: 0xE3, B: 0xEA, A: 0xFF}
-	colorMuted = color.NRGBA{R: 0x47, G: 0x55, B: 0x69, A: 0xFF}
-	colorFaint = color.NRGBA{R: 0x55, G: 0x62, B: 0x77, A: 0xFF}
-	colorAccent = color.NRGBA{R: 0x0A, G: 0x5C, B: 0xBF, A: 0xFF}
-	colorAccentSoft = color.NRGBA{R: 0xE7, G: 0xF0, B: 0xFB, A: 0xFF}
-	colorDanger = color.NRGBA{R: 0xA3, G: 0x2D, B: 0x29, A: 0xFF}
-	colorDangerSoft = color.NRGBA{R: 0xFC, G: 0xEC, B: 0xEA, A: 0xFF}
-	colorSuccess = color.NRGBA{R: 0x22, G: 0x64, B: 0x56, A: 0xFF}
-	colorSuccessSoft = color.NRGBA{R: 0xE8, G: 0xF5, B: 0xEE, A: 0xFF}
-	colorWarning = color.NRGBA{R: 0x85, G: 0x53, B: 0x00, A: 0xFF}
-	colorWarningSoft = color.NRGBA{R: 0xFF, G: 0xF3, B: 0xD8, A: 0xFF}
-	colorBg = color.NRGBA{R: 0xF6, G: 0xF7, B: 0xF9, A: 0xFF}
-	colorFg = color.NRGBA{R: 0x18, G: 0x20, B: 0x2A, A: 0xFF}
-	colorPill = color.NRGBA{R: 0xEE, G: 0xF1, B: 0xF5, A: 0xFF}
+	palette := appearance.Resolve(scheme, dark)
+	colorSurface = palette.Surface
+	colorBorder = palette.Border
+	colorInputBorder = palette.InputBorder
+	colorMuted = palette.TextMuted
+	colorFaint = palette.TextFaint
+	colorAccent = palette.Accent
+	colorAccentHover = palette.AccentHover
+	colorAccentPress = palette.AccentPressed
+	colorAccentText = palette.AccentText
+	colorAccentSoft = palette.Selection
+	colorDanger, colorDangerSoft = palette.Danger, palette.DangerSoft
+	colorSuccess, colorSuccessSoft = palette.Success, palette.SuccessSoft
+	colorWarning, colorWarningSoft = palette.Warning, palette.WarningSoft
+	colorBg, colorFg = palette.Background, palette.Text
+	colorPill = palette.SurfaceHover
 }
 
 func (a *App) iconTarget(gtx layout.Context, name string) layout.Dimensions {
@@ -92,7 +83,13 @@ func (a *App) drawIcon(gtx layout.Context, name string, size unit.Dp, fg color.N
 	return icon.Layout(gtx, fg)
 }
 
+const iconButtonSizeDp = 48
+
 func (a *App) iconButton(gtx layout.Context, key, name string) (layout.Dimensions, bool) {
+	return a.iconButtonLabel(gtx, key, name, iconDescription(name))
+}
+
+func (a *App) iconButtonLabel(gtx layout.Context, key, name, label string) (layout.Dimensions, bool) {
 	btn := a.click(key)
 	clicked := btn.Clicked(gtx)
 	if clicked {
@@ -101,10 +98,10 @@ func (a *App) iconButton(gtx layout.Context, key, name string) (layout.Dimension
 	dims := btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		active := btn.Pressed() || a.actionPulseActive(key, time.Now())
 		semantic.Button.Add(gtx.Ops)
-		semantic.LabelOp(iconDescription(name)).Add(gtx.Ops)
+		semantic.LabelOp(label).Add(gtx.Ops)
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				size := gtx.Dp(unit.Dp(48))
+				size := gtx.Dp(unit.Dp(iconButtonSizeDp))
 				bg := colorPill
 				if active {
 					bg = pressedSurface(bg)
@@ -132,6 +129,8 @@ func iconDescription(name string) string {
 		return "刷新"
 	case "check":
 		return "全部已读"
+	case "close":
+		return "关闭"
 	}
 	return name
 }

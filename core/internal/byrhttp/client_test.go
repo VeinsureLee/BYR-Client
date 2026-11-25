@@ -1,4 +1,4 @@
-package forum_test
+package byrhttp_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/VeinsureLee/BYR-Client/core/forum"
+	"github.com/VeinsureLee/BYR-Client/core/internal/byrhttp"
 )
 
 func token(context.Context) (string, error) { return "test-token", nil }
@@ -27,7 +28,7 @@ func TestReadBoardProtocol(t *testing.T) {
 		fmt.Fprint(w, `{"name":"Joke","description":"笑话","article":[{"id":123,"title":"主题","post_time":1794497375,"user":{"id":"alice"}}],"pagination":{"page_all_count":4,"page_current_count":2}}`)
 	}))
 	defer server.Close()
-	client, err := forum.New(forum.Options{BaseURL: server.URL, Token: token})
+	client, err := byrhttp.New(byrhttp.Options{BaseURL: server.URL, Token: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestReadResources(t *testing.T) {
 		fmt.Fprint(w, body)
 	}))
 	defer server.Close()
-	client, err := forum.New(forum.Options{BaseURL: server.URL + "/prefix", Token: token})
+	client, err := byrhttp.New(byrhttp.Options{BaseURL: server.URL + "/prefix", Token: token})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func TestNoRequestsDuringConstructionOrWithoutToken(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1) }))
 	defer server.Close()
-	client, err := forum.New(forum.Options{BaseURL: server.URL})
+	client, err := byrhttp.New(byrhttp.Options{BaseURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +95,11 @@ func TestNoRequestsDuringConstructionOrWithoutToken(t *testing.T) {
 
 func TestRejectInvalidInput(t *testing.T) {
 	for _, base := range []string{"file:///tmp/data", "https://user:password@example.com", "https://example.com?token=secret", ":bad"} {
-		if _, err := forum.New(forum.Options{BaseURL: base}); err == nil {
+		if _, err := byrhttp.New(byrhttp.Options{BaseURL: base}); err == nil {
 			t.Errorf("accepted base URL %q", base)
 		}
 	}
-	client, _ := forum.New(forum.Options{Token: token})
+	client, _ := byrhttp.New(byrhttp.Options{Token: token})
 	for _, board := range []string{"", "../other", "..", "Joke?query", "Joke%2Fother"} {
 		if _, err := client.Board(context.Background(), board, forum.Page{}); err == nil {
 			t.Errorf("accepted board %q", board)
@@ -136,7 +137,7 @@ func TestProtocolFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(test.status); fmt.Fprint(w, test.body) }))
 			defer server.Close()
-			client, _ := forum.New(forum.Options{BaseURL: server.URL, Token: token})
+			client, _ := byrhttp.New(byrhttp.Options{BaseURL: server.URL, Token: token})
 			_, err := client.Sections(context.Background())
 			if !test.check(err) {
 				t.Fatalf("unexpected error: %v", err)
@@ -147,7 +148,7 @@ func TestProtocolFailures(t *testing.T) {
 
 func TestCancelAndRedactTransportErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("cancelled request reached server") }))
-	client, _ := forum.New(forum.Options{BaseURL: server.URL, Token: token})
+	client, _ := byrhttp.New(byrhttp.Options{BaseURL: server.URL, Token: token})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := client.Sections(ctx); !errors.Is(err, context.Canceled) {
@@ -167,7 +168,7 @@ func TestRedirectCannotSendTokenToAnotherOrigin(t *testing.T) {
 		http.Redirect(w, r, other.URL+"/?oauth_token=test-token", http.StatusFound)
 	}))
 	defer source.Close()
-	client, _ := forum.New(forum.Options{BaseURL: source.URL, Token: token})
+	client, _ := byrhttp.New(byrhttp.Options{BaseURL: source.URL, Token: token})
 	_, err := client.Sections(context.Background())
 	if !errors.Is(err, forum.ErrRedirectOrigin) || strings.Contains(err.Error(), "test-token") {
 		t.Fatalf("unexpected redirect error: %v", err)
@@ -183,7 +184,7 @@ func TestClientsKeepCredentialsSeparate(t *testing.T) {
 	}))
 	defer server.Close()
 	for _, credential := range []string{"first", "second"} {
-		client, _ := forum.New(forum.Options{BaseURL: server.URL, Token: func(context.Context) (string, error) { return credential, nil }})
+		client, _ := byrhttp.New(byrhttp.Options{BaseURL: server.URL, Token: func(context.Context) (string, error) { return credential, nil }})
 		data, err := client.Sections(context.Background())
 		if err != nil || data.Sections[0].Name.String() != credential {
 			t.Fatalf("client credential leaked: %+v, %v", data, err)

@@ -1,6 +1,5 @@
-// Package forum provides the UI-independent BYR protocol foundation. The
-// desktop and eventual Android application import this exact Go module.
-package forum
+// Package byrhttp implements the private BYR HTTP and protocol boundary.
+package byrhttp
 
 import (
 	"bytes"
@@ -11,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -94,7 +92,7 @@ func (c *Client) Board(ctx context.Context, name string, page Page) (Board, erro
 	if err := segment(name); err != nil {
 		return result, err
 	}
-	query, err := page.query()
+	query, err := pageQuery(page)
 	if err != nil {
 		return result, err
 	}
@@ -110,7 +108,7 @@ func (c *Client) Thread(ctx context.Context, board, id string, page Page) (Threa
 	if err := segment(id); err != nil {
 		return result, err
 	}
-	query, err := page.query()
+	query, err := pageQuery(page)
 	if err != nil {
 		return result, err
 	}
@@ -123,19 +121,6 @@ func segment(value string) error {
 		return errors.New("invalid forum resource identifier")
 	}
 	return nil
-}
-
-func (p Page) query() (url.Values, error) {
-	if p.Number == 0 {
-		p.Number = 1
-	}
-	if p.Size == 0 {
-		p.Size = 50
-	}
-	if p.Number < 1 || p.Size < 1 || p.Size > 100 {
-		return nil, errors.New("invalid forum pagination")
-	}
-	return url.Values{"page": {strconv.Itoa(p.Number)}, "count": {strconv.Itoa(p.Size)}}, nil
 }
 
 func (c *Client) read(ctx context.Context, parts []string, query url.Values, destination any) error {

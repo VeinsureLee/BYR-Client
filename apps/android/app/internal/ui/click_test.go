@@ -17,7 +17,6 @@ import (
 
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
-	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
 type testCredentials struct{ session application.Credential }
@@ -45,14 +44,7 @@ func TestLoginButtonClickStartsLogin(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	store, err := local.Open(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, err := application.New(application.Options{BaseURL: server.URL, Local: store, Credentials: &testCredentials{}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	core := newUIFixtureCore(t, server.URL, http.DefaultClient, nil, &testCredentials{})
 	a, err := New(noopInvalidator{})
 	if err != nil {
 		t.Fatal(err)
@@ -142,14 +134,7 @@ func testPhysicalControlTap(t *testing.T, control func(*App, layout.Context) (la
 }
 
 func TestLogoutReturnsToLoginState(t *testing.T) {
-	store, err := local.Open(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, err := application.New(application.Options{Local: store, Credentials: &testCredentials{}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	core := newUIFixtureCore(t, "", http.DefaultClient, nil, &testCredentials{})
 	a, err := New(noopInvalidator{})
 	if err != nil {
 		t.Fatal(err)

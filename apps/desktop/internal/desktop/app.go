@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/VeinsureLee/BYR-Client/core/appearance"
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 	"github.com/egoist/mygo/ui"
@@ -51,6 +52,7 @@ type App struct {
 	route                   Route
 	back                    []Route
 	listStates              map[listKey]*ui.ListState
+	homeScrolls             map[string]*ui.ScrollState
 	fontScale               float32
 	windowWidth             float32
 	windowHeight            float32
@@ -63,6 +65,7 @@ type App struct {
 	threadAnchorID          string
 	threadViewport          viewportKey
 	frameSerial             uint64
+	mediaGeneration         uint64
 	visiblePlayers          int
 	reduceMotion            bool
 	message                 string
@@ -86,10 +89,15 @@ type App struct {
 	pagination              forum.Pagination
 	boardFilter             string
 	searchQuery             string
+	searchSubmittedQuery    string
 	searchMode              string
 	searchResults           []forum.Article
 	searchPagination        forum.Pagination
 	searchHasRun            bool
+	searchIncomplete        bool
+	searchFailedBoards      int
+	searchRetryQuery        string
+	searchRetryPage         int
 	advancedSearch          bool
 	pageJump                string
 	expandedPosts           map[listKey]map[string]bool
@@ -116,7 +124,7 @@ type App struct {
 	vote                    forum.Vote
 	bet                     forum.Bet
 	choice, score           string
-	forward                 string
+	forward, blacklistUser  string
 	confirm                 *confirmation
 	images                  map[string]*imageEntry
 	imageView               string
@@ -132,7 +140,7 @@ type confirmation struct {
 
 func New(core *application.App, device Device, update func(func())) *App {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &App{Core: core, Version: "开发版", device: device, update: update, ctx: ctx, close: cancel, route: Route{Page: "login"}, remember: true, searchMode: "all", images: map[string]*imageEntry{}, expandedPosts: map[listKey]map[string]bool{}, pinnedExpanded: map[listKey]bool{}, expandedMessages: map[string]bool{}, listStates: make(map[listKey]*ui.ListState), imageScale: 1, score: "10"}
+	return &App{Core: core, Version: "开发版", device: device, update: update, ctx: ctx, close: cancel, route: Route{Page: "login"}, remember: true, searchMode: "all", images: map[string]*imageEntry{}, expandedPosts: map[listKey]map[string]bool{}, pinnedExpanded: map[listKey]bool{}, expandedMessages: map[string]bool{}, listStates: make(map[listKey]*ui.ListState), homeScrolls: make(map[string]*ui.ScrollState), imageScale: 1, score: "10"}
 }
 
 // Start is explicit so constructing and testing a view never logs in or sends
@@ -143,7 +151,7 @@ func (a *App) Start() {
 		err := a.Core.Restore(ctx)
 		return func() {
 			a.restoring = false
-			if a.Core.Session().Token != "" {
+			if a.Core.SessionInfo().Authenticated {
 				a.navigate(Route{Page: "home"}, false)
 			}
 		}, err
@@ -182,6 +190,9 @@ func (a *App) run(label string, work func(context.Context) (func(), error)) {
 	a.pageLoading = false
 	go func() {
 		done, err := work(ctx)
+		if errors.Is(err, application.ErrStaleSession) {
+			err = context.Canceled
+		}
 		a.update(func() {
 			if a.closed || serial != a.serial {
 				return
@@ -343,7 +354,7 @@ func (a *App) goBack() {
 	a.load()
 }
 func (a *App) View(c *ui.Context) {
-	p := a.Core.Local.Preferences()
+	p := a.Core.Preferences()
 	dark := p.Theme == 2 || (p.Theme == 0 && a.SystemDark != nil && a.SystemDark())
 	systemScale := c.Preferences().TextScale
 	if systemScale <= 0 {
@@ -358,7 +369,7 @@ func (a *App) View(c *ui.Context) {
 	a.visiblePlayers = 0
 	a.reduceMotion = c.Preferences().ReduceMotion
 	defer a.commitImages()
-	c.SetTheme(forumTheme(dark, p.FontScale).WithPreferences(c.Preferences()))
+	c.SetTheme(forumThemeWithPreferences(appearance.Scheme(p.ColorScheme), dark, p.FontScale, c.Preferences()))
 	a.shell(c)
 	if a.confirm != nil {
 		open := true
@@ -542,22 +553,6 @@ func (a *App) page(c *ui.Context) {
 	}
 }
 
-// resolveSubsections fills human-readable names for subsection references
-// (the API returns ["1","2"] without descriptions on the parent response).
-// A failed lookup leaves the reference as-is rather than breaking the page.
-func (a *App) resolveSubsections(ctx context.Context, section *forum.Section) {
-	for i := range section.Subsections {
-		sub := &section.Subsections[i]
-		if sub.Description != "" || sub.Name == "" {
-			continue
-		}
-		full, err := a.Core.Forum.Section(ctx, string(sub.Name))
-		if err == nil {
-			*sub = full
-		}
-	}
-}
-
 func (a *App) refreshCurrent() {
 	if a.busy || a.closed {
 		return
@@ -571,19 +566,16 @@ func (a *App) refreshCurrent() {
 		a.loadThreadPage(1)
 		return
 	}
+	if a.route.Page == "search" {
+		a.pageJump = ""
+		a.refreshSearch()
+		return
+	}
 	a.route.Number = 1
 	a.pageJump = ""
 	a.route.Sub = ""
-	switch a.route.Page {
-	case "search":
+	if a.route.Page == "board" || a.route.Page == "timeline" {
 		a.desktopListState(a.articleListKey()).ScrollTo(0, ui.Start)
-		a.refreshing = true
-		a.loadSearch()
-		return
-	default:
-		if a.route.Page == "board" || a.route.Page == "timeline" {
-			a.desktopListState(a.articleListKey()).ScrollTo(0, ui.Start)
-		}
 	}
 	a.refreshing = true
 	a.load()
@@ -592,7 +584,6 @@ func (a *App) refreshCurrent() {
 func (a *App) load() {
 	r := a.route
 	p := forum.Page{Number: r.Number}
-	f := a.Core.Forum
 	switch r.Page {
 	case "home":
 		selected := string(a.section.Name)
@@ -600,7 +591,7 @@ func (a *App) load() {
 			selected = r.Name
 		}
 		a.loadData("加载分区与版面", func(ctx context.Context) (func(), error) {
-			v, err := f.Sections(ctx)
+			v, err := a.Core.LoadSections(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -609,18 +600,17 @@ func (a *App) load() {
 			}
 			var section forum.Section
 			if selected != "" {
-				section, err = f.Section(ctx, selected)
+				section, err = a.Core.LoadSection(ctx, selected)
 				if err != nil {
 					return nil, err
 				}
-				a.resolveSubsections(ctx, &section)
 			}
 			return func() { a.sections = v.Sections; a.section = section; a.boards = section.Boards }, nil
 		})
 	case "board":
 		a.board = forum.Board{Name: r.Name}
 		a.loadData("加载版面", func(ctx context.Context) (func(), error) {
-			v, err := f.Board(ctx, r.Name, p)
+			v, err := a.Core.LoadBoard(ctx, r.Name, p)
 			return func() { a.board = v }, err
 		})
 	case "thread":
@@ -628,15 +618,15 @@ func (a *App) load() {
 	case "top":
 		a.loadData("加载十大", func(ctx context.Context) (func(), error) {
 			if r.Sub == "recommend" {
-				v, err := f.Recommendations(ctx)
+				v, err := a.Core.LoadRecommendations(ctx)
 				return func() { a.articles = v.Articles }, err
 			}
-			v, err := f.TopTen(ctx)
+			v, err := a.Core.LoadTopTen(ctx)
 			return func() { a.articles = v.Articles }, err
 		})
 	case "timeline":
 		a.loadData("加载时间线", func(ctx context.Context) (func(), error) {
-			v, err := f.FavorPosts(ctx, p)
+			v, err := a.Core.LoadTimeline(ctx, p)
 			sort.SliceStable(v.Articles, func(i, j int) bool {
 				return articleTime(v.Articles[i]) > articleTime(v.Articles[j])
 			})
@@ -652,9 +642,9 @@ func (a *App) load() {
 			var v forum.User
 			var err error
 			if r.Page == "self" {
-				v, err = f.Self(ctx)
+				v, err = a.Core.Self(ctx)
 			} else {
-				v, err = f.User(ctx, r.Name)
+				v, err = a.Core.LookupUser(ctx, r.Name)
 			}
 			return func() { a.user = v }, err
 		})
@@ -665,7 +655,7 @@ func (a *App) load() {
 		})
 	case "blacklist":
 		a.loadData("加载黑名单", func(ctx context.Context) (func(), error) {
-			v, err := f.Blacklist(ctx, r.Number)
+			v, err := a.Core.LoadBlacklist(ctx, r.Number)
 			return func() { a.blacklist = v }, err
 		})
 	case "contacts":
@@ -684,13 +674,13 @@ func (a *App) load() {
 			a.route.Name = r.Name
 		}
 		a.loadData("加载信箱", func(ctx context.Context) (func(), error) {
-			v, err := f.Mailbox(ctx, r.Name, p)
+			v, err := a.Core.LoadMailbox(ctx, r.Name, p)
 			return func() { a.mailbox = v }, err
 		})
 	case "mail":
 		a.mail = forum.Mail{}
 		a.loadData("加载信件", func(ctx context.Context) (func(), error) {
-			v, err := f.Mail(ctx, r.Name, r.ID)
+			v, err := a.Core.ReadMail(ctx, r.Name, r.ID)
 			return func() { a.mail = v; a.mail.Box = r.Name }, err
 		})
 	case "mail-compose":
@@ -705,21 +695,21 @@ func (a *App) load() {
 			a.route.Name = r.Name
 		}
 		a.loadData("加载提醒", func(ctx context.Context) (func(), error) {
-			v, err := f.Refers(ctx, r.Name, p)
+			v, err := a.Core.LoadRefers(ctx, r.Name, p)
 			return func() { a.refers = v }, err
 		})
 	case "vote":
 		a.vote = forum.Vote{}
 		a.choice = ""
 		a.loadData("加载投票", func(ctx context.Context) (func(), error) {
-			v, err := f.Vote(ctx, r.ID)
+			v, err := a.Core.LoadVote(ctx, r.ID)
 			return func() { a.vote = v }, err
 		})
 	case "bet":
 		a.bet = forum.Bet{}
 		a.choice = ""
 		a.loadData("加载竞猜", func(ctx context.Context) (func(), error) {
-			v, err := f.Bet(ctx, r.ID)
+			v, err := a.Core.LoadBet(ctx, r.ID)
 			return func() { a.bet = v }, err
 		})
 	}
@@ -738,8 +728,8 @@ func (a *App) loginView(c *ui.Context) {
 				})
 			})
 			ui.Divider(c)
-			ui.TextInput(c, &a.username).Label("用户名").Placeholder("论坛用户名").FillWidth()
-			pass := ui.TextInput(c, &a.password).Label("密码").Placeholder("密码").Password().FillWidth()
+			themedTextInput(c, &a.username).Label("用户名").Placeholder("论坛用户名").FillWidth()
+			pass := themedTextInput(c, &a.password).Label("密码").Placeholder("密码").Password().FillWidth()
 			ui.Checkbox(c, &a.remember, "记住登录（系统凭据库）")
 			if ui.PrimaryButton(c, "登录").FillWidth().Disabled(a.busy).Clicked() || pass.Submitted() && !a.busy {
 				u, p, remember := a.username, a.password, a.remember
@@ -751,7 +741,7 @@ func (a *App) loginView(c *ui.Context) {
 			if ui.Button(c, "网页登录诊断").Disabled(a.busy).Clicked() {
 				u, p := a.username, a.password
 				a.run("正在诊断", func(ctx context.Context) (func(), error) {
-					v, err := a.Core.Forum.CheckWebLogin(ctx, u, p)
+					v, err := a.Core.CheckWebLogin(ctx, u, p)
 					return func() {
 						a.notice(fmt.Sprintf("网页登录：成功=%t，ajax_code=%s。/open 接口仍需要 OAuth 登录。", v.OK(), v.Code))
 					}, err

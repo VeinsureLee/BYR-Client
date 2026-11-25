@@ -112,13 +112,13 @@ func TestMultiAccountSwitchPreservesCredentialsAndMetadata(t *testing.T) {
 	if err := a.SwitchAccount(ctx, "BOB"); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.Session(); got.Username != "bob" || got.Token != "bob-token" {
+	if got := a.sessionSnapshot(); got.Username != "bob" || got.Token != "bob-token" {
 		t.Fatalf("switched session = %+v", got)
 	}
 	if err := a.SwitchAccount(ctx, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.Session(); got.Username != "Alice" || got.Token != "alice-token" {
+	if got := a.sessionSnapshot(); got.Username != "Alice" || got.Token != "alice-token" {
 		t.Fatalf("switched back session = %+v", got)
 	}
 
@@ -148,7 +148,7 @@ func TestNonRememberedLoginDoesNotForgetOtherAccounts(t *testing.T) {
 	if len(store.accounts) != 1 || store.accounts["alice"].Token != "alice-token" || store.active != "" {
 		t.Fatalf("non-remembered login changed saved accounts: accounts=%+v active=%q", store.accounts, store.active)
 	}
-	if got := a.Session(); got.Username != "bob" || got.Token != "bob-token" {
+	if got := a.sessionSnapshot(); got.Username != "bob" || got.Token != "bob-token" {
 		t.Fatalf("active session = %+v", got)
 	}
 }
@@ -164,7 +164,7 @@ func TestSwitchAccountFailureLeavesCurrentSessionUnchanged(t *testing.T) {
 	if err := a.SwitchAccount(ctx, "bob"); err == nil {
 		t.Fatal("switch succeeded despite keyring error")
 	}
-	if got := a.Session(); got.Username != "alice" || got.Token != "alice-token" {
+	if got := a.sessionSnapshot(); got.Username != "alice" || got.Token != "alice-token" {
 		t.Fatalf("failed switch changed session: %+v", got)
 	}
 }
@@ -179,14 +179,14 @@ func TestExpiredAccountCannotBeActivatedAndForgetClearsActiveOnly(t *testing.T) 
 	if err := a.SwitchAccount(ctx, "bob"); !errors.Is(err, forum.ErrUnauthenticated) {
 		t.Fatalf("expired account switch error = %v, want unauthenticated", err)
 	}
-	if got := a.Session().Username; got != "alice" {
+	if got := a.sessionSnapshot().Username; got != "alice" {
 		t.Fatalf("expired account replaced active session with %q", got)
 	}
 	if err := a.ForgetAccount(ctx, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if a.Session().Token != "" || len(store.accounts) != 1 || store.accounts["bob"].Token != "expired" {
-		t.Fatalf("forget active result session=%+v accounts=%+v", a.Session(), store.accounts)
+	if a.sessionSnapshot().Token != "" || len(store.accounts) != 1 || store.accounts["bob"].Token != "expired" {
+		t.Fatalf("forget active result session=%+v accounts=%+v", a.sessionSnapshot(), store.accounts)
 	}
 }
 
@@ -200,7 +200,7 @@ func TestLogoutClearsActiveSelectionButRetainsSavedAccounts(t *testing.T) {
 	if err := a.Logout(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if a.Session().Token != "" || store.active != "" || len(store.accounts) != 2 {
-		t.Fatalf("logout did not preserve saved accounts: session=%+v store=%+v", a.Session(), store)
+	if a.sessionSnapshot().Token != "" || store.active != "" || len(store.accounts) != 2 {
+		t.Fatalf("logout did not preserve saved accounts: session=%+v store=%+v", a.sessionSnapshot(), store)
 	}
 }

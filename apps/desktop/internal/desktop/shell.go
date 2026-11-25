@@ -29,7 +29,8 @@ func navigationGroup(page Page) Page {
 }
 
 func (a *App) shell(c *ui.Context) {
-	if a.Core.Session().Token == "" {
+	session := a.Core.SessionInfo()
+	if !session.Authenticated {
 		ui.Column(c).Fill().Children(func() {
 			a.statusView(c)
 			if a.route.Page == "accounts" {
@@ -206,10 +207,10 @@ func (a *App) navigationView(c *ui.Context) {
 				userRow = userRow.Justify(ui.Center)
 			}
 			userRow.Children(func() {
-				a.avatar(c, forum.User{ID: forum.Scalar(a.Core.Session().Username)}, 30)
+				a.avatar(c, forum.User{ID: forum.Scalar(a.Core.SessionInfo().Username)}, 30)
 				if !compact {
 					ui.Column(c).Grow(1).MinWidth(0).Gap(0).Children(func() {
-						ui.Text(c, a.Core.Session().Username).FontSize(a.textSize(c, 12)).FontWeight(600).MaxLines(1).Ellipsis("…")
+						ui.Text(c, a.Core.SessionInfo().Username).FontSize(a.textSize(c, 12)).FontWeight(600).MaxLines(1).Ellipsis("…")
 						ui.Text(c, "已登录").FontSize(a.textSize(c, 10)).TextColor(c.Theme().TextMuted)
 					})
 				}

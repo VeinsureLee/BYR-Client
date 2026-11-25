@@ -37,7 +37,7 @@ func (a *App) forgetAccount(username string) {
 	a.run("移除保存账号", func(ctx context.Context) (func(), error) {
 		err := a.Core.ForgetAccount(ctx, username)
 		return func() {
-			if a.Core.Session().Token == "" {
+			if !a.Core.SessionInfo().Authenticated {
 				a.resetAccountUI()
 				return
 			}
@@ -93,7 +93,8 @@ func (a *App) resetAccountUI() {
 	a.back = nil
 	a.confirm = nil
 	a.listStates = make(map[listKey]*ui.ListState)
-	if a.Core.Session().Token == "" {
+	a.homeScrolls = make(map[string]*ui.ScrollState)
+	if !a.Core.SessionInfo().Authenticated {
 		a.route = Route{Page: "login"}
 		return
 	}

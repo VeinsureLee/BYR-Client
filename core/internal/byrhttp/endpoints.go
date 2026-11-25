@@ -1,4 +1,4 @@
-package forum
+package byrhttp
 
 import (
 	"bytes"
@@ -34,7 +34,7 @@ func get[T any](c *Client, ctx context.Context, query url.Values, parts ...strin
 	return v, err
 }
 func paged[T any](c *Client, ctx context.Context, page Page, parts ...string) (T, error) {
-	q, err := page.query()
+	q, err := pageQuery(page)
 	if err != nil {
 		var v T
 		return v, err
@@ -58,11 +58,6 @@ func bit(b bool) string {
 
 func (c *Client) Article(ctx context.Context, board, id string) (Article, error) {
 	return get[Article](c, ctx, nil, "article", board, id)
-}
-
-type Post struct {
-	Board, Title, Content, ReplyID     string
-	Anonymous, Signature, Email, Outgo bool
 }
 
 func (c *Client) PostArticle(ctx context.Context, p Post) (Article, error) {
@@ -144,7 +139,7 @@ func (c *Client) RemoveFavorite(ctx context.Context, board, dir string) (Favorit
 	return post[Favorite](c, ctx, url.Values{"name": {board}, "dir": {dir}}, "favorite", "delete", dir)
 }
 func (c *Client) Collection(ctx context.Context, id string, page Page) (Collection, error) {
-	q, err := page.query()
+	q, err := pageQuery(page)
 	if err != nil {
 		return Collection{}, err
 	}
@@ -169,13 +164,8 @@ func (c *Client) Recommendations(ctx context.Context) (Recommendations, error) {
 	return get[Recommendations](c, ctx, nil, "widget", "recommend")
 }
 
-type Search struct {
-	Board, Title, Title2, ExcludeTitle, Author, Day, Marked, Attachment, Order string
-	Page                                                                       Page
-}
-
 func (c *Client) SearchArticles(ctx context.Context, s Search) (SearchResults, error) {
-	q, err := s.Page.query()
+	q, err := pageQuery(s.Page)
 	if err != nil {
 		return SearchResults{}, err
 	}

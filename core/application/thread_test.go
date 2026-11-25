@@ -62,16 +62,19 @@ func TestRecordThreadVisitRejectsStaleGeneration(t *testing.T) {
 	if !info.Authenticated || info.Generation == 0 {
 		t.Fatalf("session info = %+v", info)
 	}
-	if err := a.RecordThreadVisit(ctx, info.Generation-1, "Go", "42", "旧主题"); !errors.Is(err, ErrStaleSession) {
+	token := a.HistoryReadToken()
+	stale := token
+	stale.Generation--
+	if err := a.RecordThreadVisit(ctx, stale, "Go", "42", "旧主题"); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("stale history error = %v, want ErrStaleSession", err)
 	}
-	if got := a.Local.History("alice"); len(got) != 0 {
+	if got := a.local.History("alice"); len(got) != 0 {
 		t.Fatalf("stale history was written: %+v", got)
 	}
-	if err := a.RecordThreadVisit(ctx, info.Generation, "Go", "42", "主题"); err != nil {
+	if err := a.RecordThreadVisit(ctx, token, "Go", "42", "主题"); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.Local.History("alice"); len(got) != 1 || got[0].ID != "42" || got[0].Title != "主题" {
+	if got := a.local.History("alice"); len(got) != 1 || got[0].ID != "42" || got[0].Title != "主题" {
 		t.Fatalf("history = %+v", got)
 	}
 }
@@ -84,8 +87,8 @@ func TestRecordThreadVisitReportsLocalFailureWithoutLosingThread(t *testing.T) {
 	}
 	a := appFor(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{}`) },
 		store, &credentials{value: Credential{Username: "alice", Token: "token"}})
-	info := a.SessionInfo()
-	if err := a.RecordThreadVisit(ctx, info.Generation, "Go", "42", "主题"); err == nil {
+	token := a.HistoryReadToken()
+	if err := a.RecordThreadVisit(ctx, token, "Go", "42", "主题"); err == nil {
 		t.Fatal("failing disk reported a successful history write")
 	}
 	// The read path is independent: the same account can still read a thread
@@ -106,7 +109,8 @@ func TestSessionGenerationChangesWithAccountBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := appFor(t, func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{}`) }, store, creds)
-	first := a.SessionInfo().Generation
+	token := a.HistoryReadToken()
+	first := token.Generation
 	if err := a.SwitchAccount(ctx, "bob"); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +118,7 @@ func TestSessionGenerationChangesWithAccountBoundary(t *testing.T) {
 	if second == first {
 		t.Fatal("switching accounts did not advance the session generation")
 	}
-	if err := a.RecordThreadVisit(ctx, first, "Go", "42", "旧账号主题"); !errors.Is(err, ErrStaleSession) {
+	if err := a.RecordThreadVisit(ctx, token, "Go", "42", "旧账号主题"); !errors.Is(err, ErrStaleSession) {
 		t.Fatalf("old generation history = %v, want stale", err)
 	}
 	if err := a.Logout(ctx); err != nil {

@@ -5,7 +5,6 @@ package application
 import (
 	"context"
 	"errors"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -27,25 +26,27 @@ type CredentialStore interface {
 	Clear(context.Context) error
 }
 
-// Options supplies the application facade's concrete protocol and local-state
-// collaborators. Local is required; Credentials may be nil for session-only use.
+// Options supplies local state, credential storage and the consuming port's
+// protocol-client factory. Core.Open is the production composition root. Local
+// is required; Credentials may be nil for session-only use.
 type Options struct {
-	BaseURL     string
-	HTTPClient  *http.Client
-	Local       *local.Store
-	Credentials CredentialStore
+	Local        *local.Store
+	Credentials  CredentialStore
+	ForumFactory ForumFactory
 }
 
-// App coordinates forum use cases while keeping storage and platform services
-// behind consumer-owned interfaces.
+// App coordinates shared forum use cases while keeping the protocol client,
+// local store and credential adapter private.
 type App struct {
-	Forum       *forum.Client
-	Local       *local.Store
-	credentials CredentialStore
-	mu          sync.RWMutex
-	session     Credential
-	generation  uint64
-	collections map[collectionKey]bool
+	forum        ForumClient
+	local        *local.Store
+	credentials  CredentialStore
+	mu           sync.RWMutex
+	historyMu    sync.Mutex
+	historyEpoch map[string]uint64
+	session      Credential
+	generation   uint64
+	collections  map[collectionKey]bool
 }
 
 // New constructs an application facade without performing I/O.
@@ -53,17 +54,23 @@ func New(o Options) (*App, error) {
 	if o.Local == nil {
 		return nil, errors.New("local store is required")
 	}
-	a := &App{Local: o.Local, credentials: o.Credentials}
-	f, err := forum.New(forum.Options{BaseURL: o.BaseURL, HTTPClient: o.HTTPClient, Token: a.Token, IPv6: func() bool { return a.Local.Preferences().IPv6 }})
+	if o.ForumFactory == nil {
+		return nil, errors.New("forum client factory is required")
+	}
+	a := &App{local: o.Local, credentials: o.Credentials, historyEpoch: make(map[string]uint64)}
+	client, err := o.ForumFactory(a.Token, func() bool { return a.local.Preferences().IPv6 })
 	if err != nil {
 		return nil, err
 	}
-	a.Forum = f
+	if client == nil {
+		return nil, errors.New("forum client factory returned nil")
+	}
+	a.forum = client
 	return a, nil
 }
 
 // Session returns a copy of the current in-memory credential.
-func (a *App) Session() Credential {
+func (a *App) sessionSnapshot() Credential {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.session
@@ -85,7 +92,7 @@ func (a *App) Token(ctx context.Context) (string, error) {
 	if bound, ok := ctx.Value(boundCredentialKey{}).(Credential); ok {
 		return fresh(bound)
 	}
-	return fresh(a.Session())
+	return fresh(a.sessionSnapshot())
 }
 func (a *App) Restore(ctx context.Context) error {
 	if a.credentials == nil {
@@ -124,7 +131,7 @@ func (a *App) Restore(ctx context.Context) error {
 	return nil
 }
 func (a *App) Login(ctx context.Context, username, password string, remember bool) error {
-	info, err := a.Forum.Login(ctx, username, password)
+	info, err := a.forum.Login(ctx, username, password)
 	if err != nil {
 		return err
 	}
@@ -190,8 +197,8 @@ func (a *App) Publish(ctx context.Context, p forum.Post, editID string) (Publica
 	if strings.TrimSpace(p.Board) == "" || strings.TrimSpace(p.Title) == "" || strings.TrimSpace(p.Content) == "" {
 		return Publication{}, errors.New("版面、标题和内容不能为空")
 	}
-	account := a.Session().Username
-	board, err := a.Forum.Board(ctx, p.Board, forum.Page{Size: 1})
+	account := a.sessionSnapshot().Username
+	board, err := a.forum.Board(ctx, p.Board, forum.Page{Size: 1})
 	if err != nil {
 		return Publication{}, err
 	}
@@ -200,9 +207,9 @@ func (a *App) Publish(ctx context.Context, p forum.Post, editID string) (Publica
 	}
 	var article forum.Article
 	if editID != "" {
-		article, err = a.Forum.UpdateArticle(ctx, p.Board, editID, p.Title, p.Content)
+		article, err = a.forum.UpdateArticle(ctx, p.Board, editID, p.Title, p.Content)
 	} else {
-		article, err = a.Forum.PostArticle(ctx, p)
+		article, err = a.forum.PostArticle(ctx, p)
 	}
 	if err != nil {
 		return Publication{}, err
@@ -221,7 +228,7 @@ func (a *App) clearPublicationDrafts(ctx context.Context, account string, p foru
 	}
 	var failures []error
 	for _, key := range keys {
-		if err := a.Local.SaveDraft(ctx, account, key, local.Draft{}); err != nil {
+		if err := a.local.SaveDraft(ctx, account, key, local.Draft{}); err != nil {
 			failures = append(failures, err)
 		}
 	}

@@ -15,6 +15,7 @@ import (
 type threadRequest struct {
 	Serial, Generation uint64
 	Route              Route
+	HistoryToken       application.HistoryReadToken
 }
 
 type viewportKey struct {
@@ -53,9 +54,9 @@ func (a *App) loadThreadPage(page int) {
 		a.resetThreadResourcePreflight()
 	}
 	a.threadScrollPending = r.Sub != "" && !refresh
-	info := a.Core.SessionInfo()
+	token := a.Core.HistoryReadToken()
 	a.threadReqSerial++
-	req := threadRequest{Serial: a.threadReqSerial, Generation: info.Generation, Route: r}
+	req := threadRequest{Serial: a.threadReqSerial, Generation: token.Generation, Route: r, HistoryToken: token}
 	a.threadReq = req
 	if a.cancel != nil {
 		a.cancel()
@@ -74,7 +75,7 @@ func (a *App) loadThreadPage(page int) {
 		a.threadRefreshPending = refresh
 		a.loadThreadPage(page)
 	}
-	account := info.Username
+	account := token.Username
 	go func() {
 		detail, err := a.Core.ReadThread(ctx, r.Name, r.ID, forum.Page{Number: page})
 		if errors.Is(err, application.ErrStaleSession) {
@@ -218,7 +219,7 @@ func (a *App) threadModel(v forum.Article) *postModel {
 }
 
 func (a *App) recordThreadVisit(req threadRequest, detail application.ThreadDetail) {
-	err := a.Core.RecordThreadVisit(a.ctx, req.Generation, detail.CanonicalBoard, req.Route.ID, detail.Thread.Title)
+	err := a.Core.RecordThreadVisit(a.ctx, req.HistoryToken, detail.CanonicalBoard, req.Route.ID, detail.Thread.Title)
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, application.ErrStaleSession) {
 		return
 	}
@@ -294,8 +295,8 @@ func (a *App) ensureThreadResourcePreflight() {
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.threadResourcesCancel = cancel
 	go func() {
-		vote, voteErr := a.Core.Forum.Vote(ctx, id)
-		bet, betErr := a.Core.Forum.Bet(ctx, id)
+		vote, voteErr := a.Core.LoadVote(ctx, id)
+		bet, betErr := a.Core.LoadBet(ctx, id)
 		a.update(func() {
 			if a.closed || serial != a.threadResourcesSerial {
 				return
@@ -464,7 +465,7 @@ func (a *App) threadToolbar(c *ui.Context) {
 		}
 		a.action(c, collectLabel, "star", collectTone, a.collect)
 		a.action(c, "复制链接", "link", quiet, func() {
-			link := a.Core.Forum.ThreadURL(a.threadBoard(), a.route.ID)
+			link := a.Core.ThreadURL(a.threadBoard(), a.route.ID)
 			a.run("复制链接", func(ctx context.Context) (func(), error) {
 				if a.device == nil {
 					return nil, nil
@@ -528,7 +529,7 @@ func (a *App) collect() {
 }
 
 func (a *App) postView(c *ui.Context, index int, v forum.Article) {
-	manage := bool(v.IsAdmin) || strings.EqualFold(string(v.Author.ID), a.Core.Session().Username)
+	manage := bool(v.IsAdmin) || strings.EqualFold(string(v.Author.ID), a.Core.SessionInfo().Username)
 	model := a.threadModel(v)
 	postState := a.expandedPostState(a.threadListKey())
 	pinned := bool(v.IsTop)
@@ -603,7 +604,7 @@ func (a *App) postView(c *ui.Context, index int, v forum.Article) {
 					board, id := a.threadBoard(), string(v.ID)
 					a.confirm = &confirmation{text: "确定删除这篇帖子？此操作无法撤销。", run: func() {
 						a.run("删除帖子", func(ctx context.Context) (func(), error) {
-							_, err := a.Core.Forum.DeleteArticle(ctx, board, id)
+							_, err := a.Core.DeleteArticle(ctx, board, id)
 							return func() { a.loadThread() }, err
 						})
 					}}

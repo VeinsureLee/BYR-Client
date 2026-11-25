@@ -59,8 +59,8 @@ func TestSearchPageUsesRemoteSearchForAllMode(t *testing.T) {
 	if a.renderPanic != "" {
 		t.Fatalf("search render panic = %q", a.renderPanic)
 	}
-	if got := a.core.Session().Token; got != "token" {
-		t.Fatalf("search discarded session token %q", got)
+	if !a.core.SessionInfo().Authenticated {
+		t.Fatal("search lost the authenticated session state")
 	}
 	if len(a.searchResults) != 1 || a.searchResults[0].Title != "搜索主题" {
 		t.Fatalf("search results = %+v", a.searchResults)
@@ -341,8 +341,8 @@ func TestSearchFailureKeepsAuthenticatedSearchRoute(t *testing.T) {
 	if !a.failed || a.message == "" {
 		t.Fatalf("search failure was not exposed: failed=%t message=%q", a.failed, a.message)
 	}
-	if got := a.core.Session().Token; got != "token" {
-		t.Fatalf("ordinary search error discarded token %q", got)
+	if !a.core.SessionInfo().Authenticated {
+		t.Fatal("ordinary search error discarded the authenticated session state")
 	}
 }
 

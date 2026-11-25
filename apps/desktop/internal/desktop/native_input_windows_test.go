@@ -13,7 +13,7 @@ import (
 // DIPs verified against the default-window captures, then converted using the
 // window's actual DPI. No foreground input or real account is used.
 func nativeSidebarClick(w *mygo.Window, page string) error {
-	index := map[string]int{"home": 0, "top": 1, "favorites": 2, "compose": 3, "search": 4, "contacts": 5, "self": 6}
+	index := map[string]int{"home": 0, "top": 1, "timeline": 2, "favorites": 3, "compose": 4, "search": 5, "contacts": 6, "self": 7}
 	dll := syscall.NewLazyDLL("user32.dll")
 	find := dll.NewProc("FindWindowExW")
 	send := dll.NewProc("SendMessageW")
@@ -27,7 +27,7 @@ func nativeSidebarClick(w *mygo.Window, page string) error {
 	}
 	d, _, _ := dpi.Call(hwnd)
 	scale := float64(d) / 96
-	x, y := int(54*scale), int((77+42.5*float64(index[page]))*scale)
+	x, y := int(54*scale), int((98+42.5*float64(index[page]))*scale)
 	if page == "settings" {
 		var r struct{ Left, Top, Right, Bottom int32 }
 		ok, _, _ := rect.Call(child, uintptr(unsafe.Pointer(&r)))

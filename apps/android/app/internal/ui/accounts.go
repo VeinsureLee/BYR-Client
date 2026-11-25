@@ -67,7 +67,7 @@ func (a *App) forgetAccount(username string) {
 	if a.busy || a.core == nil {
 		return
 	}
-	wasActive := applicationAccountKey(a.core.Session().Username) == applicationAccountKey(username)
+	wasActive := applicationAccountKey(a.core.SessionInfo().Username) == applicationAccountKey(username)
 	a.run("移除保存账号", func(ctx context.Context) (func(), error) {
 		err := a.core.ForgetAccount(ctx, username)
 		return func() {

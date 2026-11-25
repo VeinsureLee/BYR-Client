@@ -21,6 +21,7 @@ type imageEntry struct {
 	w, h    float32
 	seen    uint64
 	playing bool
+	cancel  context.CancelFunc
 }
 
 const maxVisiblePlayers = 4
@@ -33,10 +34,21 @@ func imageViewerURL(raw string, fullURLs ...string) string {
 }
 
 func (a *App) clearImages() {
+	a.mediaGeneration++
 	for _, e := range a.images {
-		if e.player != nil {
-			e.player.Close()
+		if e.cancel != nil {
+			e.cancel()
+			e.cancel = nil
 		}
+		if e.player != nil {
+			e.playing = false
+			e.player.Close()
+			e.player = nil
+		}
+		e.source = nil
+		e.err = nil
+		e.loading = false
+		e.w, e.h = 0, 0
 	}
 	a.images = map[string]*imageEntry{}
 }
@@ -46,16 +58,18 @@ func (a *App) image(c *ui.Context, raw string, w, h float32, click bool, fullURL
 		if len(a.images) > 160 {
 			a.clearImages()
 		}
-		e = &imageEntry{loading: true}
+		account := a.Core.SessionInfo()
+		generation := a.mediaGeneration
+		imageCtx, cancel := context.WithCancel(a.ctx)
+		e = &imageEntry{loading: true, cancel: cancel}
 		a.images[raw] = e
-		account := a.Core.Session()
 		go func() {
 			var b []byte
 			var err error
 			if strings.HasPrefix(raw, "emoji:") {
 				b, err = resources.Emoji.ReadFile("em/" + strings.TrimPrefix(raw, "emoji:"))
 			} else {
-				b, err = a.Core.Forum.FetchAsset(a.ctx, raw)
+				b, err = a.Core.FetchAsset(imageCtx, raw)
 			}
 			var source ui.ImageSource
 			var decoder ui.VideoDecoder
@@ -75,9 +89,13 @@ func (a *App) image(c *ui.Context, raw string, w, h float32, click bool, fullURL
 				}
 			}
 			a.update(func() {
-				if a.closed || a.Core.Session() != account || a.images[raw] != e {
+				if a.closed || generation != a.mediaGeneration ||
+					a.Core.SessionInfo().Generation != account.Generation || a.images[raw] != e {
+					cancel()
 					return
 				}
+				e.cancel = nil
+				cancel()
 				e.source, e.err, e.loading = source, err, false
 				e.w, e.h = ui.ImageSize(source)
 				if decoder != nil {
@@ -277,7 +295,7 @@ func (a *App) bodyView(c *ui.Context, body string, attachments []forum.Attachmen
 }
 func (a *App) download(name, raw string) {
 	a.run("下载附件", func(ctx context.Context) (func(), error) {
-		b, err := a.Core.Forum.FetchAsset(ctx, raw)
+		b, err := a.Core.FetchAsset(ctx, raw)
 		if err != nil {
 			return nil, err
 		}

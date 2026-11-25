@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"image/png"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,22 +39,10 @@ func previewApp(t *testing.T) *App {
 
 func previewAppWithCore(t *testing.T) *App {
 	t.Helper()
-	store, err := local.Open(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, err := application.New(application.Options{
-		Local: store,
-		Credentials: &testCredentials{session: application.Credential{
-			Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix(),
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Restore(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	credentials := &testCredentials{session: application.Credential{
+		Username: "alice", Token: "token", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}}
+	core := newUIFixtureCore(t, "", http.DefaultClient, nil, credentials)
 	a := previewApp(t)
 	a.core = core
 	return a
@@ -271,22 +260,14 @@ func TestPreviewScreens(t *testing.T) {
 	captureMoreMenu("thread-more-320-short", more, image.Pt(320, 292), 1.3, 4)
 
 	prefDark := previewAppWithCore(t)
-	prefs := prefDark.core.Local.Preferences()
-	prefs.Theme = 2
-	if err := prefDark.core.Local.SetPreferences(context.Background(), prefs); err != nil {
-		t.Fatal(err)
-	}
+	setThemePreferenceForTest(t, prefDark, 2)
 	prefDark.thread = sampleThread()
 	prefDark.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	captureSize("thread-dark-840", prefDark, image.Pt(840, 900))
 	captureSize("thread-dark-840-with-preferences", prefDark, image.Pt(840, 900))
 
 	prefLight := previewAppWithCore(t)
-	lightPrefs := prefLight.core.Local.Preferences()
-	lightPrefs.Theme = 1
-	if err := prefLight.core.Local.SetPreferences(context.Background(), lightPrefs); err != nil {
-		t.Fatal(err)
-	}
+	setThemePreferenceForTest(t, prefLight, 1)
 	prefLight.thread = sampleThread()
 	prefLight.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	captureSize("thread-840", prefLight, image.Pt(840, 900))
@@ -342,21 +323,13 @@ func TestPreviewScreens(t *testing.T) {
 	capture("vote", vote)
 
 	darkThread := previewAppWithCore(t)
-	darkPrefs := darkThread.core.Local.Preferences()
-	darkPrefs.Theme = 2
-	if err := darkThread.core.Local.SetPreferences(context.Background(), darkPrefs); err != nil {
-		t.Fatal(err)
-	}
+	setThemePreferenceForTest(t, darkThread, 2)
 	darkThread.thread = sampleThread()
 	darkThread.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
 	capture("thread-dark", darkThread)
 
 	darkHome := previewAppWithCore(t)
-	homePrefs := darkHome.core.Local.Preferences()
-	homePrefs.Theme = 2
-	if err := darkHome.core.Local.SetPreferences(context.Background(), homePrefs); err != nil {
-		t.Fatal(err)
-	}
+	setThemePreferenceForTest(t, darkHome, 2)
 	darkHome.sections = home.sections
 	darkHome.sectionTab = "all"
 	darkHome.stack = []Route{{Page: PageHome}}
@@ -393,4 +366,45 @@ func TestPreviewScreens(t *testing.T) {
 	newPost.compose.titleEditor.SingleLine = true
 	newPost.stack = []Route{{Page: PageHome}, {Page: PageCompose, Sub: "new"}}
 	capture("compose-new", newPost)
+
+	messagesEmpty := previewApp(t)
+	messagesEmpty.stack = []Route{{Page: PageMessages, Sub: "mail", Name: "contacts", Number: 1}}
+	messagesEmpty.contacts = nil
+	messagesEmpty.message = ""
+	messagesEmpty.failed = false
+	capture("messages-empty", messagesEmpty)
+
+	historyEmpty := previewAppWithCore(t)
+	historyEmpty.stack = []Route{{Page: PageHistory}}
+	capture("history-empty", historyEmpty)
+
+	historyConfirm := previewAppWithCore(t)
+	if err := historyConfirm.core.RecordThreadVisit(context.Background(), historyConfirm.core.HistoryReadToken(), "Go", "42", "测试主题"); err != nil {
+		t.Fatal(err)
+	}
+	historyConfirm.stack = []Route{{Page: PageHistory}}
+	historyConfirm.confirmClearHistory()
+	capture("history-clear-confirm", historyConfirm)
+
+	storageSettings := previewAppWithCore(t)
+	storageSettings.stack = []Route{{Page: PageSelf}, {Page: PageSettings}}
+	capture("settings-colors", storageSettings)
+	storageSettings.auxList.Position.First = 2
+	capture("settings-storage", storageSettings)
+
+	composeDark := previewAppWithCore(t)
+	setThemePreferenceForTest(t, composeDark, 2)
+	composeDark.compose = composeState{board: "Go", boardLocked: true, ready: true}
+	composeDark.compose.titleEditor.SingleLine = true
+	composeDark.compose.titleEditor.SetText("Re: 测试主题")
+	composeDark.compose.contentEditor.SetText("深色模式下的回复编辑器。")
+	composeDark.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}, {Page: PageCompose, Name: "Go", ID: "42", Sub: "reply"}}
+	capture("compose-dark", composeDark)
+
+	refreshFailure := previewAppWithCore(t)
+	refreshFailure.thread = sampleThread()
+	refreshFailure.stack = []Route{{Page: PageHome}, {Page: PageThread, Name: "Go", ID: "42", Number: 1}}
+	refreshFailure.failed = true
+	refreshFailure.message = "刷新失败：离线夹具"
+	capture("thread-refresh-error", refreshFailure)
 }

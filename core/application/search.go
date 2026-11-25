@@ -35,7 +35,13 @@ type SearchResult struct {
 	Articles   []forum.Article
 	Pagination forum.Pagination
 	Source     SearchSource
-	Truncated  bool
+	// Truncated reports that the merged result window was clipped at the
+	// application-layer fetch cap, not that a board failed.
+	Truncated bool
+	// Incomplete reports that at least one board query failed. Articles and
+	// pagination describe only the boards that succeeded.
+	Incomplete   bool
+	FailedBoards int
 }
 
 // Search validates and executes the shared remote article-search use case.
@@ -58,14 +64,16 @@ func (a *App) Search(ctx context.Context, request SearchRequest) (SearchResult, 
 	if size < 1 || size > 100 {
 		return SearchResult{}, errors.New("搜索结果页大小必须在 1 到 100 之间")
 	}
-	if board := strings.TrimSpace(request.Board); board != "" {
-		return a.searchBoard(ctx, keyword, author, board, page, size)
-	}
-	return a.searchAllBoards(ctx, keyword, author, page, size)
+	return runBound(a, ctx, func(requestCtx context.Context, _ Credential) (SearchResult, error) {
+		if board := strings.TrimSpace(request.Board); board != "" {
+			return a.searchBoard(requestCtx, keyword, author, board, page, size)
+		}
+		return a.searchAllBoards(requestCtx, keyword, author, page, size)
+	})
 }
 
 func (a *App) searchBoard(ctx context.Context, keyword, author, board string, page, size int) (SearchResult, error) {
-	v, err := a.Forum.SearchArticles(ctx, forum.Search{
+	v, err := a.forum.SearchArticles(ctx, forum.Search{
 		Board:  board,
 		Title:  keyword,
 		Author: author,
@@ -110,7 +118,7 @@ func (a *App) searchAllBoards(ctx context.Context, keyword, author string, page,
 		fetchSize = 1
 	}
 
-	results, failed, firstErr := searchBoards(ctx, a.Forum, boards, forum.Search{
+	results, failed, firstErr, authErr := searchBoards(ctx, a.forum, boards, forum.Search{
 		Title:  keyword,
 		Author: author,
 		Page:   forum.Page{Number: 1, Size: fetchSize},
@@ -118,14 +126,13 @@ func (a *App) searchAllBoards(ctx context.Context, keyword, author string, page,
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return SearchResult{}, ctxErr
 	}
-	if errors.Is(firstErr, forum.ErrUnauthenticated) {
-		return SearchResult{}, firstErr
+	// Authentication is not a partial-board failure: an expired session would
+	// hide every missing board and must win over earlier 5xx responses.
+	if authErr != nil {
+		return SearchResult{}, authErr
 	}
 	if len(results) == 0 && firstErr != nil {
 		return SearchResult{}, firstErr
-	}
-	if failed > 0 {
-		truncated = true
 	}
 
 	articles := make([]forum.Article, 0, fetchSize)
@@ -185,13 +192,15 @@ func (a *App) searchAllBoards(ctx context.Context, keyword, author string, page,
 			ItemsPerPage: forum.Number(size),
 			TotalItems:   forum.Number(totalItems),
 		},
-		Source:    SearchSourceRemote,
-		Truncated: truncated,
+		Source:       SearchSourceRemote,
+		Truncated:    truncated,
+		Incomplete:   failed > 0,
+		FailedBoards: failed,
 	}, nil
 }
 
 func (a *App) searchableBoards(ctx context.Context) ([]string, error) {
-	root, err := a.Forum.Sections(ctx)
+	root, err := a.forum.Sections(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +218,7 @@ func (a *App) searchableBoards(ctx context.Context) ([]string, error) {
 			continue
 		}
 		seenSections[name] = true
-		section, err := a.Forum.Section(ctx, name)
+		section, err := a.forum.Section(ctx, name)
 		if err != nil {
 			return nil, err
 		}
@@ -231,7 +240,11 @@ func (a *App) searchableBoards(ctx context.Context) ([]string, error) {
 // searchBoards tolerates individual board failures so one unavailable board
 // does not discard every other board's results. Authentication failures are
 // propagated because continuing without a valid session would be misleading.
-func searchBoards(ctx context.Context, client *forum.Client, boards []string, query forum.Search) ([]boardSearchResult, int, error) {
+type articleSearchClient interface {
+	SearchArticles(context.Context, forum.Search) (forum.SearchResults, error)
+}
+
+func searchBoards(ctx context.Context, client articleSearchClient, boards []string, query forum.Search) ([]boardSearchResult, int, error, error) {
 	const workerCount = 6
 	workers := workerCount
 	if len(boards) < workers {
@@ -240,7 +253,7 @@ func searchBoards(ctx context.Context, client *forum.Client, boards []string, qu
 	jobs := make(chan string)
 	results := make([]boardSearchResult, 0, len(boards))
 	var mu sync.Mutex
-	var firstErr error
+	var firstErr, authErr error
 	failed := 0
 	var wg sync.WaitGroup
 	searchCtx, cancel := context.WithCancel(ctx)
@@ -262,14 +275,18 @@ func searchBoards(ctx context.Context, client *forum.Client, boards []string, qu
 					if errors.Is(err, context.Canceled) {
 						return
 					}
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-					}
 					if errors.Is(err, forum.ErrUnauthenticated) {
+						mu.Lock()
+						if authErr == nil {
+							authErr = err
+						}
 						mu.Unlock()
 						cancel()
 						return
+					}
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
 					}
 					failed++
 					mu.Unlock()
@@ -296,7 +313,7 @@ func searchBoards(ctx context.Context, client *forum.Client, boards []string, qu
 	}
 	close(jobs)
 	wg.Wait()
-	return results, failed, firstErr
+	return results, failed, firstErr, authErr
 }
 
 func sortArticles(articles []forum.Article) {

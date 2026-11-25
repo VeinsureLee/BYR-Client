@@ -20,6 +20,7 @@ import (
 
 type editor struct {
 	Board, Title, Content, ReplyID, EditID string
+	Session                                application.SessionInfo
 	Meta                                   forum.Board
 	Attachments                            []forum.Attachment
 	Anonymous, Signature, Email, Outgo     bool
@@ -36,26 +37,26 @@ type editor struct {
 
 func (a *App) openEditor() {
 	r := a.route
-	a.editor = editor{Board: r.Name}
+	session := a.Core.SessionInfo()
+	a.editor = editor{Board: r.Name, Session: session}
 	a.boards = nil
 	if r.Name == "" {
 		a.loadData("加载常用版面", func(ctx context.Context) (func(), error) {
-			v, err := a.Core.Forum.Favorites(ctx, "0")
+			v, err := a.Core.LoadFavorites(ctx, "0")
 			return func() { a.boards = v.Boards }, err
 		})
 		return
 	}
-	account := a.Core.Session().Username
 	initialTitle := a.thread.Title
 	a.loadData("准备编辑器", func(ctx context.Context) (func(), error) {
-		meta, err := a.Core.Forum.Board(ctx, r.Name, forum.Page{Size: 1})
+		meta, err := a.Core.LoadBoard(ctx, r.Name, forum.Page{Size: 1})
 		if err != nil {
 			return nil, err
 		}
-		e := editor{Board: r.Name, Meta: meta, Ready: true}
+		e := editor{Board: r.Name, Meta: meta, Ready: true, Session: session}
 		if r.Sub == "edit" {
 			e.EditID = r.ID
-			v, err := a.Core.Forum.Article(ctx, r.Name, r.ID)
+			v, err := a.Core.ReadArticle(ctx, r.Name, r.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -69,13 +70,16 @@ func (a *App) openEditor() {
 			}
 			// The target is optional context: a failed lookup must not prevent
 			// replying, so this one request never blocks the editor.
-			if target, lookupErr := a.Core.Forum.Article(ctx, r.Name, r.ID); lookupErr == nil {
+			if target, lookupErr := a.Core.ReadArticle(ctx, r.Name, r.ID); lookupErr == nil {
 				e.ReplyFloor = int(target.Position)
 				e.ReplyAuthor = target.Author.DisplayName()
 				e.ReplyExcerpt = excerpt(content.Plain(target.Content), 180)
 			}
 		}
-		draft, exists := a.Core.Local.Draft(account, local.DraftKey(e.Board, e.ReplyID, e.EditID))
+		draft, exists, err := a.Core.LoadDraft(ctx, e.Session, local.DraftKey(e.Board, e.ReplyID, e.EditID))
+		if err != nil {
+			return nil, err
+		}
 		if exists {
 			e.Title, e.Content, e.Attachments = draft.Title, draft.Content, draft.Attachments
 		}
@@ -92,7 +96,16 @@ func (a *App) saveDraft() bool {
 	if a.route.Page != "compose" || !e.Ready || e.Submitted || e.Publishing || e.Board == "" {
 		return true
 	}
-	err := a.Core.Local.SaveDraft(context.Background(), a.Core.Session().Username, local.DraftKey(e.Board, e.ReplyID, e.EditID), local.Draft{Title: e.Title, Content: e.Content, Attachments: e.Attachments})
+	key := local.DraftKey(e.Board, e.ReplyID, e.EditID)
+	draft := local.Draft{Title: e.Title, Content: e.Content, Attachments: e.Attachments}
+	session := e.Session
+	if session.Generation == 0 {
+		session = a.Core.SessionInfo()
+	}
+	err := a.Core.SaveDraft(context.Background(), session, key, draft)
+	if errors.Is(err, application.ErrStaleSession) {
+		return true
+	}
 	if err != nil {
 		a.fail(err)
 		return false
@@ -102,7 +115,7 @@ func (a *App) saveDraft() bool {
 func (a *App) composeView(c *ui.Context) {
 	if a.route.Name == "" {
 		ui.Row(c).FillWidth().Gap(8).Children(func() {
-			ui.TextInput(c, &a.editor.Board).Label("发帖版面").Placeholder("输入版面名或搜索").Grow(1)
+			themedTextInput(c, &a.editor.Board).Label("发帖版面").Placeholder("输入版面名或搜索").Grow(1)
 			a.button(c, "载入版面", func() {
 				name := strings.TrimSpace(a.editor.Board)
 				if name == "" {
@@ -114,7 +127,7 @@ func (a *App) composeView(c *ui.Context) {
 			a.button(c, "查找版面", func() {
 				keyword := a.editor.Board
 				a.loadData("查找版面", func(ctx context.Context) (func(), error) {
-					v, err := a.Core.Forum.SearchBoards(ctx, keyword)
+					v, err := a.Core.SearchBoards(ctx, keyword)
 					return func() { a.boards = v.Boards }, err
 				})
 			})
@@ -137,7 +150,7 @@ func (a *App) composeView(c *ui.Context) {
 	}
 	a.replyContextView(c)
 	ui.Column(c).FillWidth().Gap(8).Children(func() {
-		if ui.TextInput(c, &e.Title).Label("帖子标题").Placeholder("标题").FillWidth().Disabled(a.busy).Changed() {
+		if themedTextInput(c, &e.Title).Label("帖子标题").Placeholder("标题").FillWidth().Disabled(a.busy).Changed() {
 			a.saveDraft()
 		}
 		ui.Row(c).Wrap().Gap(8).Children(func() {
@@ -170,7 +183,7 @@ func (a *App) composeView(c *ui.Context) {
 	if e.Preview {
 		ui.Scroll(c).Grow(1).FillWidth().Children(func() { ui.Column(c).FillWidth().Gap(6).Children(func() { a.bodyView(c, e.Content, e.Attachments) }) })
 	} else {
-		area := ui.TextArea(c, &e.Content).Label("帖子正文").Placeholder("正文，支持 UBB 与图片附件").FillWidth().Grow(1).MinHeight(140).Disabled(a.busy)
+		area := themedTextArea(c, &e.Content).Label("帖子正文").Placeholder("正文，支持 UBB 与图片附件").FillWidth().Grow(1).MinHeight(140).Disabled(a.busy)
 		if e.SetSelection {
 			area.SetTextSelection(e.SelectionStart, e.SelectionEnd)
 			e.SetSelection = false
@@ -262,8 +275,8 @@ func (a *App) linkModal(c *ui.Context) {
 	ui.Modal(c, &e.LinkOpen, func() {
 		ui.Column(c).Width(420).Gap(10).Children(func() {
 			ui.Text(c, "插入链接").Bold()
-			ui.TextInput(c, &e.LinkURL).Label("链接地址").Placeholder("https://...").FillWidth()
-			ui.TextInput(c, &e.LinkText).Label("链接文字").Placeholder("显示文字").FillWidth()
+			themedTextInput(c, &e.LinkURL).Label("链接地址").Placeholder("https://...").FillWidth()
+			themedTextInput(c, &e.LinkText).Label("链接文字").Placeholder("显示文字").FillWidth()
 			ui.Row(c).Gap(10).Children(func() {
 				if ui.Button(c, "取消链接").Clicked() {
 					e.LinkOpen = false
@@ -295,7 +308,7 @@ func (a *App) upload() {
 		if err != nil || name == "" {
 			return nil, err
 		}
-		v, err := a.Core.Forum.Upload(ctx, e.Board, id, name, bytes.NewReader(b))
+		v, err := a.Core.UploadAttachment(ctx, e.Board, id, name, bytes.NewReader(b))
 		if err != nil {
 			return nil, err
 		}
@@ -332,7 +345,7 @@ func (a *App) removeAttachment(index int, f forum.File) {
 	}
 	a.confirm = &confirmation{text: "从服务器删除这个附件？", run: func() {
 		a.run("删除附件", func(ctx context.Context) (func(), error) {
-			_, err := a.Core.Forum.DeleteAttachment(ctx, e.Board, id)
+			_, err := a.Core.DeleteAttachment(ctx, e.Board, id)
 			return func() {
 				files := flatten(a.editor.Attachments)
 				if index < len(files) {

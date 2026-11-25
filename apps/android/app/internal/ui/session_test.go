@@ -19,7 +19,6 @@ import (
 	"github.com/VeinsureLee/BYR-Client/apps/android/app/internal/platform"
 	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
-	"github.com/VeinsureLee/BYR-Client/core/local"
 )
 
 func TestCurrentRouteRepairsEmptyStack(t *testing.T) {
@@ -83,18 +82,8 @@ func TestLogoutThenNewAppStartsAtLogin(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	store, err := local.Open(context.Background(), platform.FileState{Path: filepath.Join(dir, "state.json")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, err := application.New(application.Options{Local: store, Credentials: credentials})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := core.Restore(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if core.Session().Token == "" {
+	core := newUIFixtureCore(t, "", http.DefaultClient, platform.FileState{Path: filepath.Join(dir, "state.json")}, credentials)
+	if !core.SessionInfo().Authenticated {
 		t.Fatal("fixture session was not restored")
 	}
 
@@ -121,7 +110,7 @@ func TestLogoutThenNewAppStartsAtLogin(t *testing.T) {
 	if got := first.current().Page; got != PageLogin {
 		t.Fatalf("logout page = %v, want login", got)
 	}
-	if core.Session().Token != "" {
+	if core.SessionInfo().Authenticated {
 		t.Fatal("logout retained the in-memory token")
 	}
 	if len(first.mailbox.Mails) != 0 || first.mail.Title != "" || len(first.refers.Articles) != 0 ||
@@ -185,8 +174,8 @@ func TestRestartWithRememberedSessionRendersTodayTop(t *testing.T) {
 	assertFrameRenders(t, a)
 	a.setTab(PageHome)
 	waitForIdle(t, a)
-	if got := a.current().Page; got != PageHome || a.sectionTab != "favorites" {
-		t.Fatalf("section tab default = %+v/%q, want favorite boards", a.current(), a.sectionTab)
+	if got := a.current().Page; got != PageTop || a.topTab != "top" {
+		t.Fatalf("section tab first screen = %+v/%q, want today's top root", a.current(), a.topTab)
 	}
 	a.showAllSections()
 	waitForIdle(t, a)
@@ -227,11 +216,7 @@ func TestLogoutThenLoginAgainRenders(t *testing.T) {
 	}
 	assertFrameRenders(t, a)
 
-	prefs := a.core.Local.Preferences()
-	prefs.Theme = 2
-	if err := a.core.Local.SetPreferences(context.Background(), prefs); err != nil {
-		t.Fatal(err)
-	}
+	setThemePreferenceForTest(t, a, 2)
 	defer func() {
 		setPalette(false)
 		a.dark, a.themed = false, false

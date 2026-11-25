@@ -14,8 +14,8 @@ func TestOfflineProbeLoadsChineseFontAndUsesVirtualList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Core == nil || view.Theme.Face == "" {
-		t.Fatal("shared core or bundled font not initialized")
+	if view.Theme.Face == "" {
+		t.Fatal("bundled font not initialized")
 	}
 	var operations op.Ops
 	context := layout.Context{Ops: &operations, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(390, 844))}

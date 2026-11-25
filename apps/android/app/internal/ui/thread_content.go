@@ -13,6 +13,7 @@ import (
 	"gioui.org/x/richtext"
 	"gioui.org/x/styledtext"
 
+	"github.com/VeinsureLee/BYR-Client/core/application"
 	"github.com/VeinsureLee/BYR-Client/core/content"
 	"github.com/VeinsureLee/BYR-Client/core/forum"
 )
@@ -20,6 +21,7 @@ import (
 type threadReadRequest struct {
 	Serial, Generation uint64
 	Route              Route
+	HistoryToken       application.HistoryReadToken
 }
 
 type threadViewportKey struct {

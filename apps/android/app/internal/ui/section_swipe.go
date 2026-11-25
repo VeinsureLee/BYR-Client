@@ -154,8 +154,15 @@ func (a *App) navigateSectionModule(key string) {
 		return
 	}
 	current := a.current()
-	if current.Page == target.Page && a.currentSectionModule() == key {
+	currentModule, rootedInHome := a.homeModuleForStack()
+	if rootedInHome && currentModule == key || !rootedInHome && current.Page == target.Page && a.currentSectionModule() == key {
 		return
+	}
+	if rootedInHome {
+		a.saveHomeSnapshot(currentModule, !a.failed)
+		if a.restoreHomeSnapshot(key) {
+			return
+		}
 	}
 
 	if target.Page == PageHome {
@@ -203,6 +210,9 @@ func (a *App) navigateSectionModule(key string) {
 		}
 	} else if key == "top" || key == "recommend" {
 		a.topTab = key
+	}
+	if rootedInHome || target.Page == PageHome {
+		a.lastHomeModule = key
 	}
 	a.failed = false
 	a.message = ""

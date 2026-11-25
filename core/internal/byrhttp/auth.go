@@ -1,4 +1,4 @@
-package forum
+package byrhttp
 
 import (
 	"context"
@@ -53,14 +53,6 @@ func (c *Client) Login(ctx context.Context, username, password string) (OAuthInf
 	}
 	return info, err
 }
-
-type WebLogin struct {
-	State   Scalar `json:"ajax_st"`
-	Code    Scalar `json:"ajax_code"`
-	Message string `json:"ajax_msg"`
-}
-
-func (w WebLogin) OK() bool { return w.State == "1" }
 
 // Web diagnostics never replaces or clears an OAuth session.
 func (c *Client) CheckWebLogin(ctx context.Context, username, password string) (WebLogin, error) {

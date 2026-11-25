@@ -1,4 +1,4 @@
-package forum
+package byrhttp
 
 import (
 	"crypto/aes"
